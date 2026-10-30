@@ -43,6 +43,32 @@ function renderHTML(strings, ...values) {
     });
     return new HTMLValue(result);
 }
+function renderMediaImages(container, images, onSelect = null) {
+    if (!container) return;
+    container.replaceChildren();
+    for (const value of Array.isArray(images) ? images : []) {
+        const url = safeMediaUrl(value);
+        if (!url) continue;
+        const image = document.createElement('img');
+        image.src = url;
+        image.alt = 'Ảnh sản phẩm';
+        image.className = 'w-16 h-16 object-cover rounded-lg border border-gray-200';
+        if (onSelect) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.addEventListener('click', () => onSelect(url));
+            button.appendChild(image);
+            container.appendChild(button);
+        } else {
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.appendChild(image);
+            container.appendChild(link);
+        }
+    }
+}
 function printRegion(id, thermal = false, paperSize = 'k80') {
     const source = document.getElementById(id);
     if (!source) return;

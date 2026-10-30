@@ -99,3 +99,31 @@ function matchesDateFilter(recordTimeStr, filterMode, customFromStr, customToStr
     }
     return true;
 }
+
+// Shared UI/export predicates; independent of rendering and pagination.
+function matchesDocumentFilter(
+    row,
+    { q = '', date = 'all', status = 'all', kind, returned = false, starred = false } = {}
+) {
+    if (!matchesDateFilter(row.time, date)) return false;
+    if (status === 'starred' && !starred) return false;
+    if (status === 'cancelled' && row.status !== 'cancelled') return false;
+    if (status === 'imported' && row.status === 'cancelled') return false;
+    if (status === 'completed' && (row.status !== 'completed' || returned)) return false;
+    if (status === 'returned' && !returned) return false;
+    const values =
+        kind === 'imports'
+            ? [row.code, row.nccName, row.nccCode]
+            : [row.code, row.customer, row.phone];
+    return (
+        !q ||
+        values.some((v) =>
+            String(v || '')
+                .toLowerCase()
+                .includes(q.trim().toLowerCase())
+        )
+    );
+}
+
+// Share date semantics with the paginated SQLite reader (no DOM access for supported presets).
+if (typeof module !== 'undefined') module.exports = { parseRecordDate, matchesDateFilter };

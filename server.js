@@ -8,9 +8,14 @@ const { promisify } = require('node:util');
 const db = require('./db');
 const auth = require('./security');
 const application = require('./application');
+const hub = require('./hub-client');
+const { securityHeaders } = require('./security-headers');
 const sessions = new Map(),
     attempts = new Map();
-const MAX_BODY = 8 * 1024 * 1024;
+const MAX_BODY = 16 * 1024 * 1024;
+const UPLOADS_DIR = process.env.NKIOT_UPLOADS_DIR || path.join(__dirname, 'public', 'uploads');
+
+fs.mkdirSync(UPLOADS_DIR, { recursive: true, mode: 0o700 });
 const ASSETS = {
     '/': 'index.html',
     '/index.html': 'index.html',
@@ -21,6 +26,7 @@ const ASSETS = {
     '/app-reports.js': 'app-reports.js',
     '/app-export.js': 'app-export.js',
     '/constants.js': 'constants.js',
+    '/catalog-patch.js': 'catalog-patch.js',
     '/data.js': 'client-store.js',
     '/ui-safety.js': 'ui-safety.js',
     '/assets/tailwind.css': 'public/tailwind.css',
@@ -53,9 +59,9 @@ const gzipAsync = promisify(zlib.gzip);
 async function json(res, status, data) {
     let payload = JSON.stringify(data);
     const headers = {
+        ...securityHeaders(),
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff',
         Vary: 'Accept-Encoding'
     };
     // Full views are several MB of repetitive JSON; level 1 gives ~95% reduction in ~15 ms and
@@ -130,6 +136,13 @@ async function handler(req, res) {
     if (/\bgzip\b/i.test(req.headers['accept-encoding'] || '')) acceptsGzip.add(res);
     try {
         const url = new URL(req.url, 'http://localhost');
+        if (url.pathname === '/health' && req.method === 'GET')
+            return json(res, 200, {
+                success: true,
+                service: 'nkiot-pos',
+                version: require('./package.json').version,
+                time: new Date().toISOString()
+            });
         if (url.pathname.startsWith('/api/')) {
             if (req.headers.origin) {
                 let origin;
@@ -156,6 +169,16 @@ async function handler(req, res) {
                         success: false,
                         error: 'Đăng nhập sai nhiều lần. Vui lòng thử lại sau.'
                     });
+                const tenantStatus = db
+                    .getDb()
+                    .prepare("SELECT value FROM app_meta WHERE key='tenant_status'")
+                    .get()?.value;
+                if (tenantStatus === 'suspended') {
+                    return json(res, 403, {
+                        success: false,
+                        error: 'Cửa hàng đã bị tạm ngưng hoạt động. Vui lòng liên hệ quản trị viên.'
+                    });
+                }
                 const name =
                     typeof input.username === 'string' ? input.username.trim().toLowerCase() : '';
                 const user = db
@@ -205,6 +228,12 @@ async function handler(req, res) {
                         error: 'Mã bảo vệ phiên không hợp lệ. Hãy tải lại trang.'
                     });
             }
+            if (url.pathname === '/api/invoices' && req.method === 'GET')
+                return json(
+                    res,
+                    200,
+                    require('./invoice-reader').listInvoices(user, url.searchParams)
+                );
             if (url.pathname === '/api/data' && req.method === 'GET')
                 return json(res, 200, { ...view(user), csrfToken });
             if (url.pathname.startsWith('/api/requests/') && req.method === 'GET') {
@@ -294,6 +323,7 @@ async function handler(req, res) {
                         ? application.project(db.readSnapshot(), fresh)
                         : null;
                 const result = application.transact(fresh, envelope);
+                if (!result.replayed) hub.scheduleSync();
                 const next = view(fresh);
                 // transact checks revision in its own write transaction, so a fresh (not replayed)
                 // commit at base+1 was applied on top of exactly the state `prior` was built from.
@@ -305,16 +335,270 @@ async function handler(req, res) {
                 const { data, ...rest } = next;
                 return json(res, 200, { ...rest, ...result, base, delta });
             }
+            if (url.pathname === '/api/partner-catalog' && req.method === 'GET') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const catalog = await hub.partnerCatalog({
+                        refresh: url.searchParams.get('refresh') === '1'
+                    });
+                    return json(res, 200, { success: true, ...catalog, ...hub.status() });
+                } catch (error) {
+                    return json(res, 502, {
+                        success: false,
+                        error: 'Không kết nối được kho chung đối tác: ' + error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners' && req.method === 'GET') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const data = await hub.listPartners();
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners/tokens' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const data = await hub.createInviteToken();
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners/tokens' && req.method === 'GET') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const data = await hub.listInviteTokens();
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners/redeem' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const input = await body(req);
+                    const data = await hub.redeemInviteToken(input.token);
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners/unlink' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const input = await body(req);
+                    const data = await hub.unlinkPartner(input.partnerId);
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners/tokens/revoke' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const input = await body(req);
+                    const data = await hub.revokeInviteToken(input.token);
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/hub/partners/tokens/delete' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                try {
+                    const input = await body(req);
+                    const data = await hub.deleteInviteToken(input.token);
+                    return json(res, 200, { success: true, ...data });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/upload-media' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                const input = await body(req);
+                if (!input.data || typeof input.data !== 'string')
+                    throw Object.assign(new Error('Dữ liệu tệp không hợp lệ.'), { status: 400 });
+                const match = input.data.match(/^data:([a-zA-Z0-9/+-]+);base64,(.+)$/);
+                const mime = (match ? match[1] : input.type || '').toLowerCase();
+                const base64Data = match ? match[2] : input.data;
+                const ALLOWED_MIME = {
+                    'image/jpeg': '.jpg',
+                    'image/png': '.png',
+                    'image/webp': '.webp',
+                    'image/gif': '.gif',
+                    'video/mp4': '.mp4',
+                    'video/webm': '.webm',
+                    'video/quicktime': '.mov'
+                };
+                if (!ALLOWED_MIME[mime])
+                    throw Object.assign(
+                        new Error(
+                            'Định dạng tệp không được hỗ trợ (chỉ nhận ảnh JPG, PNG, WEBP, GIF hoặc video MP4, WEBM).'
+                        ),
+                        { status: 400 }
+                    );
+                const ext = ALLOWED_MIME[mime];
+                const randomName = `${Date.now()}_${crypto.randomBytes(8).toString('hex')}${ext}`;
+                const targetPath = path.join(UPLOADS_DIR, randomName);
+                const buffer = Buffer.from(base64Data, 'base64');
+                if (buffer.length > 10 * 1024 * 1024)
+                    throw Object.assign(new Error('Dung lượng tệp vượt quá 10MB.'), {
+                        status: 413
+                    });
+                const isJpeg =
+                    buffer.length > 3 &&
+                    buffer[0] === 0xff &&
+                    buffer[1] === 0xd8 &&
+                    buffer[2] === 0xff;
+                const isPng =
+                    buffer.length > 8 &&
+                    buffer[0] === 0x89 &&
+                    buffer[1] === 0x50 &&
+                    buffer[2] === 0x4e &&
+                    buffer[3] === 0x47;
+                const isGif =
+                    buffer.length > 4 &&
+                    buffer[0] === 0x47 &&
+                    buffer[1] === 0x49 &&
+                    buffer[2] === 0x46 &&
+                    buffer[3] === 0x38;
+                const isWebp =
+                    buffer.length > 12 &&
+                    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+                    buffer.toString('ascii', 8, 12) === 'WEBP';
+                const isMp4OrMov =
+                    buffer.length > 12 &&
+                    (buffer.toString('ascii', 4, 8) === 'ftyp' ||
+                        buffer.toString('ascii', 4, 8) === 'moov');
+                const isWebm =
+                    buffer.length > 4 &&
+                    buffer[0] === 0x1a &&
+                    buffer[1] === 0x45 &&
+                    buffer[2] === 0xdf &&
+                    buffer[3] === 0xa3;
+
+                const validMagic =
+                    (mime === 'image/jpeg' && isJpeg) ||
+                    (mime === 'image/png' && isPng) ||
+                    (mime === 'image/gif' && isGif) ||
+                    (mime === 'image/webp' && isWebp) ||
+                    ((mime === 'video/mp4' || mime === 'video/quicktime') && isMp4OrMov) ||
+                    (mime === 'video/webm' && isWebm);
+
+                if (!validMagic)
+                    throw Object.assign(
+                        new Error('Nội dung tệp không khớp với định dạng được khai báo.'),
+                        { status: 400 }
+                    );
+                await fs.promises.writeFile(targetPath, buffer);
+                return json(res, 200, {
+                    success: true,
+                    url: `/uploads/${randomName}`,
+                    filename: randomName,
+                    size: buffer.length,
+                    mime
+                });
+            }
             if (url.pathname === '/api/status' && req.method === 'GET') {
                 auth.requirePermission(user, 'settings');
                 const { dbPath, ...stats } = db.getStats();
-                return json(res, 200, { success: true, stats });
+                return json(res, 200, { success: true, stats, hub: hub.status() });
             }
             // Snapshot replacement/reset are intentionally not public API operations.
             return json(res, 404, { success: false, error: 'API không tồn tại.' });
         }
         if (!['GET', 'HEAD'].includes(req.method))
             return json(res, 405, { success: false, error: 'Method not allowed' });
+        if (url.pathname.startsWith('/hub-media/')) {
+            // Proxy ảnh đối tác: browser không có API key Hub, server tenant giữ key.
+            const viewer = sessionUser(req);
+            if (!viewer) return json(res, 401, { success: false, error: 'Vui lòng đăng nhập.' });
+            auth.requirePermission(viewer, 'products');
+            const id = url.pathname.slice('/hub-media/'.length);
+            if (!/^[a-f0-9]{32}$/.test(id))
+                return json(res, 403, { success: false, error: 'Truy cập không hợp lệ.' });
+            try {
+                const media = await hub.fetchMedia(id);
+                res.writeHead(200, {
+                    ...securityHeaders(),
+                    'Content-Type': media.mime,
+                    'Content-Length': media.buffer.length,
+                    'Cache-Control': 'private, no-store',
+                    'X-Content-Type-Options': 'nosniff'
+                });
+                return res.end(req.method === 'HEAD' ? undefined : media.buffer);
+            } catch (error) {
+                return json(res, error.status === 404 ? 404 : 502, {
+                    success: false,
+                    error: 'Không tải được ảnh từ Hub.'
+                });
+            }
+        }
+        if (url.pathname.startsWith('/uploads/')) {
+            if (!sessionUser(req))
+                return json(res, 401, { success: false, error: 'Vui lòng đăng nhập.' });
+            const filename = path.basename(url.pathname);
+            const safePath = path.resolve(UPLOADS_DIR, filename);
+            if (
+                !/^\/uploads\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(url.pathname) ||
+                path.dirname(safePath) !== path.resolve(UPLOADS_DIR)
+            )
+                return json(res, 403, { success: false, error: 'Truy cập không hợp lệ.' });
+            try {
+                const stat = await fs.promises.lstat(safePath);
+                if (!stat.isFile())
+                    return json(res, 404, { success: false, error: 'Không tìm thấy tệp.' });
+                const ext = path.extname(safePath).toLowerCase();
+                const mimeTypes = {
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.png': 'image/png',
+                    '.webp': 'image/webp',
+                    '.gif': 'image/gif',
+                    '.mp4': 'video/mp4',
+                    '.webm': 'video/webm',
+                    '.mov': 'video/quicktime'
+                };
+                const contentType = mimeTypes[ext] || 'application/octet-stream';
+                res.writeHead(200, {
+                    ...securityHeaders(),
+                    'Content-Type': contentType,
+                    'Content-Length': stat.size,
+                    'Cache-Control': 'private, no-store'
+                });
+                if (req.method === 'HEAD') return res.end();
+                const stream = fs.createReadStream(safePath);
+                stream.on('error', () => res.destroy());
+                res.on('close', () => stream.destroy());
+                return stream.pipe(res);
+            } catch {
+                return json(res, 404, { success: false, error: 'Không tìm thấy tệp.' });
+            }
+        }
         const file = Object.hasOwn(ASSETS, url.pathname) ? ASSETS[url.pathname] : null;
         if (!file) return json(res, 404, { success: false, error: 'Không tìm thấy tài nguyên.' });
         const asset = await loadAsset(file);
@@ -326,11 +610,9 @@ async function handler(req, res) {
             '.woff2': 'font/woff2'
         };
         const headers = {
+            ...securityHeaders(),
             'Content-Type': contentTypes[path.extname(file)] || 'application/octet-stream',
-            'X-Content-Type-Options': 'nosniff',
-            'Referrer-Policy': 'same-origin',
             'Cache-Control': 'no-cache',
-            'X-Frame-Options': 'DENY',
             ETag: asset.etag,
             Vary: 'Accept-Encoding'
         };
@@ -357,12 +639,27 @@ async function handler(req, res) {
 }
 function createServer() {
     db.initDb();
+    hub.scheduleSync();
     return http.createServer(handler);
 }
 if (require.main === module) {
     const server = createServer();
+    let stopping = false;
+    const shutdown = (signal) => {
+        if (stopping) return;
+        stopping = true;
+        console.log(`NKiot nhận ${signal}; đang dừng an toàn.`);
+        hub.stopSync();
+        server.close((error) => {
+            if (error) console.error(error);
+            db.closeDb();
+            process.exitCode = error ? 1 : 0;
+        });
+        setTimeout(() => process.exit(1), 10000).unref();
+    };
     server.listen(process.env.PORT || 3000, process.env.HOST || '0.0.0.0', () =>
         console.log(`NKiot: http://localhost:${process.env.PORT || 3000}`)
     );
+    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => shutdown(signal));
 }
-module.exports = { handler };
+module.exports = { handler, createServer };

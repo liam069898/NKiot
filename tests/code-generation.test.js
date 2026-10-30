@@ -122,7 +122,7 @@ test('backend domain commands generate NKiot auto-increment numbers', () => {
     // Return generates TH000002
     const ret = domain.execute(data, user, 'return', {
         invoiceId: inv.id,
-        items: [{ code: 'SP001', qty: 1 }],
+        items: [{ code: 'SP001', qty: 1, imeis: inv.items[0].imeis }],
         refundMethod: 'cash'
     });
     assert.equal(ret.code, 'TH000002');

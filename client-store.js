@@ -78,6 +78,8 @@ const KVStore = {
     revision: null,
     isDbConnected: false,
     _busy: false,
+    _sending: false,
+    _reconciling: false,
     csrfToken: null,
     _volatilePending: new Map(),
     async request(url, options = {}) {
@@ -200,9 +202,15 @@ const KVStore = {
         await this.fetchFromDatabase();
     },
     async save() {
-        const payload = copyData(this.data);
-        payload.settings.branch = this._base.settings.branch;
-        return this.command('edit', payload);
+        // A no-op must not pretend to save while disconnected or awaiting reconciliation.
+        if (!this.user || !this.isDbConnected)
+            throw new Error('Cần kết nối máy chủ và đăng nhập trước khi ghi giao dịch.');
+        if (this.pending().length)
+            throw new Error('Có giao dịch chưa xác nhận. Hãy đối soát trước khi lưu.');
+        const payload = buildCatalogPatch(this._base, this.data);
+        if (!Object.keys(payload.tables).length && !Object.keys(payload.settings).length)
+            return { saved: true };
+        return this.command('catalogPatch', copyData(payload));
     },
     async command(type, payload) {
         if (!this.user || !this.isDbConnected)
@@ -217,7 +225,9 @@ const KVStore = {
                 requestId,
                 envelope: { requestId, revision: this.revision, type, payload }
             };
-        const sensitive = type === 'edit' && payload.users?.some((u) => u.password);
+        const sensitive =
+            (type === 'edit' && payload.users?.some((u) => u.password)) ||
+            (type === 'catalogPatch' && payload.tables?.users?.upsert?.some((u) => u.password));
         // Credentials only live in memory; reload queries the outcome instead of storing/replaying a password.
         localStorage.setItem(
             PENDING_PREFIX + requestId,
@@ -226,12 +236,16 @@ const KVStore = {
             )
         );
         this._volatilePending.set(requestId, pending);
-        if (type === 'sale' && typeof state !== 'undefined')
+        if (type === 'sale' && typeof state !== 'undefined') {
             state.posTabs[state.activePosTab].pendingRequestId = requestId;
+            if (typeof savePosDraft === 'function') savePosDraft();
+        }
         return this.sendPending(pending);
     },
     async sendPending(pending) {
         const key = PENDING_PREFIX + pending.requestId;
+        this._sending = true;
+        this.updateDbStatus();
         try {
             const result = pending.envelope
                 ? await this.request('/api/command', {
@@ -240,9 +254,13 @@ const KVStore = {
                       body: JSON.stringify(pending.envelope)
                   })
                 : await this.request('/api/requests/' + encodeURIComponent(pending.requestId));
+            // Retire the persisted basket BEFORE removing the durable pending request.
+            // Reload during reconciliation must not resurrect a committed sale.
+            if (pending.envelope?.type === 'sale' && typeof settlePosDraft === 'function')
+                settlePosDraft(pending);
+            await this.adoptResult(result);
             localStorage.removeItem(key);
             this._volatilePending.delete(pending.requestId);
-            await this.adoptResult(result);
             if (typeof state !== 'undefined') {
                 const tab = state.posTabs.find((t) => t.pendingRequestId === pending.requestId);
                 if (tab) {
@@ -250,6 +268,10 @@ const KVStore = {
                     tab.customer = null;
                     tab.discount = 0;
                     tab.customerGiven = 0;
+                    tab.tenderEdited = false;
+                    tab.discountPercent = 0;
+                    tab.multiPayments = { transfer: 0, cash: 0, card: 0 };
+                    tab.paymentMethod = 'cash';
                     tab.note = '';
                     delete tab.branch;
                     delete tab.pendingRequestId;
@@ -260,14 +282,21 @@ const KVStore = {
         } catch (error) {
             if (error.status && error.status !== 401 && error.status < 500) {
                 const recovery = copyData(pending);
-                if (recovery.envelope?.payload?.users)
-                    recovery.envelope.payload.users.forEach((u) => delete u.password);
+                for (const users of [
+                    recovery.envelope?.payload?.users,
+                    recovery.envelope?.payload?.tables?.users?.upsert
+                ])
+                    if (Array.isArray(users)) users.forEach((u) => delete u.password);
                 localStorage.setItem(
                     `minikiot.rejected.${pending.userId}.${pending.requestId}`,
                     JSON.stringify(recovery)
                 );
                 localStorage.removeItem(key);
                 this._volatilePending.delete(pending.requestId);
+                if (typeof state !== 'undefined') {
+                    const tab = state.posTabs.find((t) => t.pendingRequestId === pending.requestId);
+                    if (tab) delete tab.pendingRequestId;
+                }
                 this.adopt(await this.request('/api/data'));
             } else {
                 this.isDbConnected = false;
@@ -275,26 +304,82 @@ const KVStore = {
             }
             this.showRecovery();
             throw error;
+        } finally {
+            this._sending = false;
+            this.updateDbStatus();
         }
     },
     async syncToDatabase() {
-        await this.fetchFromDatabase();
-        if (typeof renderAllViews === 'function') renderAllViews();
+        this._reconciling = true;
+        this.updateDbStatus();
+        try {
+            await this.fetchFromDatabase();
+            if (typeof refreshCurrentView === 'function') refreshCurrentView();
+        } catch (error) {
+            this.isDbConnected = false;
+            throw error;
+        } finally {
+            this._reconciling = false;
+            this.updateDbStatus();
+        }
     },
     updateDbStatus() {
+        const pending = this.pending().length;
+        const working = this._sending || this._reconciling;
+        const message = !this.user
+            ? 'Vui lòng đăng nhập.'
+            : this._reconciling
+              ? 'Đang kiểm tra kết nối và đối soát giao dịch…'
+              : this._sending
+                ? 'Đang lưu giao dịch — vui lòng chờ…'
+                : pending
+                  ? `${pending} giao dịch chưa xác nhận. Kiểm tra kết quả trước khi bán tiếp.`
+                  : this.isDbConnected
+                    ? 'Đã kết nối máy chủ'
+                    : 'Mất kết nối máy chủ. Chưa thể xác nhận giao dịch mới.';
+        const text = document.getElementById('pos-save-status-text');
+        if (text) {
+            text.textContent = message;
+            text.className =
+                pending || !this.isDbConnected
+                    ? 'font-medium text-amber-800'
+                    : 'font-medium text-gray-700';
+        }
+        const action = document.getElementById('pos-reconcile-btn');
+        if (action) {
+            action.disabled = this._busy || working || !this.user;
+            action.textContent = pending
+                ? 'Kiểm tra kết quả'
+                : this.isDbConnected
+                  ? 'Tải lại dữ liệu'
+                  : 'Thử kết nối lại';
+        }
         const badge = document.getElementById('db-status-badge');
-        if (!badge) return;
-        badge.textContent = this.pending().length
-            ? 'Chờ xác nhận lưu'
-            : this.isDbConnected
-              ? 'Đã kết nối SQLite'
-              : 'Mất kết nối';
-        badge.title = 'Bấm để tải dữ liệu mới và đối soát giao dịch đang chờ';
-        badge.onclick = () => forceSyncDatabase();
+        if (badge) {
+            badge.textContent = message;
+            badge.onclick = () => forceSyncDatabase();
+        }
+        const checkout = document.getElementById('pos-checkout-btn');
+        if (checkout) {
+            checkout.disabled = !!(
+                this._busy ||
+                working ||
+                pending ||
+                !this.user ||
+                !this.isDbConnected
+            );
+            checkout.setAttribute('aria-busy', String(working));
+            const label = checkout.querySelector('span');
+            if (label)
+                label.textContent = this._sending
+                    ? 'ĐANG LƯU…'
+                    : pending
+                      ? 'CHỜ XÁC NHẬN'
+                      : 'THANH TOÁN';
+        }
     },
     showRecovery() {
-        const button = document.getElementById('recovery-export');
-        if (button) button.remove();
+        this.updateDbStatus();
     },
     recoveryData() {
         const rejected = [];

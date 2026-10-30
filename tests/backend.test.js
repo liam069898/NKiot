@@ -1,4 +1,5 @@
 'use strict';
+require('./test-env');
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'),
@@ -7,7 +8,8 @@ const fs = require('node:fs'),
     crypto = require('node:crypto');
 const { PassThrough } = require('node:stream');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'minikiot-test-'));
-process.env.MINIKIOT_DB_PATH = path.join(dir, 'test.db');
+process.env.NKIOT_DB_PATH = process.env.MINIKIOT_DB_PATH = path.join(dir, 'test.db');
+process.env.NKIOT_UPLOADS_DIR = path.join(dir, 'uploads');
 process.env.MINIKIOT_ADMIN_PASSWORD = 'Test-password-123';
 const db = require('../db'),
     { hashPassword } = require('../security'),
@@ -120,6 +122,16 @@ beforeEach(() => {
     admin = db.getAllData().users[0];
 });
 after(() => db.getDb().close());
+test('POS health response has baseline security headers and report-only CSP', async () => {
+    const response = await request('GET', '/health');
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['X-Content-Type-Options'], 'nosniff');
+    assert.equal(response.headers['X-Frame-Options'], 'DENY');
+    assert.equal(response.headers['Referrer-Policy'], 'same-origin');
+    assert.match(response.headers['Content-Security-Policy-Report-Only'], /default-src 'self'/);
+    assert.equal(response.headers['Content-Security-Policy'], undefined);
+});
+
 test('POS accepts an authorized custom sale price while retaining list-price validation', () => {
     const data = db.getAllData();
     data.products[0].price = 0;
@@ -247,7 +259,7 @@ test('sale snapshots serial and historic cost; discounted credit return settles 
     assert.equal(inv.items[0].costPrice, 50000);
     const r = command('return', {
         invoiceId: inv.id,
-        items: [{ code: 'SP', qty: 1 }],
+        items: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
         refundMethod: 'cash'
     }).result;
     assert.equal(r.totalRefund, 30000);
@@ -273,7 +285,7 @@ test('sale snapshots item note alongside price and serials', () => {
 });
 test('partial return then cancel refunds only remainder', () => {
     const inv = sell({ items: [{ code: 'SP', qty: 3 }], discount: 10000, given: 290000 });
-    command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1 }] });
+    command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1, imeis: ['I1'] }] });
     command('cancel', { invoiceId: inv.id });
     const d = db.getAllData();
     assert.equal(
@@ -966,7 +978,10 @@ test('discount rounding remains exact across partial returns of a large invoice'
         given: 3000000000000003
     });
     for (let i = 0; i < 3; i++)
-        command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1 }] });
+        command('return', {
+            invoiceId: inv.id,
+            items: [{ code: 'SP', qty: 1, imeis: [`I${i + 1}`] }]
+        });
     const refunds = db.getAllData().returns.reduce((s, r) => s + r.totalRefund, 0);
     assert.equal(refunds, inv.total);
     assert.equal(db.getAllData().invoices[0].paid, 0);
@@ -1361,4 +1376,544 @@ test('all user operations record activity logs in recentActivities across comman
     // Clean up test product
     incomingData.products = d.products.filter((p) => p.id !== 'SP_TEST_AUDIT');
     command('edit', incomingData);
+});
+
+test('cancel_import cleans up imeiDetails when reversing imported serials', () => {
+    const importRes = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        paid: 0,
+        paymentMethod: 'cash',
+        items: [
+            {
+                code: 'SP',
+                qty: 1,
+                price: 50000,
+                hasImei: true,
+                imeis: ['IMEI_TEST_CLEANUP'],
+                imeiDetails: {
+                    IMEI_TEST_CLEANUP: { condition: 'like_new', conditionDetail: 'Pin 99%' }
+                }
+            }
+        ]
+    });
+    let d = db.getAllData();
+    let p = d.products.find((prod) => prod.code === 'SP' && prod.branch === 'A');
+    assert.ok(p.imeis.includes('IMEI_TEST_CLEANUP'));
+    assert.ok(p.imeiDetails && p.imeiDetails['IMEI_TEST_CLEANUP']);
+
+    command('cancel_import', {
+        importId: importRes.result.id,
+        reason: 'Test cleanup imeiDetails'
+    });
+
+    d = db.getAllData();
+    p = d.products.find((prod) => prod.code === 'SP' && prod.branch === 'A');
+    assert.equal(p.imeis.includes('IMEI_TEST_CLEANUP'), false);
+    assert.equal(p.imeiDetails?.['IMEI_TEST_CLEANUP'], undefined);
+});
+
+test('media upload accepts valid image magic bytes and rejects forged MIME', async () => {
+    const login = await request('POST', '/api/login', {
+        username: 'admin',
+        password: 'Test-password-123'
+    });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const csrf = login.json.csrfToken;
+
+    // Fake PNG with invalid magic bytes
+    const fakePng = await request(
+        'POST',
+        '/api/upload-media',
+        {
+            data: 'data:image/png;base64,' + Buffer.from('not-a-real-png-image').toString('base64'),
+            type: 'image/png'
+        },
+        cookie,
+        { 'x-nkiot-csrf': csrf }
+    );
+    assert.equal(fakePng.status, 400);
+    assert.match(fakePng.json.error, /Nội dung tệp không khớp/);
+
+    // Valid 1x1 PNG header
+    const validPngBytes = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52
+    ]);
+    const validPng = await request(
+        'POST',
+        '/api/upload-media',
+        {
+            data: 'data:image/png;base64,' + validPngBytes.toString('base64'),
+            type: 'image/png'
+        },
+        cookie,
+        { 'x-nkiot-csrf': csrf }
+    );
+    assert.equal(validPng.status, 200);
+    assert.equal(validPng.json.success, true);
+    assert.ok(validPng.json.url.startsWith('/uploads/'));
+});
+
+test('unsafe media edits and imports are rejected atomically', () => {
+    const before = app.revision();
+    const edit = app.project(db.getAllData(), admin);
+    edit.products[0].images = ['javascript:alert(1)'];
+    assert.throws(() => command('edit', edit), { status: 422 });
+    assert.throws(
+        () =>
+            command('import', {
+                branch: 'A',
+                supplierCode: 'S',
+                paid: 0,
+                paymentMethod: 'cash',
+                items: [
+                    {
+                        code: 'SP',
+                        qty: 1,
+                        price: 50000,
+                        hasImei: true,
+                        imeis: ['NEW'],
+                        imeiDetails: { NEW: { images: ['x" onerror="alert(1)'] } }
+                    }
+                ]
+            }),
+        { status: 422 }
+    );
+    assert.equal(app.revision(), before);
+    assert.equal(db.getAllData().products[0].stock, 3);
+    assert.equal(db.getAllData().imports.length, 0);
+});
+
+function patchTable(table, upsert = [], remove = []) {
+    return { tables: { [table]: { upsert, remove } }, settings: {} };
+}
+test('catalog patch preserves other rows, supports deletion, and replays exactly once', () => {
+    const row = { ...db.getAllData().customers[0], name: 'Patched customer' };
+    const requestId = crypto.randomUUID(),
+        rev = app.revision();
+    const payload = patchTable('customers', [row]);
+    const before = db.getAllData();
+    command('catalogPatch', payload, rev, requestId);
+    assert.equal(db.getAllData().customers[0].name, row.name);
+    assert.deepEqual(db.getAllData().products, before.products);
+    assert.deepEqual(db.getAllData().suppliers, before.suppliers);
+    assert.equal(command('catalogPatch', payload, rev, requestId).replayed, true);
+    assert.equal(app.revision(), rev + 1);
+    command('catalogPatch', patchTable('customers', [], [row.id]));
+    assert.equal(db.getAllData().customers.length, 0);
+});
+test('catalog patch rejects stale revision, history deletion and protected tables atomically', () => {
+    const rev = app.revision();
+    sell();
+    assert.throws(() => command('catalogPatch', patchTable('customers'), rev), { status: 409 });
+    assert.throws(() => command('catalogPatch', patchTable('invoices')), { status: 403 });
+    assert.throws(() => command('catalogPatch', patchTable('__proto__')), { status: 403 });
+    assert.throws(() => command('catalogPatch', patchTable('products', [], ['SP'])), {
+        status: 422
+    });
+    const customer = db.getAllData().customers[0];
+    assert.throws(() => command('catalogPatch', patchTable('customers', [customer, customer])), {
+        status: 422
+    });
+    assert.throws(
+        () => command('catalogPatch', patchTable('customers', [customer], [customer.id])),
+        { status: 422 }
+    );
+    assert.equal(app.revision(), rev + 1);
+    assert.equal(db.getAllData().invoices.length, 1);
+});
+test('catalog patch enforces branch and table permissions including removals', () => {
+    const data = db.getAllData();
+    const staff = {
+        ...data.users[0],
+        id: 'STAFF',
+        username: 'staff',
+        role: 'custom',
+        branch: 'A',
+        branches: ['A'],
+        permissions: { products: true }
+    };
+    data.users.push(staff);
+    data.products.push({ ...data.products[0], id: 'OTHER', branch: 'B', stock: 0, imeis: [] });
+    db.saveAllData(data);
+    const run = (payload) =>
+        command('catalogPatch', payload, app.revision(), crypto.randomUUID(), staff);
+    assert.throws(() => run(patchTable('products', [{ ...data.products[1], price: 42 }])), {
+        status: 403
+    });
+    assert.throws(() => run(patchTable('products', [], ['OTHER'])), { status: 403 });
+    assert.throws(
+        () => run(patchTable('customers', [{ ...data.customers[0], name: 'Forbidden' }])),
+        { status: 403 }
+    );
+    assert.throws(() => run({ tables: {}, settings: { storeName: 'Forbidden' } }), { status: 403 });
+    run(patchTable('products', [{ ...data.products[0], price: 42000 }]));
+    assert.equal(db.getAllData().products.find((p) => p.id === 'SP').price, 42000);
+    assert.equal(db.getAllData().products.find((p) => p.id === 'OTHER').price, 100000);
+});
+test('password-only catalog patch is hashed and cannot bypass user management restrictions', () => {
+    const row = { ...require('../security').publicUser(admin), password: 'Changed-password-123' };
+    command('catalogPatch', patchTable('users', [row]));
+    assert.ok(
+        require('../security').verifyPassword(
+            'Changed-password-123',
+            db.getAllData().users[0].password
+        )
+    );
+    assert.throws(
+        () => command('catalogPatch', patchTable('users', [{ ...row, status: 'locked' }])),
+        { status: 422 }
+    );
+});
+test('settings patch changes only supplied keys and cannot persist UI branch selection', () => {
+    const before = db.getAllData().settings;
+    command('catalogPatch', { tables: {}, settings: { storeName: 'New store' } });
+    assert.deepEqual(db.getAllData().settings, { ...before, storeName: 'New store' });
+    assert.throws(() => command('catalogPatch', { tables: {}, settings: { branch: 'B' } }), {
+        status: 422
+    });
+});
+
+test('branch-only patch renames linked empty products and user scopes on the server', () => {
+    const data = db.getAllData();
+    data.products[0].stock = 0;
+    data.products[0].imeis = [];
+    data.products[0].id = 'SP_A';
+    db.saveAllData(data);
+    command('catalogPatch', patchTable('branches', [{ ...data.branches[0], name: 'Renamed' }]));
+    const next = db.getAllData();
+    assert.equal(next.products.find((p) => p.branch === 'Renamed').id, 'SP_Renamed');
+    assert.equal(next.users[0].branch, 'Renamed');
+    assert.deepEqual(next.users[0].branches, ['Renamed', 'B']);
+    assert.equal(next.settings.branch, 'Renamed');
+});
+
+function normalizeSaleComparison(value) {
+    if (Array.isArray(value)) return value.map(normalizeSaleComparison);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+            key,
+            ['time', 'createdAt', 'lastSyncAt', 'sharedAt'].includes(key)
+                ? '<time>'
+                : key === 'id' && typeof item === 'string' && item.startsWith('act_')
+                  ? '<activity>'
+                  : normalizeSaleComparison(item)
+        ])
+    );
+}
+test('direct sale matches snapshot writer for money, serials, sharing and successive document order', () => {
+    const seed = db.getAllData();
+    seed.products.push({
+        ...seed.products[0],
+        id: 'PLAIN',
+        code: 'PLAIN',
+        hasImei: false,
+        imeis: [],
+        stock: 10
+    });
+    seed.shared_products = [
+        {
+            id: 'SH',
+            sourceProductId: 'SP',
+            ownerUserId: 'ADMIN',
+            ownerBranch: 'A',
+            status: 'active',
+            name: 'Product',
+            price: 100000
+        }
+    ];
+    const run = (mode) => {
+        process.env.NKIOT_SALE_WRITE_MODE = mode;
+        db.saveAllData(structuredClone(seed));
+        db.getDb().exec(
+            'DELETE FROM audit_log; DELETE FROM processed_requests; DELETE FROM hub_outbox'
+        );
+        sell({
+            customerId: 'C',
+            discount: 12345,
+            payments: [
+                { method: 'cash', amount: 20000 },
+                { method: 'transfer', amount: 30000 }
+            ]
+        });
+        sell({ items: [{ code: 'PLAIN', qty: 2 }], given: 200000 });
+        sell({ customerId: 'C', given: 0, items: [{ code: 'SP', qty: 1, imeis: ['I3'] }] });
+        return normalizeSaleComparison(db.getAllData());
+    };
+    const previousMode = process.env.NKIOT_SALE_WRITE_MODE;
+    try {
+        const legacy = run('snapshot');
+        const direct = run('direct');
+        assert.deepEqual(direct, legacy);
+        assert.equal(direct.invoices.length, 3);
+        assert.equal(direct.cashbook.length, 3);
+        assert.deepEqual(direct.products[0].imeis, ['I2']);
+    } finally {
+        if (previousMode === undefined) delete process.env.NKIOT_SALE_WRITE_MODE;
+        else process.env.NKIOT_SALE_WRITE_MODE = previousMode;
+    }
+});
+test('direct sale writes neither historical documents nor unrelated tables', () => {
+    sell();
+    const d = db.getDb();
+    d.exec(`CREATE TEMP TRIGGER no_old_invoice_update BEFORE UPDATE ON invoices BEGIN SELECT RAISE(ABORT,'old invoice touched'); END;
+        CREATE TEMP TRIGGER no_old_invoice_delete BEFORE DELETE ON invoices BEGIN SELECT RAISE(ABORT,'old invoice deleted'); END;
+        CREATE TEMP TRIGGER no_old_cash_update BEFORE UPDATE ON cashbook BEGIN SELECT RAISE(ABORT,'old cash touched'); END;
+        CREATE TEMP TRIGGER no_settings_delete BEFORE DELETE ON settings BEGIN SELECT RAISE(ABORT,'settings touched'); END;`);
+    try {
+        sell();
+        assert.equal(db.getAllData().invoices.length, 2);
+    } finally {
+        for (const name of [
+            'no_old_invoice_update',
+            'no_old_invoice_delete',
+            'no_old_cash_update',
+            'no_settings_delete'
+        ])
+            d.exec(`DROP TRIGGER ${name}`);
+    }
+});
+test('failure after direct SQL writes rolls back stock, documents, audit and outbox', () => {
+    const d = db.getDb(),
+        before = db.readSnapshot(),
+        rev = app.revision();
+    const pending = d.prepare('SELECT COUNT(*) AS n FROM hub_outbox').get().n;
+    d.exec(
+        "CREATE TEMP TRIGGER reject_sale_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT,'forced audit failure'); END"
+    );
+    try {
+        assert.throws(() => sell(), /forced audit failure/);
+        assert.deepEqual(db.getAllData(), before);
+        assert.equal(app.revision(), rev);
+        assert.equal(d.prepare('SELECT COUNT(*) AS n FROM hub_outbox').get().n, pending);
+        assert.equal(d.prepare('SELECT COUNT(*) AS n FROM processed_requests').get().n, 0);
+        assert.equal(before.products[0].stock, 3);
+    } finally {
+        d.exec('DROP TRIGGER reject_sale_audit');
+    }
+    sell();
+    assert.equal(db.getAllData().products[0].stock, 2);
+});
+test('selective sale draft shares frozen history but isolates mutable inventory', () => {
+    sell();
+    const snapshot = db.readSnapshot(),
+        d = db.getDb();
+    d.exec('BEGIN IMMEDIATE');
+    try {
+        const { base, data } = db.readSaleForWrite({
+            branch: 'A',
+            items: [{ code: 'SP' }],
+            customerId: 'C'
+        });
+        assert.equal(base, snapshot);
+        assert.equal(data.invoices[0], snapshot.invoices[0]);
+        assert.notEqual(data.products[0], snapshot.products[0]);
+        assert.notEqual(data.customers[0], snapshot.customers[0]);
+        data.products[0].imeis.pop();
+        assert.equal(snapshot.products[0].imeis.length, 2);
+        assert.throws(() => {
+            data.invoices[0].total = 0;
+        }, TypeError);
+    } finally {
+        d.exec('ROLLBACK');
+    }
+});
+test('direct sale observes another connection writes rather than reusing a stale snapshot', () => {
+    db.readSnapshot();
+    const other = new (require('node:sqlite').DatabaseSync)(process.env.MINIKIOT_DB_PATH);
+    try {
+        other.prepare("UPDATE products SET price=200000 WHERE id='SP'").run();
+    } finally {
+        other.close();
+    }
+    const result = sell({ given: 200000 });
+    assert.equal(result.total, 200000);
+    assert.equal(db.readSnapshot().products[0].stock, 2);
+});
+test('direct sale falls back safely for a legacy table with extra columns', () => {
+    const d = db.getDb();
+    d.exec("ALTER TABLE invoices ADD COLUMN legacyMarker TEXT DEFAULT 'kept'");
+    try {
+        sell();
+        sell();
+        assert.equal(db.getAllData().invoices.length, 2);
+        assert.equal(
+            d.prepare("SELECT COUNT(*) AS n FROM invoices WHERE legacyMarker='kept'").get().n,
+            2
+        );
+    } finally {
+        d.exec('ALTER TABLE invoices DROP COLUMN legacyMarker');
+    }
+});
+
+test('invoice list route requires a session and invoice permission', async () => {
+    assert.equal((await request('GET', '/api/invoices')).status, 401);
+    const login = await request('POST', '/api/login', {
+        username: 'admin',
+        password: 'Test-password-123'
+    });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    sell();
+    const page = await request('GET', '/api/invoices?branch=A&pageSize=1', undefined, cookie);
+    assert.equal(page.status, 200);
+    assert.equal(page.json.rows.length, 1);
+    assert.equal(page.json.rows[0].items, undefined);
+    const data = db.getAllData();
+    data.users[0].role = 'custom';
+    data.users[0].permissions = { pos: true };
+    db.saveAllData(data);
+    assert.equal((await request('GET', '/api/invoices?branch=A', undefined, cookie)).status, 403);
+});
+
+test('manager cannot reset or move an existing employee from another branch', () => {
+    const d = db.getAllData();
+    const manager = {
+        ...d.users[0],
+        id: 'MA',
+        code: 'MA',
+        username: 'ma',
+        role: 'manager',
+        branch: 'A',
+        branches: ['A'],
+        permissions: { users: true }
+    };
+    const victim = {
+        ...manager,
+        id: 'VB',
+        code: 'VB',
+        username: 'vb',
+        branch: 'B',
+        branches: ['B'],
+        permissions: {}
+    };
+    d.users.push(manager, victim);
+    db.saveAllData(d);
+    const before = db.getAllData();
+    for (const changes of [
+        { name: 'Changed' },
+        { branch: 'A', branches: ['A'], password: 'Hijacked-password' }
+    ]) {
+        assert.throws(
+            () =>
+                command(
+                    'catalogPatch',
+                    {
+                        tables: {
+                            users: { upsert: [{ ...victim, password: '', ...changes }], remove: [] }
+                        },
+                        settings: {}
+                    },
+                    app.revision(),
+                    crypto.randomUUID(),
+                    manager
+                ),
+            { status: 403 }
+        );
+        assert.deepEqual(db.getAllData(), before);
+    }
+});
+
+test('partial serial return restores selected device and cancellation restores only remaining serials', () => {
+    const inv = sell({ items: [{ code: 'SP', qty: 3 }], given: 300000 });
+    const before = db.getAllData();
+    for (const imeis of [undefined, ['OTHER'], ['I1', 'I1']]) {
+        assert.throws(() =>
+            command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1, imeis }] })
+        );
+        assert.deepEqual(db.getAllData(), before);
+    }
+    const ret = command('return', {
+        invoiceId: inv.id,
+        items: [{ code: 'SP', qty: 1, imeis: ['I2'] }]
+    }).result;
+    assert.deepEqual(ret.items[0].imeis, ['I2']);
+    assert.deepEqual(db.getAllData().products[0].imeis, ['I2']);
+    assert.throws(() =>
+        command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1, imeis: ['I2'] }] })
+    );
+    const cancelled = command('cancel', { invoiceId: inv.id }).result;
+    assert.deepEqual(cancelled.items[0].imeis, ['I1', 'I3']);
+    assert.equal(db.getAllData().products[0].stock, 3);
+});
+
+test('return restores weighted historic cost and rejects missing historical cost atomically', () => {
+    const inv = sell({ items: [{ code: 'SP', qty: 3 }], given: 300000 });
+    command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 1, price: 300000, imeis: ['NEW'] }],
+        paid: 300000,
+        paymentMethod: 'cash'
+    });
+    command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1, imeis: ['I2'] }] });
+    assert.equal(db.getAllData().products[0].costPrice, 175000);
+    const d = db.getAllData();
+    delete d.invoices[0].items[0].costPrice;
+    db.saveAllData(d);
+    const before = db.getAllData();
+    assert.throws(() => command('cancel', { invoiceId: inv.id }), /giá vốn lịch sử/);
+    assert.deepEqual(db.getAllData(), before);
+});
+
+test('shared catalog follows sale, return, catalog edits and only publishes in-stock serials', () => {
+    const hub = require('../hub-client');
+    const d = db.getAllData();
+    d.products[0].imeiDetails = { I1: { images: [] }, I2: { images: [] }, I3: { images: [] } };
+    db.saveAllData(d);
+    command('shareProduct', { productId: 'SP' });
+    const inv = sell({ items: [{ code: 'SP', qty: 3 }], given: 300000 });
+    assert.deepEqual(hub.localCatalog(db.getAllData())[0].imeis, []);
+    command('return', { invoiceId: inv.id, items: [{ code: 'SP', qty: 1, imeis: ['I2'] }] });
+    let shared = hub.localCatalog(db.getAllData())[0];
+    assert.equal(shared.availability, 'in_stock');
+    assert.deepEqual(shared.imeis, ['I2']);
+    assert.deepEqual(Object.keys(shared.imeiDetails), ['I2']);
+    const p = db.getAllData().products[0];
+    command('catalogPatch', {
+        tables: { products: { upsert: [{ ...p, price: 250000, status: 'archived' }], remove: [] } },
+        settings: {}
+    });
+    shared = hub.localCatalog(db.getAllData())[0];
+    assert.equal(shared.price, 250000);
+    assert.equal(shared.availability, 'out_of_stock');
+    assert.deepEqual(shared.imeis, []);
+});
+
+test('shared availability updates after import, transfer, receive, stocktake and import cancellation', () => {
+    const d = db.getAllData();
+    Object.assign(d.products[0], { stock: 0, hasImei: false, imeis: [] });
+    d.products.push({ ...d.products[0], id: 'BSP', branch: 'B' });
+    db.saveAllData(d);
+    command('shareProduct', { productId: 'SP' });
+    command('shareProduct', { productId: 'BSP' });
+    const availability = (id) =>
+        db.getAllData().shared_products.find((s) => s.sourceProductId === id).availability;
+    const payload = {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 1, price: 50000 }],
+        paid: 50000,
+        paymentMethod: 'cash'
+    };
+    const imp = command('import', payload).result;
+    assert.equal(availability('SP'), 'in_stock');
+    command('cancel_import', { importId: imp.id });
+    assert.equal(availability('SP'), 'out_of_stock');
+    command('import', payload);
+    const transfer = command('transfer', {
+        fromBranch: 'A',
+        toBranch: 'B',
+        items: [{ code: 'SP', qty: 1 }]
+    }).result;
+    assert.equal(availability('SP'), 'out_of_stock');
+    command('receive', { id: transfer.id });
+    assert.equal(availability('BSP'), 'in_stock');
+    command('stocktake', {
+        branch: 'B',
+        items: [{ code: 'SP', systemStock: 1, actualStock: 0 }],
+        balance: true
+    });
+    assert.equal(availability('BSP'), 'out_of_stock');
 });

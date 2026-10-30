@@ -236,6 +236,31 @@ function exportTableToCSV(type) {
                 (p) => (p.branch || FALLBACK_BRANCH) === currentBranch
             );
         }
+        if (typeof productFilterCategory !== 'undefined' && productFilterCategory !== 'all') {
+            exportList = exportList.filter((p) => p.category === productFilterCategory);
+        }
+        if (typeof productFilterStock !== 'undefined') {
+            if (productFilterStock === 'warning') {
+                exportList = exportList.filter(
+                    (p) => (p.minStock || 0) > 0 && p.stock < p.minStock
+                );
+            } else if (productFilterStock === 'out') {
+                exportList = exportList.filter((p) => p.stock === 0);
+            } else if (productFilterStock === 'in') {
+                exportList = exportList.filter((p) => p.stock > 0);
+            }
+        }
+        const prodQ = (document.getElementById('product-search-input')?.value || '')
+            .toLowerCase()
+            .trim();
+        if (prodQ) {
+            exportList = exportList.filter(
+                (p) =>
+                    (p.name || '').toLowerCase().includes(prodQ) ||
+                    (p.code || '').toLowerCase().includes(prodQ) ||
+                    (p.barcode && p.barcode.toLowerCase().includes(prodQ))
+            );
+        }
         rows = exportList.map((p) => [
             p.code,
             `"${(p.name || '').replace(/"/g, '""')}"`,
@@ -247,6 +272,42 @@ function exportTableToCSV(type) {
             `"${p.unit || ''}"`,
             `"${p.branch || currentBranch}"`
         ]);
+    } else if (type === 'sharedWarehouse') {
+        filename = `Kho_chung_doi_tac_${new Date().toISOString().slice(0, 10)}.csv`;
+        headers = [
+            'Mã kho chung',
+            'Mã SKU gốc',
+            'Tên sản phẩm',
+            'Nhóm hàng',
+            'Giá bán lẻ',
+            'Giá sỉ chia sẻ',
+            'SL tối thiểu',
+            'Trạng thái kho',
+            'Nhà bán hàng',
+            'Chi nhánh',
+            'Số điện thoại',
+            'Ghi chú'
+        ];
+        rows = (KVStore.data.shared_products || [])
+            .filter((sp) => sp.status === 'active')
+            .map((sp) => [
+                sp.id,
+                sp.code,
+                `"${(sp.name || '').replace(/"/g, '""')}"`,
+                `"${sp.category || ''}"`,
+                sp.price || 0,
+                sp.wholesalePrice || 0,
+                sp.minOrderQty || 1,
+                sp.availability === 'in_stock'
+                    ? 'Còn hàng'
+                    : sp.availability === 'low_stock'
+                      ? 'Sắp hết'
+                      : 'Hết hàng',
+                `"${(sp.ownerName || '').replace(/"/g, '""')}"`,
+                `"${sp.ownerBranch || ''}"`,
+                `"${sp.ownerPhone || ''}"`,
+                `"${(sp.note || '').replace(/"/g, '""')}"`
+            ]);
     } else if (type === 'invoices') {
         filename = `Danh_sach_hoa_don_${branchTag}_${new Date().toISOString().slice(0, 10)}.csv`;
         headers = [
@@ -263,6 +324,18 @@ function exportTableToCSV(type) {
         ];
         rows = (KVStore.data.invoices || [])
             .filter((i) => isAll || (i.branch || FALLBACK_BRANCH) === currentBranch)
+            .filter((i) =>
+                matchesDocumentFilter(i, {
+                    kind: 'invoices',
+                    q: document.getElementById('invoice-search-input')?.value || '',
+                    date: document.getElementById('invoice-date-filter')?.value || 'all',
+                    status: invoiceStatusFilter,
+                    returned:
+                        !!i.hasReturned ||
+                        (KVStore.data.returns || []).some((r) => r.invoiceCode === i.code),
+                    starred: isRecordStarred(`inv:${i.code}`)
+                })
+            )
             .map((i) => [
                 i.code,
                 `"${i.time || ''}"`,
@@ -291,6 +364,15 @@ function exportTableToCSV(type) {
         ];
         rows = (KVStore.data.imports || [])
             .filter((imp) => isAll || (imp.branch || FALLBACK_BRANCH) === currentBranch)
+            .filter((imp) =>
+                matchesDocumentFilter(imp, {
+                    kind: 'imports',
+                    q: document.getElementById('import-search-input')?.value || '',
+                    date: document.getElementById('import-date-filter')?.value || 'all',
+                    status: document.getElementById('import-status-filter')?.value || 'all',
+                    starred: isRecordStarred(`imp:${imp.code}`)
+                })
+            )
             .map((imp) => [
                 imp.code,
                 `"${imp.time || ''}"`,
@@ -314,15 +396,26 @@ function exportTableToCSV(type) {
             'Nợ hiện tại',
             'Điểm tích lũy'
         ];
-        rows = (KVStore.data.customers || []).map((c) => [
-            c.code,
-            `"${(c.name || '').replace(/"/g, '""')}"`,
-            `"${c.phone || ''}"`,
-            `"${(c.address || '').replace(/"/g, '""')}"`,
-            c.totalSpent || 0,
-            c.debt || 0,
-            c.points || 0
-        ]);
+        const custQ = (document.getElementById('customer-search-input')?.value || '')
+            .toLowerCase()
+            .trim();
+        rows = (KVStore.data.customers || [])
+            .filter(
+                (c) =>
+                    !custQ ||
+                    (c.name || '').toLowerCase().includes(custQ) ||
+                    (c.phone || '').includes(custQ) ||
+                    (c.code || '').toLowerCase().includes(custQ)
+            )
+            .map((c) => [
+                c.code,
+                `"${(c.name || '').replace(/"/g, '""')}"`,
+                `"${c.phone || ''}"`,
+                `"${(c.address || '').replace(/"/g, '""')}"`,
+                c.totalSpent || 0,
+                c.debt || 0,
+                c.points || 0
+            ]);
     } else if (type === 'suppliers') {
         filename = `Danh_sach_nha_cung_cap_${new Date().toISOString().slice(0, 10)}.csv`;
         headers = [
@@ -333,14 +426,25 @@ function exportTableToCSV(type) {
             'Tổng tiền mua',
             'Nợ cần trả'
         ];
-        rows = (KVStore.data.suppliers || []).map((s) => [
-            s.code,
-            `"${(s.name || '').replace(/"/g, '""')}"`,
-            `"${s.phone || ''}"`,
-            `"${(s.address || '').replace(/"/g, '""')}"`,
-            s.totalBought || 0,
-            s.debt || 0
-        ]);
+        const supQ = (document.getElementById('supplier-search-input')?.value || '')
+            .toLowerCase()
+            .trim();
+        rows = (KVStore.data.suppliers || [])
+            .filter(
+                (s) =>
+                    !supQ ||
+                    (s.name || '').toLowerCase().includes(supQ) ||
+                    (s.phone || '').includes(supQ) ||
+                    (s.code || '').toLowerCase().includes(supQ)
+            )
+            .map((s) => [
+                s.code,
+                `"${(s.name || '').replace(/"/g, '""')}"`,
+                `"${s.phone || ''}"`,
+                `"${(s.address || '').replace(/"/g, '""')}"`,
+                s.totalBought || 0,
+                s.debt || 0
+            ]);
     } else if (type === 'cashbook') {
         filename = `So_quy_${branchTag}_${new Date().toISOString().slice(0, 10)}.csv`;
         headers = [
@@ -354,8 +458,16 @@ function exportTableToCSV(type) {
             'Chi nhánh',
             'Ghi chú'
         ];
+        const cbDate = document.getElementById('cashbook-date-filter')?.value || 'all';
+        const cbFund = document.getElementById('cashbook-fund-filter')?.value || 'all';
         rows = (KVStore.data.cashbook || [])
             .filter((tx) => isAll || (tx.branch || FALLBACK_BRANCH) === currentBranch)
+            .filter((tx) => cbDate === 'all' || matchesDateFilter(tx.time, cbDate))
+            .filter((tx) => {
+                if (cbFund === 'cash') return (tx.method || '').toLowerCase().includes('tiền mặt');
+                if (cbFund === 'bank') return !(tx.method || '').toLowerCase().includes('tiền mặt');
+                return true;
+            })
             .map((tx) => [
                 tx.code,
                 `"${tx.time || ''}"`,
@@ -425,8 +537,47 @@ function exportTableToCSV(type) {
             ]);
     }
 
-    const csvRows = [headers.join(',')];
-    rows.forEach((r) => csvRows.push(r.join(',')));
+    function formatCsvCell(val) {
+        let str = String(val ?? '');
+        if (str.startsWith('"') && str.endsWith('"') && str.length >= 2) {
+            str = str.slice(1, -1).replace(/""/g, '"');
+        }
+        str = str.replace(/"/g, '""');
+        if (/^[=+\-@\t\r]/.test(str)) {
+            str = "'" + str;
+        }
+        return `"${str}"`;
+    }
+
+    const tbodyIdMap = {
+        products: 'products-tbody',
+        sharedWarehouse: 'shared-products-tbody',
+        invoices: 'invoice-tbody',
+        imports: 'import-tbody',
+        customers: 'customers-tbody',
+        suppliers: 'suppliers-tbody',
+        cashbook: 'cashbook-tbody',
+        stocktakes: 'stocktakes-tbody',
+        transfers: 'transfers-tbody'
+    };
+    const targetTbody = document.getElementById(tbodyIdMap[type] || '');
+    const checkedBoxes = targetTbody
+        ? [...targetTbody.querySelectorAll('input.kv-checkbox:checked')]
+        : [];
+    if (checkedBoxes.length > 0) {
+        const selectedCodes = new Set(
+            checkedBoxes
+                .map((cb) => {
+                    const tr = cb.closest('tr');
+                    return tr?.dataset.exportKey || '';
+                })
+                .filter(Boolean)
+        );
+        rows = rows.filter((r) => selectedCodes.has(String(r[0])));
+    }
+
+    const csvRows = [headers.map(formatCsvCell).join(',')];
+    rows.forEach((r) => csvRows.push(r.map(formatCsvCell).join(',')));
     const csvContent = '\uFEFF' + csvRows.join('\r\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -437,5 +588,10 @@ function exportTableToCSV(type) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast(`Đã xuất file ${filename} thành công!`, 'success');
+    showToast(
+        checkedBoxes.length > 0
+            ? `Đã xuất ${rows.length} dòng đã chọn ra file ${filename}!`
+            : `Đã xuất file ${filename} thành công!`,
+        'success'
+    );
 }

@@ -2,17 +2,12 @@
 // Utilizes Node.js v24 built-in module 'node:sqlite' (zero npm dependencies)
 
 const { DatabaseSync } = require('node:sqlite');
-const path = require('path');
 const fs = require('fs');
 const { defaultData } = require('./data.js');
 
-const DB_PATH =
-    process.env.NKIOT_DB_PATH ||
-    process.env.MINIKIOT_DB_PATH ||
-    (fs.existsSync(path.join(__dirname, 'nkiot.db'))
-        ? path.join(__dirname, 'nkiot.db')
-        : path.join(__dirname, 'minikiot.db'));
+const DB_PATH = require('./runtime-paths').resolveDbPath();
 const { hashPassword } = require('./security.js');
+const { applyMigrations, repairData } = require('./migrations.js');
 const { FALLBACK_BRANCH, RETAIL_CUSTOMER_CODE } = require('./constants.js');
 const ENTITY_TABLES = [
     'branches',
@@ -26,9 +21,12 @@ const ENTITY_TABLES = [
     'returns',
     'stocktakes',
     'transfers',
-    'users'
+    'users',
+    'shared_products',
+    'share_orders'
 ];
 let db = null;
+const actualDbPath = DB_PATH;
 
 function isNetworkPath(filepath) {
     if (process.env.NKIOT_JOURNAL_MODE) {
@@ -43,10 +41,26 @@ function isNetworkPath(filepath) {
     return false;
 }
 
+function openDatabaseHandle() {
+    let inst = null;
+    try {
+        inst = new DatabaseSync(actualDbPath);
+        inst.exec('SELECT 1;');
+        return inst;
+    } catch (err) {
+        if (inst) {
+            try {
+                inst.close();
+            } catch {}
+        }
+        throw err;
+    }
+}
+
 function getDb() {
     if (!db) {
-        db = new DatabaseSync(DB_PATH);
-        if (!isNetworkPath(DB_PATH)) {
+        db = openDatabaseHandle();
+        if (!isNetworkPath(actualDbPath)) {
             try {
                 db.exec('PRAGMA journal_mode = WAL;');
             } catch {
@@ -63,6 +77,17 @@ function getDb() {
         db.exec('PRAGMA busy_timeout = 5000;');
     }
     return db;
+}
+
+function closeDb() {
+    if (db) {
+        try {
+            db.close();
+        } catch {}
+    }
+    db = null;
+    snapshot = null;
+    snapshotKey = '';
 }
 
 function initDb() {
@@ -116,7 +141,13 @@ function initDb() {
             barcode TEXT,
             branch TEXT,
             hasImei INTEGER DEFAULT 0,
-            imeis TEXT DEFAULT '[]'
+            imeis TEXT DEFAULT '[]',
+            images TEXT DEFAULT '[]',
+            videoUrl TEXT DEFAULT '',
+            condition TEXT DEFAULT 'new',
+            conditionDetail TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            imeiDetails TEXT DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS customers (
@@ -243,35 +274,56 @@ function initDb() {
             status TEXT DEFAULT 'active',
             permissions TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS shared_products (
+            id TEXT PRIMARY KEY,
+            sourceProductId TEXT NOT NULL,
+            ownerUserId TEXT NOT NULL,
+            ownerBranch TEXT NOT NULL,
+            ownerName TEXT DEFAULT '',
+            ownerPhone TEXT DEFAULT '',
+            code TEXT,
+            name TEXT,
+            category TEXT,
+            price REAL DEFAULT 0,
+            unit TEXT,
+            barcode TEXT,
+            availability TEXT DEFAULT 'in_stock',
+            minOrderQty INTEGER DEFAULT 1,
+            wholesalePrice REAL DEFAULT 0,
+            note TEXT DEFAULT '',
+            images TEXT DEFAULT '[]',
+            videoUrl TEXT DEFAULT '',
+            condition TEXT DEFAULT 'new',
+            conditionDetail TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            sharedAt TEXT,
+            lastSyncAt TEXT,
+            status TEXT DEFAULT 'active',
+            imeiDetails TEXT DEFAULT '{}'
+        );
+
+        CREATE TABLE IF NOT EXISTS share_orders (
+            id TEXT PRIMARY KEY,
+            code TEXT,
+            time TEXT,
+            requesterId TEXT NOT NULL,
+            requesterName TEXT DEFAULT '',
+            requesterBranch TEXT DEFAULT '',
+            ownerId TEXT NOT NULL,
+            ownerName TEXT DEFAULT '',
+            ownerBranch TEXT DEFAULT '',
+            items TEXT DEFAULT '[]',
+            totalAmount REAL DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            note TEXT DEFAULT '',
+            responseNote TEXT DEFAULT '',
+            respondedAt TEXT,
+            completedAt TEXT
+        );
     `);
 
-        // Migration safeguard: Ensure paymentMethod column exists in imports
-        try {
-            d.exec('ALTER TABLE imports ADD COLUMN paymentMethod TEXT DEFAULT "bank";');
-        } catch {}
-
-        // Migration safeguard: Ensure hasImei and imeis columns exist in products
-        try {
-            d.exec('ALTER TABLE products ADD COLUMN hasImei INTEGER DEFAULT 0;');
-        } catch {}
-        try {
-            d.exec('ALTER TABLE products ADD COLUMN imeis TEXT DEFAULT "[]";');
-        } catch {}
-
-        // Migration safeguard: Ensure users table has branches column
-        try {
-            d.exec('ALTER TABLE users ADD COLUMN branches TEXT DEFAULT "[]";');
-        } catch {}
-
-        d.exec(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY, requestId TEXT UNIQUE, userId TEXT NOT NULL, action TEXT NOT NULL, time TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS processed_requests (id TEXT PRIMARY KEY, userId TEXT NOT NULL, digest TEXT NOT NULL, result TEXT NOT NULL, createdAt TEXT NOT NULL DEFAULT '');
-      INSERT OR IGNORE INTO app_meta VALUES ('revision', '0');`);
-        for (const table of ENTITY_TABLES) {
-            const columns = d.prepare(`PRAGMA table_info(${table})`).all();
-            if (!columns.some((c) => c.name === 'extra'))
-                d.exec(`ALTER TABLE ${table} ADD COLUMN extra TEXT NOT NULL DEFAULT '{}'`);
-        }
+        applyMigrations(d, { entityTables: ENTITY_TABLES });
         try {
             d.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(
                 'logoUrl',
@@ -300,26 +352,7 @@ function initDb() {
             if (!process.env.MINIKIOT_ADMIN_PASSWORD)
                 console.log('Tài khoản admin mới. Mật khẩu dùng lần đầu:', password);
         }
-        try {
-            d.exec("ALTER TABLE processed_requests ADD COLUMN createdAt TEXT NOT NULL DEFAULT ''");
-        } catch {}
-        // Legacy rows have no timestamp; retention starts counting from this upgrade.
-        d.prepare("UPDATE processed_requests SET createdAt=? WHERE createdAt=''").run(
-            new Date().toISOString()
-        );
-        d.exec(
-            'CREATE INDEX IF NOT EXISTS processed_requests_createdAt ON processed_requests(createdAt)'
-        );
-        d.prepare("UPDATE products SET status='archived' WHERE status='inactive'").run();
-        // Migrate existing credentials without changing the user's password or business data.
-        for (const user of d.prepare('SELECT id, password FROM users').all()) {
-            if (!user.password?.startsWith('scrypt$'))
-                d.prepare('UPDATE users SET password=? WHERE id=?').run(
-                    hashPassword(user.password || ''),
-                    user.id
-                );
-        }
-        d.prepare("INSERT OR REPLACE INTO app_meta VALUES ('schema_version', '3')").run();
+        repairData(d);
         d.exec('COMMIT');
     } catch (error) {
         d.exec('ROLLBACK');
@@ -383,7 +416,36 @@ function getAllData() {
                           }
                       })()
                     : r.imeis
-                : []
+                : [],
+            images: r.images
+                ? typeof r.images === 'string'
+                    ? (() => {
+                          try {
+                              return JSON.parse(r.images);
+                          } catch {
+                              return [];
+                          }
+                      })()
+                    : r.images
+                : [],
+            videoUrl: r.videoUrl || '',
+            condition: r.condition || 'new',
+            conditionDetail: r.conditionDetail || '',
+            description: r.description || '',
+            imeiDetails: r.imeiDetails
+                ? typeof r.imeiDetails === 'string'
+                    ? (() => {
+                          try {
+                              const p = JSON.parse(r.imeiDetails);
+                              return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
+                          } catch {
+                              return {};
+                          }
+                      })()
+                    : typeof r.imeiDetails === 'object' && r.imeiDetails !== null
+                      ? r.imeiDetails
+                      : {}
+                : {}
         }));
 
     // 5. Customers
@@ -502,6 +564,62 @@ function getAllData() {
             });
     } catch {}
 
+    // 14. Shared Products
+    let shared_products = [];
+    try {
+        shared_products = d
+            .prepare('SELECT * FROM shared_products ORDER BY rowid')
+            .all()
+            .map((r) => ({
+                ...r,
+                price: Number(r.price) || 0,
+                minOrderQty: Number(r.minOrderQty) || 1,
+                wholesalePrice: Number(r.wholesalePrice) || 0,
+                images: r.images
+                    ? typeof r.images === 'string'
+                        ? (() => {
+                              try {
+                                  return JSON.parse(r.images);
+                              } catch {
+                                  return [];
+                              }
+                          })()
+                        : r.images
+                    : [],
+                videoUrl: r.videoUrl || '',
+                condition: r.condition || 'new',
+                conditionDetail: r.conditionDetail || '',
+                description: r.description || '',
+                imeiDetails: r.imeiDetails
+                    ? typeof r.imeiDetails === 'string'
+                        ? (() => {
+                              try {
+                                  const p = JSON.parse(r.imeiDetails);
+                                  return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
+                              } catch {
+                                  return {};
+                              }
+                          })()
+                        : typeof r.imeiDetails === 'object' && r.imeiDetails !== null
+                          ? r.imeiDetails
+                          : {}
+                    : {}
+            }));
+    } catch {}
+
+    // 15. Share Orders
+    let share_orders = [];
+    try {
+        share_orders = d
+            .prepare('SELECT * FROM share_orders ORDER BY rowid')
+            .all()
+            .map((r) => ({
+                ...r,
+                items: parseItems(r.items),
+                totalAmount: Number(r.totalAmount) || 0
+            }));
+    } catch {}
+
     const result = {
         settings: Object.keys(settings).length
             ? { ...defaultData.settings, ...settings }
@@ -517,10 +635,12 @@ function getAllData() {
         returns,
         stocktakes,
         transfers,
-        users
+        users,
+        shared_products,
+        share_orders
     };
     for (const table of ENTITY_TABLES)
-        result[table] = result[table].map((row) => {
+        result[table] = (result[table] || []).map((row) => {
             const { extra, ...known } = row;
             let fields = {};
             try {
@@ -553,6 +673,7 @@ function getAllData() {
             if (matches.length === 1) inv.customerId = matches[0].id;
         }
     }
+
     const activities = d.prepare("SELECT value FROM app_meta WHERE key='recentActivities'").get();
     result.recentActivities = activities ? JSON.parse(activities.value) : [];
     return result;
@@ -601,6 +722,35 @@ function readForWrite() {
     return snapshot && key === snapshotKey ? structuredClone(snapshot) : getAllData();
 }
 
+// Sale domain mutates selected inventory/customer rows, shared availability, and prepends
+// documents. Everything else remains frozen: unexpected mutations fail instead of leaking
+// into the committed cache. The transaction lock precedes the snapshot version check.
+function readSaleForWrite(input) {
+    const d = getDb();
+    if (!d.isTransaction) throw new Error('readSaleForWrite() requires an open transaction.');
+    const key = `${d.prepare('SELECT total_changes() AS n').get().n}:${
+        d.prepare('PRAGMA data_version').get().data_version
+    }`;
+    const base = snapshot && snapshotKey === key ? snapshot : deepFreeze(getAllData());
+    const codes = new Set(Array.isArray(input?.items) ? input.items.map((row) => row?.code) : []);
+    const data = {
+        ...base,
+        products: base.products.map((row) =>
+            codes.has(row.code) && (row.branch || FALLBACK_BRANCH) === input?.branch
+                ? structuredClone(row)
+                : row
+        ),
+        customers: base.customers.map((row) =>
+            row.id === input?.customerId ? structuredClone(row) : row
+        ),
+        shared_products: structuredClone(base.shared_products),
+        invoices: [...base.invoices],
+        cashbook: [...base.cashbook],
+        recentActivities: [...base.recentActivities]
+    };
+    return { base, data };
+}
+
 // Column order and coercion for each entity table, applied identically on every save.
 // `extra` (fields without a dedicated column) is appended by writeTable().
 const cols = (s) => s.split(' ');
@@ -621,7 +771,7 @@ const ROW_WRITERS = {
     categories: [cols('id name parentId'), (c) => [c.id || '', c.name || '', c.parentId || null]],
     products: [
         cols(
-            'id code name category costPrice price stock minStock unit status barcode branch hasImei imeis'
+            'id code name category costPrice price stock minStock unit status barcode branch hasImei imeis images videoUrl condition conditionDetail description imeiDetails'
         ),
         (p) => [
             p.id || '',
@@ -637,7 +787,15 @@ const ROW_WRITERS = {
             p.barcode || '',
             p.branch || FALLBACK_BRANCH,
             p.hasImei ? 1 : 0,
-            JSON.stringify(Array.isArray(p.imeis) ? p.imeis : [])
+            JSON.stringify(Array.isArray(p.imeis) ? p.imeis : []),
+            JSON.stringify(Array.isArray(p.images) ? p.images : []),
+            p.videoUrl || '',
+            p.condition || 'new',
+            p.conditionDetail || '',
+            p.description || '',
+            typeof p.imeiDetails === 'object' && p.imeiDetails !== null
+                ? JSON.stringify(p.imeiDetails)
+                : '{}'
         ]
     ],
     customers: [
@@ -803,6 +961,63 @@ const ROW_WRITERS = {
                     : u.permissions || '{}'
             ];
         }
+    ],
+    shared_products: [
+        cols(
+            'id sourceProductId ownerUserId ownerBranch ownerName ownerPhone code name category price unit barcode availability minOrderQty wholesalePrice note images videoUrl condition conditionDetail description sharedAt lastSyncAt status imeiDetails'
+        ),
+        (s) => [
+            s.id || '',
+            s.sourceProductId || '',
+            s.ownerUserId || '',
+            s.ownerBranch || '',
+            s.ownerName || '',
+            s.ownerPhone || '',
+            s.code || '',
+            s.name || '',
+            s.category || '',
+            Number(s.price) || 0,
+            s.unit || '',
+            s.barcode || '',
+            s.availability || 'in_stock',
+            Number(s.minOrderQty) || 1,
+            Number(s.wholesalePrice) || 0,
+            s.note || '',
+            JSON.stringify(Array.isArray(s.images) ? s.images : []),
+            s.videoUrl || '',
+            s.condition || 'new',
+            s.conditionDetail || '',
+            s.description || '',
+            s.sharedAt || '',
+            s.lastSyncAt || '',
+            s.status || 'active',
+            typeof s.imeiDetails === 'object' && s.imeiDetails !== null
+                ? JSON.stringify(s.imeiDetails)
+                : '{}'
+        ]
+    ],
+    share_orders: [
+        cols(
+            'id code time requesterId requesterName requesterBranch ownerId ownerName ownerBranch items totalAmount status note responseNote respondedAt completedAt'
+        ),
+        (o) => [
+            o.id || '',
+            o.code || '',
+            o.time || '',
+            o.requesterId || '',
+            o.requesterName || '',
+            o.requesterBranch || '',
+            o.ownerId || '',
+            o.ownerName || '',
+            o.ownerBranch || '',
+            items(o.items),
+            Number(o.totalAmount) || 0,
+            o.status || 'pending',
+            o.note || '',
+            o.responseNote || '',
+            o.respondedAt || null,
+            o.completedAt || null
+        ]
     ]
 };
 
@@ -882,6 +1097,70 @@ function writeTable(d, table, rows, fullRewrite) {
     for (let i = 0; i < first; i++) insert.run(firstRowid - (first - i), ...params[i]);
     const lastRowid = existing[oldIndex.get(newIds[last])]._rowid;
     for (let i = last + 1; i < params.length; i++) insert.run(lastRowid + (i - last), ...params[i]);
+}
+
+// Direct sale persistence. Keep the same column coercion/extra encoding as writeTable.
+// Unusual legacy schemas fall back to the proven writer for that table only.
+function saveSaleData(base, data) {
+    const d = getDb();
+    if (!d.isTransaction) throw new Error('saveSaleData() requires an open transaction.');
+    for (const table of ['products', 'customers', 'shared_products', 'invoices', 'cashbook']) {
+        const previous = base[table],
+            rows = data[table];
+        const [baseColumns, toParams] = ROW_WRITERS[table];
+        const columns = [...baseColumns, 'extra'];
+        const dbColumns = d
+            .prepare(`PRAGMA table_info(${table})`)
+            .all()
+            .map((c) => c.name);
+        if (dbColumns.length !== columns.length || dbColumns.some((c) => !columns.includes(c))) {
+            writeTable(d, table, rows, false);
+            continue;
+        }
+        const known = new Set(dbColumns);
+        const encode = (row) => [
+            ...toParams(row),
+            JSON.stringify(
+                Object.fromEntries(Object.entries(row).filter(([key]) => !known.has(key)))
+            )
+        ];
+        if (table === 'invoices' || table === 'cashbook') {
+            const added = rows.length - previous.length;
+            if (added < 0 || previous.some((row, index) => rows[index + added] !== row))
+                throw new Error(`Sale unexpectedly changed existing ${table}.`);
+            if (!added) continue;
+            const first = d.prepare(`SELECT MIN(rowid) AS n FROM ${table}`).get().n ?? 1;
+            if (!Number.isSafeInteger(first - added))
+                throw new Error(`Row order exceeds safe integer range for ${table}.`);
+            const insert = d.prepare(
+                `INSERT INTO ${table} (rowid,${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')},?)`
+            );
+            for (let i = 0; i < added; i++) insert.run(first - added + i, ...encode(rows[i]));
+        } else {
+            if (rows.length !== previous.length || rows.some((row, i) => row.id !== previous[i].id))
+                throw new Error(`Sale unexpectedly reordered ${table}.`);
+            const update = d.prepare(
+                `UPDATE ${table} SET ${columns
+                    .slice(1)
+                    .map((c) => `${c}=?`)
+                    .join(',')} WHERE id=?`
+            );
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i] === previous[i]) continue;
+                if (
+                    table === 'shared_products' &&
+                    JSON.stringify(rows[i]) === JSON.stringify(previous[i])
+                )
+                    continue;
+                const params = encode(rows[i]);
+                if (update.run(...params.slice(1), params[0]).changes !== 1)
+                    throw new Error(`Sale could not update ${table}/${params[0]}.`);
+            }
+        }
+    }
+    d.prepare("INSERT OR REPLACE INTO app_meta VALUES ('recentActivities', ?)").run(
+        JSON.stringify(data.recentActivities)
+    );
 }
 
 // `options.fullRewrite` forces delete-and-reinsert for every table (used to verify the diff path).
@@ -986,10 +1265,13 @@ module.exports = {
     assertReadableRecords,
     ENTITY_TABLES,
     getDb,
+    closeDb,
     initDb,
     getAllData,
     readSnapshot,
     readForWrite,
+    readSaleForWrite,
+    saveSaleData,
     saveAllData,
     getStats
 };

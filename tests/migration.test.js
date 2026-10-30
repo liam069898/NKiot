@@ -1,4 +1,5 @@
 'use strict';
+require('./test-env');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'),
@@ -13,6 +14,7 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
     const filename = path.join(dir, 'legacy.db');
     const env = {
         ...process.env,
+        NKIOT_DB_PATH: filename,
         MINIKIOT_DB_PATH: filename,
         MINIKIOT_ADMIN_PASSWORD: 'Initial-password-123'
     };
@@ -33,7 +35,9 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
         )
             old.exec(`ALTER TABLE ${name} DROP COLUMN extra`);
     }
-    old.exec('DROP TABLE app_meta; DROP TABLE processed_requests; DROP TABLE audit_log;');
+    old.exec(
+        'DROP TABLE app_meta; DROP TABLE schema_migrations; DROP TABLE processed_requests; DROP TABLE audit_log;'
+    );
     old.prepare("UPDATE users SET password=? WHERE username='admin'").run('Legacy-password-123');
     old.prepare('INSERT INTO invoices (id,code,items,total) VALUES (?,?,?,?)').run(
         'KEEP',
@@ -66,6 +70,13 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
     const upgraded = new DatabaseSync(filename, { readOnly: true });
     try {
         assert.equal(upgraded.prepare('SELECT COUNT(*) AS n FROM products').get().n, 0);
+        assert.deepEqual(
+            upgraded
+                .prepare('SELECT version FROM schema_migrations ORDER BY version')
+                .all()
+                .map((row) => row.version),
+            [1, 2, 3, 4, 5, 6]
+        );
         assert.equal(
             upgraded.prepare("SELECT total FROM invoices WHERE id='KEEP'").get().total,
             321

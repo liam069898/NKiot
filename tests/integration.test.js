@@ -1,4 +1,5 @@
 'use strict';
+require('./test-env');
 const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'),
@@ -7,7 +8,7 @@ const fs = require('node:fs'),
     vm = require('node:vm');
 const { PassThrough } = require('node:stream');
 const { JSDOM } = require('jsdom');
-process.env.MINIKIOT_DB_PATH = path.join(
+process.env.NKIOT_DB_PATH = process.env.MINIKIOT_DB_PATH = path.join(
     fs.mkdtempSync(path.join(os.tmpdir(), 'minikiot-integration-')),
     'test.db'
 );
@@ -132,6 +133,7 @@ function browser() {
         });
     for (const file of [
         'constants.js',
+        'catalog-patch.js',
         'ui-safety.js',
         'client-store.js',
         'app-utils.js',
@@ -265,10 +267,19 @@ test('committed sale with lost response is recovered exactly once and clears ori
         assert.equal(db.getAllData().invoices.length, 1);
         assert.equal(b.w.eval('KVStore.pending().length'), 1);
         assert.equal(b.w.eval('state.posTabs[0].cart.length'), 1);
+        assert.match(
+            b.w.document.getElementById('pos-save-status-text').textContent,
+            /chưa xác nhận/
+        );
+        assert.equal(b.w.document.getElementById('pos-checkout-btn').disabled, true);
+        assert.equal(b.w.document.getElementById('pos-reconcile-btn').disabled, false);
         await b.w.forceSyncDatabase();
         assert.equal(db.getAllData().invoices.length, 1);
         assert.equal(b.w.eval('KVStore.pending().length'), 0);
         assert.equal(b.w.eval('state.posTabs[0].cart.length'), 0);
+        assert.equal(b.w.eval('state.posTabs[0].tenderEdited'), false);
+        assert.match(b.w.document.getElementById('pos-save-status-text').textContent, /Đã kết nối/);
+        assert.equal(b.w.document.getElementById('pos-checkout-btn').disabled, false);
     } finally {
         b.close();
     }
@@ -396,6 +407,201 @@ test('editing a created branch updates branch information and persists', async (
         // Other branches should not be default
         const otherBranches = db.getAllData().branches.filter((br) => br.code !== 'CN_HP');
         assert.ok(otherBranches.every((br) => !br.isDefault));
+    } finally {
+        b.close();
+    }
+});
+
+test('catalog save sends a small patch, retains pending payload and reconciles lost response', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        const originalRequest = b.w.fetch;
+        let envelope;
+        b.w.fetch = (url, options) => {
+            if (url === '/api/command') envelope = JSON.parse(options.body);
+            return originalRequest(url, options);
+        };
+        b.w.eval("KVStore.data.customers[0].name='Patch customer'");
+        b.bridge.loseNextCommand = true;
+        await assert.rejects(b.w.eval('KVStore.save()'));
+        assert.equal(envelope.type, 'catalogPatch');
+        assert.deepEqual(Object.keys(envelope.payload.tables), ['customers']);
+        assert.equal(JSON.stringify(envelope).includes('invoices'), false);
+        const rev = application.revision();
+        b.w.eval("KVStore.data.customers[0].name='Unsent later draft'");
+        await b.w.forceSyncDatabase();
+        assert.equal(application.revision(), rev);
+        assert.equal(b.w.eval('KVStore.pending().length'), 0);
+        assert.equal(db.getAllData().customers[0].name, 'Patch customer');
+        assert.equal(b.w.eval('KVStore.data.customers[0].name'), 'Patch customer');
+    } finally {
+        b.close();
+    }
+});
+
+test('concurrent catalog patches conflict instead of overwriting a newer change', async () => {
+    const a = browser(),
+        b = browser();
+    try {
+        await login(a);
+        await login(b);
+        a.w.eval("KVStore.data.customers[0].name='First writer'");
+        b.w.eval("KVStore.data.customers[0].name='Stale writer'");
+        await a.w.eval('KVStore.save()');
+        await assert.rejects(b.w.eval('KVStore.save()'), { status: 409 });
+        assert.equal(db.getAllData().customers[0].name, 'First writer');
+        assert.equal(b.w.eval('KVStore.recoveryData().rejected.length'), 1);
+    } finally {
+        a.close();
+        b.close();
+    }
+});
+
+test('rejected staff patches never persist passwords and unchanged saves make no request', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        let commands = 0;
+        const fetch = b.w.fetch;
+        b.w.fetch = (url, options) => {
+            if (url === '/api/command') commands++;
+            return fetch(url, options);
+        };
+        const rev = application.revision();
+        await b.w.eval('KVStore.save()');
+        assert.equal(commands, 0);
+        assert.equal(application.revision(), rev);
+        b.w.eval(
+            "KVStore.data.users[0].password='Never-store-123'; KVStore.data.users[0].status='locked'"
+        );
+        await assert.rejects(b.w.eval('KVStore.save()'), { status: 422 });
+        for (let i = 0; i < b.w.localStorage.length; i++)
+            assert.ok(
+                !b.w.localStorage.getItem(b.w.localStorage.key(i)).includes('Never-store-123')
+            );
+        assert.equal(b.w.eval('KVStore.recoveryData().rejected.length'), 1);
+        b.w.eval('KVStore.isDbConnected=false');
+        await assert.rejects(b.w.eval('KVStore.save()'), /Cần kết nối/);
+    } finally {
+        b.close();
+    }
+});
+
+test('invoice paging uses real HTTP filters and refreshes full details before actions', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        const data = db.getAllData();
+        data.invoices = Array.from({ length: 65 }, (_, i) => ({
+            id: `PAGE${i}`,
+            code: `PAGE${i}`,
+            branch: 'Kalo HCM',
+            customer: 'Khách',
+            phone: '090',
+            time: '01/01/2026 10:00',
+            status: 'completed',
+            total: 100,
+            paid: 100,
+            items: [{ code: 'P', name: 'Product', qty: 1, price: 100, total: 100, costPrice: 50 }]
+        }));
+        db.saveAllData(data);
+        db.getDb()
+            .prepare("UPDATE app_meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
+            .run();
+        await b.w.renderInvoices();
+        assert.equal(b.w.document.querySelectorAll('#invoice-tbody tr').length, 50);
+        await b.w.changeInvoicePage(1);
+        assert.equal(b.w.document.querySelectorAll('#invoice-tbody tr').length, 15);
+        assert.ok(b.w.document.getElementById('invoice-tbody').textContent.includes('PAGE50'));
+        await b.w.openInvoiceDetailByCode('PAGE50');
+        assert.equal(b.w.eval('state.selectedInvoice.items.length'), 1);
+        assert.equal(b.w.eval('KVStore.revision'), application.revision());
+        b.w.document.getElementById('invoice-search-input').value = 'PAGE64';
+        await b.w.renderInvoices();
+        assert.equal(b.w.document.querySelectorAll('#invoice-tbody tr').length, 1);
+    } finally {
+        b.close();
+    }
+});
+
+test('return UI submits the selected serial and excludes previously returned devices', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        const inv = await b.w.eval(`KVStore.command('sale', {
+            branch: 'Kalo HCM', items: [{code: 'P', qty: 2, imeis: ['S1', 'S2']}], given: 200000
+        })`);
+        b.w.openReturnModal(inv.code);
+        const select = b.w.document.getElementById('ret-imeis-0');
+        for (const option of select.options) option.selected = option.value === 'S2';
+        select.dispatchEvent(new b.w.Event('change'));
+        assert.equal(b.w.document.getElementById('ret-qty-0').value, '1');
+        await b.w.submitReturnGoods();
+        assert.deepEqual(db.getAllData().returns[0].items[0].imeis, ['S2']);
+        assert.deepEqual(db.getAllData().products[0].imeis, ['S3', 'S2']);
+        b.w.openReturnModal(inv.code);
+        assert.deepEqual(
+            Array.from(b.w.document.getElementById('ret-imeis-0').options, (o) => o.value),
+            ['S1']
+        );
+    } finally {
+        b.close();
+    }
+});
+
+test('import workspace records selected devices and partial payment, then recovers a lost response once', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        b.w.openCreateImportModal();
+        b.w.document.getElementById('import-ncc-select').value = 'S';
+        b.w.selectImportProduct('P');
+        b.w.addImeisToItem('P', ['NEW-1', 'NEW-2']);
+        b.w.updateImportItemPrice('P', 60000);
+        b.w.document.getElementById('import-payment-state').value = 'partial';
+        b.w.updateImportPayment();
+        b.w.document.getElementById('import-paid-input').value = '20000';
+        b.bridge.loseNextCommand = true;
+        await b.w.saveNewImport();
+        assert.equal(db.getAllData().imports.length, 1);
+        assert.equal(db.getAllData().imports[0].paid, 20000);
+        assert.equal(db.getAllData().suppliers[0].debt, 100000);
+        assert.equal(b.w.document.getElementById('import-save').disabled, true);
+        await b.w.saveNewImport();
+        assert.equal(db.getAllData().imports.length, 1);
+        await b.w.reconcileImport();
+        assert.equal(db.getAllData().imports.length, 1);
+        assert.equal(b.w.eval('currentImportItems.length'), 0);
+        assert.equal(b.w.eval('KVStore.pending().length'), 0);
+        assert.equal(db.getAllData().products[0].stock, 5);
+    } finally {
+        b.close();
+    }
+});
+
+test('creating a product from import uses its selected receiving branch without changing navigation', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        b.w.openCreateImportModal();
+        const original = b.w.getCurrentBranch();
+        const branch = b.w.document.getElementById('import-branch');
+        branch.value = 'Chi nhánh Hà Nội';
+        b.w.changeImportBranch();
+        b.w.openAddProductFromImport();
+        setValue(b.w, 'prod-code', 'IMPORT-NEW');
+        setValue(b.w, 'prod-name', 'New receiving branch product');
+        setValue(b.w, 'prod-price', '200000');
+        await b.w.saveProductFromModal({ preventDefault() {} });
+        assert.equal(b.w.getCurrentBranch(), original);
+        assert.equal(b.w.getImportBranch(), 'Chi nhánh Hà Nội');
+        assert.equal(b.w.eval('currentImportItems[0].code'), 'IMPORT-NEW');
+        assert.ok(
+            db
+                .getAllData()
+                .products.some((p) => p.code === 'IMPORT-NEW' && p.branch === 'Chi nhánh Hà Nội')
+        );
     } finally {
         b.close();
     }

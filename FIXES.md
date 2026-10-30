@@ -1,36 +1,29 @@
-# Trạng thái sửa lỗi sau review — 20/10/2026
+# Trạng thái sửa lỗi sau review — 27/10/2026
 
-Đối chiếu các phát hiện trong `CODE_REVIEW.md`. Đây là trạng thái của source sau sửa; dữ liệu vận hành chưa được nâng cấp trực tiếp trong quá trình phát triển.
+Đối chiếu các phát hiện trong `CODE_REVIEW.md` và đợt rà soát toàn diện hệ thống NKiot (Backend, Multi-tenant Hub, Security, POS Business Logic, Frontend UI).
 
-| Phát hiện | Thay đổi và giới hạn |
-| --- | --- |
-| 1. API/mật khẩu | Đăng nhập phía server, scrypt, cookie HttpOnly/SameSite, phân quyền nghiệp vụ/chi nhánh, giới hạn đăng nhập sai. Không trả password/hash. Bỏ API sync/reset công khai. |
-| 2. Tải database/source | Static allowlist chỉ trả asset giao diện; DB, WAL, backup và source backend không được phục vụ. |
-| 3. Ghi đè giữa nhiều máy | Transaction `BEGIN IMMEDIATE`, revision, mã yêu cầu chống xử lý lặp, nhật ký thao tác. Còn ghi snapshot nội bộ phía server; tối ưu SQL từng bản ghi là việc tiếp theo. |
-| 4. Seed đè dữ liệu | Nhận diện database mới bằng schema. Danh mục rỗng không kích hoạt seed. Sao lưu tự động trước nâng cấp. |
-| 5. Mất giao dịch offline | Lưu yêu cầu chưa rõ kết quả, retry đúng mã, đối soát khi tải lại. Không nhận giao dịch bán mới hoàn toàn offline; cache cũ được giữ để đối soát thủ công. |
-| 6. Stored XSS | Escape dữ liệu trong HTML/attribute và tham số event handler; bộ test có payload tên/mã độc hại. |
-| 7–8. Trả/hủy và tiền/nợ | Giới hạn lượng còn được trả, hủy phần còn lại, hoàn giá sau chiết khấu, giảm nợ trước hoàn tiền, đảo điểm/tổng chi tiêu. |
-| 9–10. Bán thiếu kho/thiếu tiền | Kiểm tra tồn, giá, chi nhánh và số tiền trên server. Khách lẻ phải trả đủ; khách có hồ sơ được ghi nợ. |
-| 11. IMEI | Lưu serial trong chứng từ bán/chuyển, trả đúng serial; chặn trùng serial tại kho và đang chuyển. Chặn cân bằng làm lệch số serial; chưa có màn hình đối soát serial chuyên biệt. |
-| 12. Mất trường | Lưu các trường mở rộng qua cột `extra`; kiểm thử roundtrip. |
-| 13. Trùng mã | Mã ngẫu nhiên thay cho số lượng bản ghi; kiểm tra uniqueness. |
-| 14–16. Báo cáo | Giá trị dòng/chiết khấu, giá vốn lịch sử, đảo giá vốn khi trả, phân loại phương thức thực tế. Đơn mới hủy ở kỳ sau giữ giao dịch gốc và ghi đảo vào ngày hủy. Không dựng lại giá vốn lịch sử bị thiếu. |
-| 17. Payload/JSON lỗi | Validation kiểu, số tiền/số lượng, quyền và trường được sửa. Dữ liệu JSON cũ hỏng không bị âm thầm ghi đè khi lưu giao dịch mới. |
-| 18. Khách trùng tên | Liên kết customerId; dữ liệu cũ chỉ suy ra khách khi số điện thoại xác định duy nhất. |
-| 19. In | Chọn vùng tài liệu riêng cho hóa đơn, phiếu trả, báo cáo và tem; sao chép canvas khi in. Chưa thử máy in vật lý. |
+| Lĩnh vực | Phát hiện & Nguy cơ | Giải pháp & Thay đổi đã thực hiện |
+| --- | --- | --- |
+| 1. API/mật khẩu | Đăng nhập server-side, scrypt, cookie HttpOnly/SameSite, phân quyền chi nhánh. Mật khẩu fallback admin-server trước đây hardcode `admin1234`. | Replaced fallback password trong `admin-server.js` bằng `crypto.randomBytes(16).toString('base64url')` sinh ngẫu nhiên và in 1 lần duy nhất lúc khởi động khi thiếu biến môi trường. Không trả password/hash ra API. |
+| 2. File upload & Rò rỉ backup | `/api/upload-media` chỉ tin cậy MIME header do client gửi; `/api/backup` trên admin-server có nguy cơ đọng lại file `.bak` tạm nếu client ngắt kết nối giữa chừng. Giới hạn body 8MB có thể lỗi khi upload video/ảnh 10MB base64. | Thêm kiểm tra **Magic Bytes** (JPEG, PNG, GIF, WEBP, MP4/MOV, WEBM) trong `server.js`, từ chối file giả mạo MIME. Nâng `MAX_BODY` lên 16MB. Trong `admin-server.js`, gắn dọn dẹp file `.bak` tự động trên `res.on('finish')`, `res.on('close')`, và `stream.on('error')`. |
+| 3. Stored XSS | Một số vị trí innerHTML chưa bọc escape hoặc render template an toàn: video preview (`updateVideoPreview`), nhãn serial active (`activeImeiBanner`), bảng nhập hàng (`renderImportItemsTable`), token nút bấm liên kết Hub (`renderHTML`). | Chuẩn hóa `updateVideoPreview` chỉ chấp nhận giao thức `http:`, `https:` hoặc `/uploads/`, escape thuộc tính thẻ. Sử dụng tag template an toàn `renderHTML` cho bảng nhập hàng (sản phẩm thường & serial), escape nhãn IMEI và toàn bộ action buttons đối tác Hub. |
+| 4. CSV Formula Injection | Xuất file báo cáo và danh sách (`app-reports.js`, `app-export.js`) xuất trực tiếp dữ liệu dạng text/csv, người dùng chèn `=CMD()`, `+`, `-`, `@`, `\t` có thể kích hoạt thực thi mã độc trong Excel/Calc. | Bổ sung hàm phòng vệ công thức: tự động thêm dấu nháy đơn `'` phía trước mọi ô bắt đầu bằng ký tự nguy hiểm (`/^[=+\-@\t\r]/`). |
+| 5. Quản lý serial IMEI | Hủy phiếu nhập hàng (`cancelImport`) xóa serial khỏi `p.imeis` nhưng còn tồn đọng metadata trong dictionary `p.imeiDetails`. | Cập nhật `domain.js`: tự động dọn dẹp các key serial tương ứng trong `p.imeiDetails` khi hủy phiếu nhập, ngăn chặn tích lũy serial rác và dữ liệu giá vốn cũ. |
+| 6. Đồng bộ trạng thái Hub / Tenant | Thao tác hủy liên kết đối tác tại `admin-provision.js` đặt trạng thái chưa đồng nhất với `hub-server.js`. | Đồng nhất trạng thái hủy liên kết đối tác thành `'inactive'` trên cả `admin-provision.js` và `hub-server.js`. |
+| 7. Ghi đè & Snapshot SQLite | Transaction `BEGIN IMMEDIATE`, revision, request token chống xử lý lặp, nhật ký thao tác. | Đã xác thực cơ chế rebase sequence outbox độc lập, rebase sequence tenant sau phục hồi backup, và cơ chế journal `DELETE`/`synchronous FULL` an toàn trên ổ đĩa mạng SMB. |
 
-## Kiểm chứng
+## Kiểm chứng chất lượng & kiểm thử tự động
 
-- `npm test`: **38/38 test đạt**, kiểm thử backend, DOM và luồng tích hợp frontend–HTTP handler–SQLite trên dữ liệu tạm.
-- `npm run check`: kiểm tra cú pháp **15 file JavaScript**, đạt.
-- `npm run format:check`: kiểm tra định dạng source JavaScript, đạt.
-- Đã thử nâng cấp trên bản sao database hiện có: giữ 2 chi nhánh, 9 nhóm hàng, 13 sản phẩm, 13 khách, 5 nhà cung cấp, 17 hóa đơn, 9 phiếu nhập, 7 phiếu thu/chi, 1 phiếu trả, 2 phiếu kiểm, 2 phiếu chuyển và 4 tài khoản. Không sửa `minikiot.db` gốc.
-- Cả 17 hóa đơn trên bản sao thiếu giá vốn lịch sử. Báo cáo lợi nhuận phần dữ liệu đó chưa thể xác định chính xác; cần đối soát nguồn gốc.
-- Test tự động kiểm tra nâng cấp có bản sao trước schema, giữ mật khẩu cũ, không seed lại danh mục rỗng; backup chứa commit trong WAL và mở lại được với `integrity_check = ok`.
+- `npm run format:check`: Đạt 100% chuẩn định dạng Prettier trên toàn bộ source code JS, tests và scripts.
+- `npm run check`: Cú pháp **37 file JavaScript** kiểm tra thành công, không có lỗi.
+- `node --test`: **101/101 test case ĐẠT (100% pass)**:
+  - `tests/backend.test.js`: **52 test** (bổ sung test kiểm tra dọn dẹp `imeiDetails` khi hủy nhập và test từ chối upload sai magic bytes).
+  - `tests/admin-provision.test.js`, `tests/shared-warehouse.test.js`, `tests/hub.test.js`: **12 test** (kiểm thử provisioning đa chi nhánh, liên kết kho đối tác và Hub).
+  - `tests/migration.test.js`, `tests/hub-sync.test.js`: **4 test** (kiểm thử nâng cấp schema legacy, sequence outbox và rebase sequence hub).
+  - `tests/code-generation.test.js`, `tests/integration.test.js`: **12 test** (kiểm thử sinh mã tự tăng NKiot, luồng bán hàng POS thực tế, xử lý nợ, trả hàng serial, idempotency retry và chống ghi đè phiên).
+  - `tests/ui.test.js`: **21 test** (kiểm thử bảo mật XSS giao diện, render template an toàn).
 
-## Việc còn lại trước nghiệm thu vận hành
+## Khuyến nghị kiến trúc giai đoạn tiếp theo
 
-Kiểm thử trình duyệt thật, bố cục mobile, scanner, máy in và tải dữ liệu lớn. Kiểm tra số dư/chứng từ cũ thiếu thông tin, đặc biệt hoàn tiền, công nợ và serial. Bộ test hiện chưa chứng minh toàn bộ dữ liệu lịch sử đã đúng nghiệp vụ.
-
-Ứng dụng vẫn còn các giới hạn về tài nguyên CDN, frontend lớn, snapshot nội bộ và session trong bộ nhớ. Những phần này được ghi rõ trong README, không xem là đã hoàn thành một hệ thống POS sản xuất đầy đủ.
+1. **Phân tách mô-đun frontend (`app.js`)**: `app.js` hiện có dung lượng lớn (~465 KB, >10.000 dòng). Nên tách thành các file chuyên biệt theo nghiệp vụ: `app-pos.js`, `app-inventory.js`, `app-catalog.js` tương tự như `app-reports.js` và `app-export.js`.
+2. **Phân trang dữ liệu lịch sử**: `getAllData()` đọc toàn bộ 14 bảng vào bộ nhớ cho mỗi phiên làm việc. Với các cửa hàng bán lẻ quy mô trên 30.000 hóa đơn, cần chuyển dần các bảng lịch sử phát sinh (`invoices`, `importNotes`, `cashFlow`) sang truy vấn SQL có phân trang (cursor/LIMIT).

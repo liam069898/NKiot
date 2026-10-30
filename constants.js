@@ -18,7 +18,9 @@ const CODE_PREFIXES = {
     PC: { table: 'cashbook', minPad: 4, type: 'chi' },
     CN: { table: 'branches', minPad: 2 },
     NV: { table: 'users', minPad: 4 },
-    CAT: { table: 'categories', minPad: 2 }
+    CAT: { table: 'categories', minPad: 2 },
+    SKC: { table: 'shared_products', minPad: 3 },
+    YC: { table: 'share_orders', minPad: 6 }
 };
 function generateCode(data, prefix = 'TX') {
     const cleanPrefix = String(prefix || 'TX').toUpperCase();
@@ -56,6 +58,23 @@ function generateCode(data, prefix = 'TX') {
     }
     return candidate;
 }
+// Only explicit web URLs or local uploaded media. Reject markup/control characters before parsing.
+function safeMediaUrl(value) {
+    if (typeof value !== 'string' || !value || value.length > 500 || /[\s<>"'`\\\\]/.test(value))
+        return '';
+    if (/^\/uploads\/[A-Za-z0-9_.-]+$/.test(value)) return value;
+    // Ảnh đối tác đi qua proxy nội bộ /hub-media/<id> (id = sha256 hex, 32 ký tự).
+    if (/^\/hub-media\/[a-f0-9]{32}$/.test(value)) return value;
+    if (!/^https?:\/\//i.test(value)) return '';
+    try {
+        const url = new URL(value);
+        return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+            ? value
+            : '';
+    } catch {
+        return '';
+    }
+}
 const ALL_BRANCHES = 'Toàn bộ chi nhánh';
 if (typeof window !== 'undefined') {
     window.ALL_BRANCHES = ALL_BRANCHES;
@@ -67,5 +86,6 @@ if (typeof module !== 'undefined')
         ALL_BRANCHES,
         RETAIL_CUSTOMER_CODE,
         CODE_PREFIXES,
+        safeMediaUrl,
         generateCode
     };

@@ -15,6 +15,7 @@ function browser() {
     w.print = () => {};
     w.fetch = async () => ({ ok: false, status: 401, json: async () => ({ error: 'login' }) });
     w.eval(fs.readFileSync('constants.js', 'utf8'));
+    w.eval(fs.readFileSync('catalog-patch.js', 'utf8'));
     w.eval(fs.readFileSync('ui-safety.js', 'utf8'));
     w.eval(fs.readFileSync('client-store.js', 'utf8'));
     for (const file of ['app-utils.js', 'app-reports.js', 'app-export.js', 'app.js']) {
@@ -32,6 +33,26 @@ function browser() {
     );
     return dom;
 }
+test('login screen and modals are top-level so a closed modal can never hide the app', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        const login = doc.getElementById('login-screen');
+        assert.ok(login, 'login screen exists');
+        assert.equal(login.parentElement, doc.body, 'login screen must be a direct child of body');
+        for (const modal of doc.querySelectorAll('.kv-modal')) {
+            const nested = modal.parentElement.closest('.kv-modal');
+            assert.equal(
+                nested,
+                null,
+                `#${modal.id || '(no id)'} is nested inside #${nested?.id || '(no id)'}`
+            );
+        }
+    } finally {
+        w.close();
+    }
+});
 test('POS catalog, search and scanner exclude archived products', () => {
     const dom = browser(),
         w = dom.window;
@@ -482,7 +503,7 @@ test('Admin can select and view Toàn bộ chi nhánh across views', async () =>
     assert.ok(prodTbody.textContent.includes('Kalo Hà Nội'));
 
     // Invoices table displays invoices from both branches
-    w.renderInvoices();
+    w.renderInvoiceRows(w.eval('KVStore.data.invoices'), w.ALL_BRANCHES);
     const invTbody = w.document.getElementById('invoice-tbody');
     assert.ok(invTbody.textContent.includes('HD000001'));
     assert.ok(invTbody.textContent.includes('HD000002'));
@@ -660,6 +681,85 @@ test('Import cancellation updates UI, hides cancel button, shows status banner a
         w.renderImports();
         rows = w.document.querySelectorAll('#import-tbody tr');
         assert.ok(Array.from(rows).some((r) => r.textContent.includes(targetCode)));
+    } finally {
+        dom.window.close();
+    }
+});
+
+test('Create import modal searches products, adds non-IMEI and IMEI items, and saves new import receipt', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            window.commanded = null;
+            KVStore.command = async (cmd, payload) => {
+                window.commanded = { cmd, payload };
+                return { code: 'PN-TEST-001', ...payload };
+            };
+        `);
+
+        // 1. Open create import modal
+        w.openCreateImportModal();
+        const modal = w.document.getElementById('create-import-modal');
+        assert.ok(!modal.classList.contains('hidden'), 'Modal should be visible');
+        const searchInput = w.document.getElementById('import-modal-search-input');
+        assert.ok(searchInput, 'Search input should exist');
+        assert.equal(searchInput.value, '', 'Search input should be cleared');
+
+        // 2. Search for non-IMEI product (SP002)
+        w.handleImportProductSearch('Shokz');
+        const dropdown = w.document.getElementById('import-search-dropdown');
+        assert.ok(
+            !dropdown.classList.contains('hidden'),
+            'Dropdown should be visible after search'
+        );
+        assert.ok(dropdown.children.length > 0, 'Dropdown should have matching items');
+
+        // 3. Select non-IMEI product into import
+        w.selectImportProduct('SP002');
+        const itemsContainer = w.document.getElementById('import-items-container');
+        assert.ok(
+            itemsContainer.textContent.includes('SP002'),
+            'Product SP002 should be in items container'
+        );
+
+        // 4. Search and select IMEI product (SP001)
+        w.selectImportProduct('SP001');
+        assert.ok(
+            itemsContainer.textContent.includes('SP001'),
+            'Product SP001 should be in items container'
+        );
+
+        // 5. Add IMEI to SP001
+        const imeiInput = w.document.getElementById('inline-imei-input-SP001');
+        assert.ok(imeiInput, 'IMEI input should be present for IMEI-managed product');
+        imeiInput.value = 'GARMIN_TEST_SERIAL_01';
+        w.addInlineImeiFromInput('SP001');
+
+        // 6. Verify total and paid inputs
+        const totalCalc = w.document.getElementById('import-total-calc');
+        assert.ok(totalCalc.textContent.includes('đ'), 'Total should have currency format');
+        const paidInput = w.document.getElementById('import-paid-input');
+        assert.equal(Number(paidInput.value), 0, 'New receipt defaults to unpaid');
+        w.document.getElementById('import-payment-state').value = 'full';
+        w.updateImportPayment();
+        assert.ok(Number(paidInput.value) > 0);
+
+        // 7. Verify supplier selection
+        const nccSelect = w.document.getElementById('import-ncc-select');
+        assert.equal(nccSelect.value, '', 'Supplier must be explicitly selected');
+        nccSelect.selectedIndex = 1;
+
+        // 8. Save import
+        await w.saveNewImport();
+        assert.ok(w.window.commanded, 'KVStore.command should be called');
+        assert.equal(w.window.commanded.cmd, 'import');
+        assert.equal(w.window.commanded.payload.items.length, 2);
+        assert.equal(w.window.commanded.payload.items[1].imeis[0], 'GARMIN_TEST_SERIAL_01');
+        assert.ok(
+            modal.classList.contains('hidden'),
+            'Modal should be hidden after successful save'
+        );
     } finally {
         dom.window.close();
     }
@@ -887,5 +987,1313 @@ test('Dashboard renders rich recent activities stream with badges, actions, amou
         assert.ok(allText.includes('Kalo HCM'));
     } finally {
         dom.window.close();
+    }
+});
+
+test('product details treat legacy IMEI and media as data, not executable markup', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            const p = KVStore.data.products[0];
+            KVStore.data.settings.branch = p.branch || FALLBACK_BRANCH;
+            p.hasImei = true;
+            p.imeis = ['<img src=x onerror="window.pwned=1">'];
+            p.images = ['x" onerror="window.pwned=1', '/uploads/safe.png'];
+            p.videoUrl = 'javascript:alert(1)';
+            p.imeiDetails = {};
+            viewProductDetail(p.code);
+        `);
+        const list = w.document.getElementById('prod-detail-imei-list');
+        assert.equal(list.querySelector('img'), null);
+        assert.ok(list.textContent.includes('<img'));
+        assert.equal(list.querySelector('button').getAttribute('onclick'), null);
+        list.querySelector('button').click();
+        const media = w.document.getElementById('prod-detail-images-list');
+        assert.ok(media, 'media markup must exist');
+        assert.equal(media.querySelectorAll('img').length, 1);
+        assert.equal(media.querySelector('[onerror]'), null);
+        assert.ok(
+            w.document.getElementById('prod-detail-video-container').classList.contains('hidden')
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('partner details open with safe media and never fabricate a phone number', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            partnerCatalog.items = [{id:'partner-review', name:'Partner product', code:'P', price:1,
+                images:['/uploads/safe.png', 'x" onerror="alert(1)'],
+                videoUrl:'javascript:alert(1)', imeiDetails: {'<img src=x onerror="alert(1)">': {}}}];
+            showContactPartnerModal('partner-review');
+        `);
+        const modal = w.document.getElementById('contact-partner-modal');
+        assert.ok(modal && !modal.classList.contains('hidden'));
+        assert.equal(modal.querySelector('[onerror]'), null);
+        assert.equal(modal.querySelector('#contact-imei-pills img'), null);
+        assert.equal(
+            w.document.getElementById('contact-owner-phone').textContent,
+            'Chưa có số liên hệ'
+        );
+        assert.equal(w.document.getElementById('call-partner-link').hasAttribute('href'), false);
+        assert.equal(w.document.querySelectorAll('#contact-thumbnails-strip img').length, 1);
+    } finally {
+        w.close();
+    }
+});
+
+test('IMEI editor and import inspection preserve markup as text and safe event arguments', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            const serial = "serial');window.pwned=1;//<img src=x>";
+            currentEditingImportItem = {imeiDetails:{}, imeis:[serial]};
+            renderEditImeiCards([serial]);
+            currentImportItems = [{code:'SP',name:'Product',qty:1,price:10,total:10,hasImei:true,imeis:[serial],imeiDetails:{}}];
+            renderImportItemsTable();
+        `);
+        const editor = w.document.getElementById('edit-imei-cards-container');
+        assert.equal(editor.querySelector('img'), null);
+        assert.ok(editor.textContent.includes('<img src=x>'));
+        const inspection = w.document.getElementById('import-items-container');
+        assert.ok(
+            inspection.querySelector('.import-device'),
+            'inspection markup must not be escaped as a string'
+        );
+        assert.equal(inspection.querySelector('img'), null);
+        const select = inspection.querySelector('select');
+        assert.ok(select);
+        assert.equal(select.getAttribute('onchange'), null);
+        select.value = 'good';
+        select.dispatchEvent(new w.Event('change'));
+        assert.equal(w.pwned, undefined);
+        assert.equal(
+            w.eval('currentImportItems[0].imeiDetails[currentImportItems[0].imeis[0]].condition'),
+            'good'
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('refresh renders only the current view; navigating to invoices renders fresh data', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            window.renderCalls = [];
+            renderAppLogo = () => renderCalls.push('logo');
+            renderPosScreen = () => renderCalls.push('pos');
+            renderDashboard = () => renderCalls.push('dashboard');
+            renderReports = () => renderCalls.push('reports');
+            renderInvoices = () => renderCalls.push('invoices:' + KVStore.data.invoices.length);
+            state.currentView = 'pos';
+            refreshCurrentView();
+        `);
+        assert.deepEqual(Array.from(w.renderCalls), ['logo', 'pos']);
+        w.eval("KVStore.data.invoices=[]; renderCalls.length=0; switchView('invoices')");
+        assert.deepEqual(Array.from(w.renderCalls), ['invoices:0']);
+        assert.equal(
+            w.document.getElementById('view-invoices').classList.contains('hidden'),
+            false
+        );
+        w.eval("renderCalls.length=0; switchView('reports')");
+        assert.deepEqual(Array.from(w.renderCalls), ['reports']);
+    } finally {
+        w.close();
+    }
+});
+
+test('invoice pages ignore out-of-order responses and show network errors without stale rows', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const pending = [];
+        w.fetch = (url) => new Promise((resolve) => pending.push({ url, resolve }));
+        const first = w.renderInvoices();
+        w.document.getElementById('invoice-search-input').value = 'new';
+        const second = w.renderInvoices();
+        const page = (code) => ({
+            success: true,
+            rows: [{ id: code, code, status: 'completed', total: 1, paid: 1 }],
+            page: 1,
+            pages: 2,
+            total: 51,
+            pageSize: 50,
+            revision: 2
+        });
+        pending[1].resolve({ ok: true, json: async () => page('NEW') });
+        await second;
+        pending[0].resolve({ ok: true, json: async () => page('OLD') });
+        await first;
+        assert.ok(w.document.getElementById('invoice-tbody').textContent.includes('NEW'));
+        assert.ok(!w.document.getElementById('invoice-tbody').textContent.includes('OLD'));
+        assert.equal(w.document.getElementById('invoice-page-next').disabled, false);
+        w.fetch = async () => {
+            throw new Error('offline');
+        };
+        await w.changeInvoicePage(1);
+        assert.equal(w.document.getElementById('invoice-tbody').children.length, 0);
+        assert.match(
+            w.document.getElementById('invoices-total-count').textContent,
+            /Không tải được/
+        );
+        assert.equal(w.document.getElementById('invoice-page-next').disabled, true);
+    } finally {
+        w.close();
+    }
+});
+test('invoice page revision conflict resets to page one and filters reset pagination', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const urls = [];
+        w.fetch = async (url) => {
+            urls.push(url);
+            const second = new URL(url, 'http://localhost').searchParams.get('page') === '2';
+            return {
+                ok: !second,
+                status: second ? 409 : 200,
+                json: async () =>
+                    second
+                        ? { error: 'changed' }
+                        : {
+                              success: true,
+                              rows: [],
+                              page: 1,
+                              pages: 2,
+                              total: 60,
+                              pageSize: 50,
+                              revision: 10
+                          }
+            };
+        };
+        await w.renderInvoices();
+        await w.changeInvoicePage(1);
+        assert.equal(urls.length, 3);
+        assert.equal(new URL(urls[1], 'http://localhost').searchParams.get('revision'), '10');
+        assert.equal(new URL(urls[2], 'http://localhost').searchParams.get('page'), '1');
+        w.document.getElementById('invoice-search-input').value = 'other';
+        await w.changeInvoicePage(1);
+        assert.equal(new URL(urls.at(-1), 'http://localhost').searchParams.get('page'), '1');
+        assert.equal(new URL(urls.at(-1), 'http://localhost').searchParams.has('revision'), false);
+    } finally {
+        w.close();
+    }
+});
+
+test('Shared warehouse view renders, connects navigation, modals, and login screen hides management layout', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // 1. Verify Kho Chung navigation and elements exist
+        const navBtn = w.document.getElementById('nav-products');
+        assert.ok(navBtn, 'nav-products button exists');
+        const viewShared = w.document.getElementById('view-sharedWarehouse');
+        assert.ok(viewShared, 'view-sharedWarehouse container exists');
+        assert.ok(w.document.getElementById('share-product-modal'), 'share-product-modal exists');
+        assert.ok(w.document.getElementById('partner-token-modal'), 'partner-token-modal exists');
+        assert.ok(
+            w.document.getElementById('edit-shared-product-modal'),
+            'edit-shared-product-modal exists'
+        );
+        assert.ok(
+            w.document.getElementById('prod-detail-share-btn'),
+            'prod-detail-share-btn exists in product detail modal'
+        );
+
+        // 2. Switch view to sharedWarehouse
+        w.switchView('sharedWarehouse');
+        assert.equal(
+            viewShared.classList.contains('hidden'),
+            false,
+            'sharedWarehouse view is visible'
+        );
+        assert.equal(
+            navBtn.classList.contains('nav-item-active'),
+            true,
+            'nav-products is active for sharedWarehouse'
+        );
+
+        // 3. Login screen guards management layout:
+        // Calling showLoginScreen(true) must hide management-layout so login doesn't overlay admin
+        const mgmt = w.document.getElementById('management-layout');
+        const login = w.document.getElementById('login-screen');
+        w.showLoginScreen(true);
+        assert.equal(login.classList.contains('hidden'), false, 'login-screen is visible');
+        assert.equal(
+            mgmt.classList.contains('hidden'),
+            true,
+            'management-layout is hidden when login is active'
+        );
+
+        // showLoginScreen(false) restores management-layout
+        w.showLoginScreen(false);
+        assert.equal(login.classList.contains('hidden'), true, 'login-screen is hidden');
+        assert.equal(mgmt.classList.contains('hidden'), false, 'management-layout is restored');
+    } finally {
+        w.close();
+    }
+});
+
+test('manual tender survives quantity, price, discount and removal changes including explicit zero', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(
+            'window.testProduct=KVStore.data.products.find(p=>p.stock>0);addPosCartItem(testProduct)'
+        );
+        const code = w.testProduct.code;
+        w.handlePosTenderInput('30.000.000');
+        w.changePosQty(code, 1);
+        w.setPosQty(code, 1);
+        w.setPosItemPrice(code, '200000');
+        w.handlePosDiscountInput('10000');
+        assert.equal(w.eval('state.posTabs[0].customerGiven'), 30000000);
+        assert.equal(w.document.getElementById('pos-tender-input').value, '30.000.000');
+        w.fillPosExactTender();
+        assert.equal(w.eval('state.posTabs[0].customerGiven'), 190000);
+        w.changePosQty(code, 1);
+        assert.equal(w.eval('state.posTabs[0].customerGiven'), 190000);
+        w.handlePosTenderInput('0');
+        w.changePosQty(code, 1);
+        assert.equal(w.eval('state.posTabs[0].customerGiven'), 0);
+        w.setPosCustomerGiven(500000);
+        w.removePosItem(code);
+        assert.equal(w.eval('state.posTabs[0].customerGiven'), 500000);
+        w.addPosNewTab();
+        w.addPosCartItem(w.testProduct);
+        assert.equal(w.eval('state.posTabs[1].customerGiven'), w.testProduct.price);
+        w.changePosQty(code, 1);
+        assert.equal(w.eval('state.posTabs[1].customerGiven'), 2 * w.testProduct.price);
+    } finally {
+        w.close();
+    }
+});
+test('closing populated tabs asks first, pending tabs cannot close, and active tab identity stays stable', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.addPosNewTab();
+        w.eval('addPosCartItem(KVStore.data.products.find(p=>p.stock>0))');
+        const event = { stopPropagation() {} };
+        let asked = 0;
+        w.confirm = () => {
+            asked++;
+            return false;
+        };
+        w.closePosTab(event, 1);
+        assert.equal(asked, 1);
+        assert.equal(w.eval('state.posTabs.length'), 2);
+        w.confirm = () => true;
+        w.eval("state.posTabs[1].pendingRequestId='waiting'");
+        w.closePosTab(event, 1);
+        assert.equal(w.eval('state.posTabs.length'), 2);
+        w.eval('delete state.posTabs[1].pendingRequestId');
+        w.addPosNewTab();
+        const active = w.eval('state.posTabs[state.activePosTab].id');
+        w.closePosTab(event, 1);
+        assert.equal(w.eval('state.posTabs[state.activePosTab].id'), active);
+        w.addPosNewTab();
+        assert.equal(w.eval('new Set(state.posTabs.map(t=>t.id)).size'), 3);
+    } finally {
+        w.close();
+    }
+});
+test('POS delete and close controls have visible content and recovery status persists', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval('addPosCartItem(KVStore.data.products.find(p=>p.stock>0))');
+        assert.ok(w.document.querySelector('#pos-cart-list button[title="Xoá"] svg'));
+        w.addPosNewTab();
+        assert.equal(
+            w.document.querySelector('#pos-tabs-wrapper button[aria-label^="Đóng"]').textContent,
+            '×'
+        );
+        w.eval('KVStore.updateDbStatus()');
+        assert.match(w.document.getElementById('pos-save-status-text').textContent, /Đã kết nối/);
+        w.eval(
+            "localStorage.setItem('minikiot.pending.test',JSON.stringify({userId:KVStore.user.id,requestId:'test'}));KVStore.updateDbStatus()"
+        );
+        assert.match(
+            w.document.getElementById('pos-save-status-text').textContent,
+            /chưa xác nhận/
+        );
+        assert.equal(w.document.getElementById('pos-checkout-btn').disabled, true);
+        assert.equal(
+            w.document.getElementById('pos-reconcile-btn').textContent,
+            'Kiểm tra kết quả'
+        );
+        w.eval('KVStore._sending=true;KVStore.updateDbStatus()');
+        assert.match(w.document.getElementById('pos-checkout-btn').textContent, /ĐANG LƯU/);
+        assert.equal(w.document.getElementById('pos-reconcile-btn').disabled, true);
+        w.eval(
+            "KVStore._sending=false;localStorage.removeItem('minikiot.pending.test');KVStore.isDbConnected=false;KVStore.updateDbStatus()"
+        );
+        assert.match(w.document.getElementById('pos-save-status-text').textContent, /Mất kết nối/);
+        assert.equal(w.document.getElementById('pos-reconcile-btn').disabled, false);
+    } finally {
+        w.close();
+    }
+});
+test('multi-payment allocations are not overwritten by basket edits or exact tender action', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(
+            'window.testProduct=KVStore.data.products.find(p=>p.stock>0);addPosCartItem(testProduct)'
+        );
+        w.setPosPaymentMethod('multi');
+        w.handleMultiPaymentInput('cash', '100000');
+        w.handleMultiPaymentInput('transfer', '200000');
+        w.changePosQty(w.testProduct.code, 1);
+        w.fillPosExactTender();
+        assert.equal(w.eval('state.posTabs[0].multiPayments.cash'), 100000);
+        assert.equal(w.eval('state.posTabs[0].multiPayments.transfer'), 200000);
+        assert.equal(w.eval('state.posTabs[0].customerGiven'), 300000);
+    } finally {
+        w.close();
+    }
+});
+
+test('mobile order summary tracks quantity, discount and tab changes without submitting a sale', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        Object.defineProperty(w, 'innerWidth', { value: 390, writable: true });
+        w.eval(
+            "state.posTabs[0].cart=[{code:'M',name:'Mobile',qty:2,price:100000,stock:10}];state.posTabs[0].discount=10000;renderPosScreen();switchPosMobileView('catalog')"
+        );
+        const bar = w.document.getElementById('pos-mobile-summary');
+        const action = w.document.getElementById('pos-mobile-summary-action');
+        assert.equal(bar.parentElement.id, 'pos-layout');
+        assert.equal(bar.classList.contains('hidden'), false);
+        assert.equal(
+            w.document.getElementById('pos-mobile-summary-total').textContent,
+            '2 món · 190.000 đ'
+        );
+        let commands = 0;
+        w.eval('window.submitted=0; KVStore.command=()=>{window.submitted++}');
+        action.click();
+        assert.equal(w.eval('posMobileView'), 'cart');
+        assert.equal(action.textContent, 'Thanh toán');
+        w.changePosQty('M', 1);
+        assert.equal(
+            w.document.getElementById('pos-mobile-summary-total').textContent,
+            '3 món · 290.000 đ'
+        );
+        action.click();
+        assert.equal(w.eval('posMobileView'), 'checkout');
+        assert.equal(bar.classList.contains('hidden'), true);
+        assert.equal(w.submitted, commands);
+        w.addPosNewTab();
+        w.switchPosMobileView('catalog');
+        assert.equal(action.disabled, true);
+        assert.equal(
+            w.document.getElementById('pos-mobile-summary-total').textContent,
+            '0 món · 0 đ'
+        );
+        w.switchPosTab(0);
+        assert.equal(action.disabled, false);
+        w.switchPosMobileView('invalid');
+        assert.equal(w.eval('posMobileView'), 'catalog');
+    } finally {
+        w.close();
+    }
+});
+test('tablet pairs cart and payment, phone isolates panels and desktop keeps catalog preference', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        Object.defineProperty(w, 'innerWidth', { value: 768, writable: true });
+        const visible = (id) => !w.document.getElementById(id).classList.contains('hidden');
+        w.switchPosMobileView('cart');
+        assert.ok(visible('pos-cart-panel') && visible('pos-checkout-panel'));
+        assert.equal(visible('pos-catalog-panel'), false);
+        assert.equal(w.document.getElementById('pos-panels').dataset.tabletCheckout, 'true');
+        assert.equal(visible('pos-mobile-summary'), false);
+        w.switchPosMobileView('catalog');
+        assert.ok(visible('pos-catalog-panel'));
+        assert.equal(visible('pos-checkout-panel'), false);
+        w.switchPosMobileView('checkout');
+        w.innerWidth = 390;
+        w.updatePosResponsivePanels();
+        assert.equal(visible('pos-cart-panel'), false);
+        assert.equal(visible('pos-checkout-panel'), true);
+        assert.equal(
+            w.document.getElementById('pos-tab-checkout').getAttribute('aria-pressed'),
+            'true'
+        );
+        w.innerWidth = 1440;
+        w.eval('state.posShowCatalog=false');
+        w.updatePosResponsivePanels();
+        assert.ok(visible('pos-cart-panel') && visible('pos-checkout-panel'));
+        assert.equal(visible('pos-catalog-panel'), false);
+        assert.equal(visible('pos-mobile-summary'), false);
+        w.eval('state.posShowCatalog=true');
+        w.updatePosResponsivePanels();
+        assert.equal(visible('pos-catalog-panel'), true);
+    } finally {
+        w.close();
+    }
+});
+test('POS keeps one labelled search control through panel changes and resize', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const input = w.document.getElementById('pos-search-input');
+        input.value = 'UX-123';
+        Object.defineProperty(w, 'innerWidth', { value: 390, writable: true });
+        for (const width of [390, 768, 1024, 1440, 390]) {
+            w.innerWidth = width;
+            for (const view of ['catalog', 'cart', 'checkout']) w.switchPosMobileView(view);
+            assert.equal(w.document.querySelectorAll('#pos-search-input').length, 1);
+            assert.equal(w.document.getElementById('pos-search-input'), input);
+            assert.equal(input.value, 'UX-123');
+            assert.ok(input.getAttribute('aria-label'));
+        }
+    } finally {
+        w.close();
+    }
+});
+
+test('POS catalog exposes all matches through load more and resets on search and branch changes', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(
+            `const template=KVStore.data.products[0]; KVStore.data.products=Array.from({length:125},(_,i)=>({...template,id:'PAGE'+i,code:'PAGE'+i,name:'Item '+i,stock:10,hasImei:false,imeis:[],branch:getCurrentBranch()}));renderPosCatalog();`
+        );
+        const grid = w.document.getElementById('pos-product-grid'),
+            more = w.document.getElementById('pos-catalog-more'),
+            count = w.document.getElementById('pos-catalog-count');
+        assert.equal(grid.querySelectorAll('button[data-product-code]').length, 50);
+        assert.equal(count.textContent, 'Hiển thị 50/125 sản phẩm');
+        w.loadMorePosCatalog();
+        assert.equal(grid.querySelectorAll('button[data-product-code]').length, 100);
+        assert.equal(w.document.activeElement.dataset.productCode, 'PAGE50');
+        w.loadMorePosCatalog();
+        assert.equal(grid.querySelectorAll('button[data-product-code]').length, 125);
+        assert.equal(more.hidden, true);
+        w.filterPosCatalog('no match');
+        assert.equal(count.textContent, 'Hiển thị 0/0 sản phẩm');
+        assert.equal(more.hidden, true);
+        w.filterPosCatalog('');
+        assert.equal(grid.querySelectorAll('[data-product-code]').length, 50);
+        w.loadMorePosCatalog();
+        w.eval("KVStore.data.settings.branch='Other branch'; renderPosCatalog()");
+        assert.equal(count.textContent, 'Hiển thị 0/0 sản phẩm');
+    } finally {
+        w.close();
+    }
+});
+test('POS catalog buttons expose product names, keep focus and disable out-of-stock items', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(
+            `const p=KVStore.data.products[0];KVStore.data.products=[{...p,id:'IN',code:'IN',stock:2,hasImei:false},{...p,id:'OUT',code:'OUT',stock:0,hasImei:false}];renderPosCatalog();`
+        );
+        let button = w.document.querySelector('[data-product-code="IN"]');
+        assert.equal(button.tagName, 'BUTTON');
+        assert.equal(button.type, 'button');
+        assert.ok(button.getAttribute('aria-label'));
+        button.focus();
+        button.click();
+        assert.equal(w.eval('state.posTabs[0].cart.length'), 1);
+        assert.equal(w.document.activeElement.dataset.productCode, 'IN');
+        const out = w.document.querySelector('[data-product-code="OUT"]');
+        assert.equal(out.disabled, true);
+        out.click();
+        assert.equal(w.eval('state.posTabs[0].cart.length'), 1);
+    } finally {
+        w.close();
+    }
+});
+test('POS identity uses text, updates branch, and keyboard shortcuts never submit payment', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(
+            `KVStore.data.settings.storeName='<img src=x> Shop';state.currentView='pos';renderPosScreen();setupKeyboardShortcuts();setupKeyboardShortcuts();window.sent=0;KVStore.command=()=>{window.sent++};`
+        );
+        const title = w.document.getElementById('pos-store-identity');
+        assert.ok(title.textContent.includes('<img src=x> Shop'));
+        assert.equal(title.querySelector('img'), null);
+        const key = (name, options = {}) =>
+            w.dispatchEvent(
+                new w.KeyboardEvent('keydown', {
+                    key: name,
+                    bubbles: true,
+                    cancelable: true,
+                    ...options
+                })
+            );
+        key('F2');
+        assert.equal(w.document.activeElement.id, 'pos-search-input');
+        key('F4');
+        assert.equal(w.eval('state.posTabs.length'), 2);
+        key('F4', { repeat: true });
+        key('F4', { ctrlKey: true });
+        key('F4', { isComposing: true });
+        assert.equal(w.eval('state.posTabs.length'), 2);
+        Object.defineProperty(w, 'innerWidth', { value: 390, writable: true });
+        key('F8');
+        assert.equal(w.eval('posMobileView'), 'checkout');
+        assert.equal(w.document.activeElement.id, 'pos-tender-input');
+        assert.equal(w.sent, 0);
+        w.document.getElementById('pos-imei-modal').classList.remove('hidden');
+        key('F4');
+        assert.equal(w.eval('state.posTabs.length'), 2);
+        w.document.getElementById('pos-imei-modal').classList.add('hidden');
+        w.eval(
+            "localStorage.setItem('minikiot.pending.test',JSON.stringify({userId:KVStore.user.id,requestId:'test'}))"
+        );
+        key('F4');
+        assert.equal(w.eval('state.posTabs.length'), 2);
+        w.eval("localStorage.clear();state.currentView='dashboard'");
+        key('F4');
+        assert.equal(w.eval('state.posTabs.length'), 2);
+    } finally {
+        w.close();
+    }
+});
+
+test('all-branch inventory sums each branch valuation instead of using first branch price', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            KVStore.data.products = [
+                { code: 'P', name: 'P', branch: 'A', stock: 1, costPrice: 100, price: 200, status: 'active' },
+                { code: 'P', name: 'P', branch: 'B', stock: 1, costPrice: 300, price: 400, status: 'active' }
+            ];
+            getCurrentBranch = () => ALL_BRANCHES;
+            currentReportTab = 'inventory';
+            globalThis.kpis = {};
+            updateKpiCard = (index, icon, label, value) => { kpis[label] = value; };
+            renderReports();
+        `);
+        assert.equal(w.kpis['Giá trị tồn theo vốn'], '400 đ');
+        assert.equal(w.kpis['Giá trị tồn theo giá bán'], '600 đ');
+        assert.match(w.document.getElementById('rep-table-tbody').textContent, /400/);
+    } finally {
+        w.close();
+    }
+});
+
+test('import workspace preserves partial payment, derives serial quantity and confirms close', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.openCreateImportModal();
+        w.selectImportProduct('SP001');
+        assert.equal(w.eval('currentImportItems[0].qty'), 0);
+        w.addImeisToItem('SP001', ['NEW-A', 'NEW-A', 'NEW-B']);
+        assert.equal(w.eval('currentImportItems[0].qty'), 2);
+        assert.match(
+            w.document.getElementById('import-imei-feedback-SP001').textContent,
+            /1 mã trùng/
+        );
+        assert.equal(w.document.querySelector('#import-items-container details').open, false);
+        assert.equal(w.document.querySelector('#import-items-container select').value, '');
+        const mode = w.document.getElementById('import-payment-state');
+        mode.value = 'partial';
+        w.updateImportPayment();
+        w.document.getElementById('import-paid-input').value = '1234';
+        w.updateImportItemPrice('SP001', 50000);
+        w.selectImportProduct('SP002');
+        assert.equal(w.document.getElementById('import-paid-input').value, '1234');
+        w.removeInlineImei('SP001', 'NEW-A');
+        w.removeInlineImei('SP001', 'NEW-B');
+        assert.equal(w.eval('currentImportItems[0].qty'), 0);
+        assert.equal(w.document.getElementById('import-paid-input').value, '1234');
+        w.confirm = () => false;
+        w.closeCreateImport();
+        assert.equal(
+            w.document.getElementById('create-import-modal').classList.contains('hidden'),
+            false
+        );
+        w.confirm = () => true;
+        w.closeCreateImport();
+        w.openCreateImportModal();
+        assert.equal(w.eval('currentImportItems.length'), 2);
+        assert.equal(w.document.getElementById('import-paid-input').value, '1234');
+    } finally {
+        w.close();
+    }
+});
+
+test('import branch is explicit and ambiguous search requires a deliberate selection', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval('KVStore.data.settings.branch = ALL_BRANCHES');
+        w.openCreateImportModal();
+        assert.equal(w.document.getElementById('import-branch').value, '');
+        w.selectImportProduct('SP001');
+        assert.equal(w.eval('currentImportItems.length'), 0);
+        const branch = w.document.getElementById('import-branch');
+        branch.selectedIndex = 1;
+        w.changeImportBranch();
+        w.document.getElementById('import-modal-search-input').value = 'SP';
+        w.handleImportProductSearch('SP');
+        w.handleImportSearchKeydown({ key: 'Enter', preventDefault() {} });
+        assert.equal(w.eval('currentImportItems.length'), 0);
+        w.handleImportSearchKeydown({ key: 'ArrowDown', preventDefault() {} });
+        w.handleImportSearchKeydown({ key: 'Enter', preventDefault() {} });
+        assert.equal(w.eval('currentImportItems.length'), 1);
+        const oldBranch = branch.value;
+        w.confirm = () => false;
+        branch.selectedIndex = 2;
+        w.changeImportBranch();
+        assert.equal(branch.value, oldBranch);
+    } finally {
+        w.close();
+    }
+});
+
+test('UX/UI audit fixes: viewport zoom compensation, brand-safe Title Case, modal focus, F9 safety and accessible icons', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // 1. Desktop POS zoom compensation prevents 110% viewport clipping
+        const styleContent = Array.from(w.document.querySelectorAll('style'))
+            .map((s) => s.textContent)
+            .join('\n');
+        assert.ok(styleContent.includes('width: calc(100vw / 1.1)'));
+        assert.ok(styleContent.includes('height: calc(100dvh / 1.1)'));
+
+        // 2. Title Case preserves mixed-case brand words (iPhone, iPad, MacBook, eSIM)
+        assert.equal(
+            w.normalizeTitleCase('nguyễn văn an - iPhone 16 Pro Max / eSIM'),
+            'Nguyễn Văn An - iPhone 16 Pro Max / eSIM'
+        );
+
+        // 3. F9 never auto-submits payment in POS
+        w.eval(
+            `state.currentView='pos';setupKeyboardShortcuts();window.checkoutCalled=0;checkoutPos=()=>{window.checkoutCalled++};`
+        );
+        w.dispatchEvent(
+            new w.KeyboardEvent('keydown', { key: 'F9', bubbles: true, cancelable: true })
+        );
+        assert.equal(w.checkoutCalled, 0);
+
+        // 4. Unified modal accessibility observer focuses first editable input directly (not close button)
+        w.setupModalAccessibility();
+        w.openAddCustomerModal();
+        await new Promise((r) => w.setTimeout(r, 10));
+        assert.equal(w.document.activeElement.id, 'cust-code');
+
+        // 5. Product image preview delete button has visible symbol & aria-label
+        const previewHost = w.document.createElement('div');
+        previewHost.id = 'prod-images-preview';
+        w.document.body.appendChild(previewHost);
+        w.eval(`currentProductImages=['/uploads/sample.png'];renderProductImagePreviews();`);
+        const delImgBtn = previewHost.querySelector('button');
+        assert.ok(delImgBtn);
+        assert.equal(delImgBtn.getAttribute('aria-label'), 'Xóa ảnh 1');
+        assert.equal(delImgBtn.textContent.trim(), '×');
+        previewHost.remove();
+
+        // 6. Receipt & payment modals and login fields have proper labels and SVG icons
+        assert.ok(w.document.querySelector('#create-receipt-modal svg'));
+        assert.ok(w.document.querySelector('#create-payment-modal svg'));
+        assert.equal(
+            w.document.querySelector('label[for="login-username"]') !== null &&
+                w.document.querySelector('label[for="login-password"]') !== null,
+            true
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 2 UX/UI: Dashboard period selector, persistent starred records, POS draft cart recovery, and table Load More', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // 1. Dashboard period selector updates period badges & chart bars dynamically
+        const periodSel = w.document.getElementById('dash-period-select');
+        assert.ok(periodSel);
+        periodSel.value = '7days';
+        w.renderDashboard();
+        assert.equal(
+            w.document.getElementById('dash-top-product-period-badge').textContent,
+            '7 ngày qua'
+        );
+        assert.equal(w.document.querySelectorAll('#dashboard-bars-container > div').length, 7);
+
+        // 2. Starred records persist across re-renders via localStorage
+        w.eval(`
+            KVStore.data.imports = [{ id: 'imp1', code: 'PN000999', branch: 'Kalo HCM', time: '20/10/2026 09:00', needPay: 100000, paid: 100000, items: [] }];
+            renderImports();
+        `);
+        let starCell = w.document.querySelector('[data-star-key="imp:PN000999"]');
+        assert.ok(starCell);
+        assert.equal(starCell.classList.contains('text-yellow-400'), false);
+        w.toggleStar(starCell, 'imp:PN000999');
+        assert.equal(w.isRecordStarred('imp:PN000999'), true);
+        w.renderImports();
+        starCell = w.document.querySelector('[data-star-key="imp:PN000999"]');
+        assert.equal(starCell.classList.contains('text-yellow-400'), true);
+
+        // 3. POS draft cart saves to sessionStorage and restores with updated live stock
+        const savedCode = w.eval(`
+            const p = KVStore.data.products.find((x) => x.stock > 0);
+            addPosCartItem(p);
+            state.posTabs[0].note = 'Đơn giữ nháp';
+            renderPosScreen();
+            p.stock = 42;
+            state.posTabs = [{ id: 1, name: 'Hóa đơn 1', cart: [], note: '' }];
+            p.code;
+        `);
+        assert.equal(w.restorePosDraft(), true);
+        assert.equal(w.eval('state.posTabs[0].cart.length'), 1);
+        assert.equal(w.eval('state.posTabs[0].cart[0].code'), savedCode);
+        assert.equal(w.eval('state.posTabs[0].cart[0].stock'), 42);
+        assert.equal(w.eval('state.posTabs[0].note'), 'Đơn giữ nháp');
+
+        // 4. Table batch rendering (Load More 50 rows) for Products and Customers
+        w.eval(`
+            KVStore.data.customers = Array.from({ length: 65 }, (_, i) => ({
+                id: 'C' + i,
+                code: 'KH' + String(i + 1).padStart(4, '0'),
+                name: 'Khách ' + (i + 1),
+                phone: '09000000' + String(i).padStart(2, '0'),
+                address: 'HCM',
+                totalSpent: 0,
+                debt: 0
+            }));
+            renderCustomers();
+        `);
+        assert.equal(w.document.querySelectorAll('#customers-tbody tr').length, 50);
+        assert.equal(
+            w.document.getElementById('customers-total-count').textContent,
+            'Hiển thị 50 / 65 khách hàng'
+        );
+        const moreCustBtn = w.document.getElementById('customers-load-more-btn');
+        assert.equal(moreCustBtn.classList.contains('hidden'), false);
+        w.loadMoreCustomers();
+        assert.equal(w.document.querySelectorAll('#customers-tbody tr').length, 65);
+        assert.equal(moreCustBtn.classList.contains('hidden'), true);
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 3 UX/UI: Select All table checkboxes, selective CSV export, touch-friendly report chart tooltips, and mobile nav dropdown', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.setupTableCheckboxes();
+        w.setupNavigation();
+
+        // 1. Header checkbox toggles all visible row checkboxes & row highlight
+        w.renderCustomers();
+        const custTable = w.document.getElementById('customers-tbody').closest('table');
+        const headerCb = custTable.querySelector('thead input.kv-checkbox');
+        const rowCbs = [...custTable.querySelectorAll('tbody input.kv-checkbox')];
+        assert.ok(headerCb && rowCbs.length >= 2);
+        headerCb.checked = true;
+        headerCb.dispatchEvent(new w.Event('change', { bubbles: true }));
+        assert.equal(
+            rowCbs.every((cb) => cb.checked),
+            true
+        );
+        assert.equal(rowCbs[0].closest('tr').classList.contains('bg-blue-50/50'), true);
+
+        // Unchecking one row sets header checkbox to indeterminate
+        rowCbs[0].checked = false;
+        rowCbs[0].dispatchEvent(new w.Event('change', { bubbles: true }));
+        assert.equal(headerCb.checked, false);
+        assert.equal(headerCb.indeterminate, true);
+
+        // 2. Report bar charts render focusable bars with inline popover tooltips for touch/keyboard
+        w.renderDualBarChart(
+            'rep-main-chart-container',
+            [{ label: '20/10', fullName: 'Ngày 20/10', val1: 500000, val2: 200000 }],
+            'Doanh thu',
+            'bg-[#0066cc]',
+            'Lợi nhuận',
+            'bg-emerald-500'
+        );
+        const barCol = w.document.querySelector('#rep-main-chart-container [tabindex="0"]');
+        assert.ok(barCol);
+        assert.ok(barCol.textContent.includes('500.000 đ'));
+
+        // 3. Shared warehouse unshare uses custom askAction dialog instead of native confirm
+        w.document.getElementById('edit-shared-id').value = 'SP_SHARED_1';
+        const unsharePromise = w.confirmUnshareProduct();
+        assert.equal(
+            w.document.getElementById('action-dialog').classList.contains('hidden'),
+            false
+        );
+        w.document.getElementById('action-dialog-cancel').click();
+        await unsharePromise;
+
+        // 4. Mobile "Khác" dropdown opens on click and closes when switching view
+        const moreBtn = w.document.getElementById('nav-more');
+        const moreMenu = w.document.getElementById('nav-more-menu');
+        assert.ok(moreBtn && moreMenu);
+        moreBtn.click();
+        assert.equal(moreMenu.classList.contains('hidden'), false);
+        assert.equal(moreBtn.getAttribute('aria-expanded'), 'true');
+        w.switchView('reports');
+        assert.equal(moreMenu.classList.contains('hidden'), true);
+        assert.equal(moreBtn.classList.contains('nav-item-active'), true);
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 4 UX/UI: Search clear buttons & Escape shortcut, starred document filters, and filter-aware CSV export', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.setupSearchInputs();
+
+        // 1. Search inputs get an accessible clear button (×) and clear on Escape key
+        const custSearch = w.document.getElementById('customer-search-input');
+        const clearBtn = custSearch.parentElement.querySelector(
+            '[data-clear-for="customer-search-input"]'
+        );
+        assert.ok(clearBtn);
+        assert.equal(clearBtn.classList.contains('hidden'), true);
+
+        custSearch.value = 'Nguyễn';
+        custSearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+        assert.equal(clearBtn.classList.contains('hidden'), false);
+
+        custSearch.dispatchEvent(
+            new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        );
+        assert.equal(custSearch.value, '');
+        assert.equal(clearBtn.classList.contains('hidden'), true);
+
+        // 2. Starred filter on Imports and Invoices shows only starred records
+        w.eval(`
+            KVStore.data.imports = [
+                { id: 'i1', code: 'PN_STAR_1', branch: 'Kalo HCM', time: '20/10/2026 09:00', needPay: 50000, paid: 50000, items: [] },
+                { id: 'i2', code: 'PN_NORM_2', branch: 'Kalo HCM', time: '20/10/2026 10:00', needPay: 80000, paid: 80000, items: [] }
+            ];
+            renderImports();
+        `);
+        const starTd = w.document.querySelector('[data-star-key="imp:PN_STAR_1"]');
+        w.toggleStar(starTd, 'imp:PN_STAR_1');
+        const impStatusSel = w.document.getElementById('import-status-filter');
+        impStatusSel.value = 'starred';
+        w.renderImports();
+        const impRows = w.document.querySelectorAll('#import-tbody tr');
+        assert.equal(impRows.length, 1);
+        assert.ok(impRows[0].textContent.includes('PN_STAR_1'));
+
+        // Starred filter on Invoices
+        w.eval(`
+            KVStore.data.invoices = [
+                { id: 'inv_s1', code: 'HD_STAR_1', branch: 'Kalo HCM', time: '20/10/2026 11:00', customer: 'Khách A', total: 120000, paid: 120000, items: [] },
+                { id: 'inv_s2', code: 'HD_NORM_2', branch: 'Kalo HCM', time: '20/10/2026 12:00', customer: 'Khách B', total: 150000, paid: 150000, items: [] }
+            ];
+        `);
+        w.toggleStar(w.document.createElement('td'), 'inv:HD_STAR_1');
+        await w.setInvoiceStatusFilter('starred');
+        const invRows = w.document.querySelectorAll('#invoice-tbody tr');
+        assert.equal(invRows.length, 1);
+        assert.ok(invRows[0].textContent.includes('HD_STAR_1'));
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 5 UX/UI: Column sorting on Suppliers/Imports/Cashbook, Bulk Selection badge & clear, and POS dropdown keyboard navigation', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.setupTableCheckboxes();
+
+        // 1. Column sorting on Suppliers (by debt asc/desc)
+        w.eval(`
+            KVStore.data.suppliers = [
+                { id: 's1', code: 'NCC01', name: 'Nhà cung cấp A', phone: '0901', debt: 500000, totalBought: 1000000 },
+                { id: 's2', code: 'NCC02', name: 'Nhà cung cấp B', phone: '0902', debt: 100000, totalBought: 2000000 }
+            ];
+        `);
+        w.sortSuppliersBy('debt');
+        let supRows = w.document.querySelectorAll('#suppliers-tbody tr');
+        assert.ok(supRows[0].textContent.includes('NCC02'));
+        assert.equal(w.document.getElementById('sort-sup-debt').textContent, '↑');
+        w.sortSuppliersBy('debt');
+        supRows = w.document.querySelectorAll('#suppliers-tbody tr');
+        assert.ok(supRows[0].textContent.includes('NCC01'));
+        assert.equal(w.document.getElementById('sort-sup-debt').textContent, '↓');
+
+        // 2. Bulk selection badge appears when rows are checked and clears on "Bỏ chọn"
+        const supTable = w.document.getElementById('suppliers-tbody').closest('table');
+        const headerCb = supTable.querySelector('thead input.kv-checkbox');
+        headerCb.checked = true;
+        headerCb.dispatchEvent(new w.Event('change', { bubbles: true }));
+        const bulkBadge = supTable.closest('.glass-panel').querySelector('[data-bulk-badge]');
+        assert.ok(bulkBadge && !bulkBadge.classList.contains('hidden'));
+        assert.ok(bulkBadge.textContent.includes('Đã chọn 2 dòng'));
+        bulkBadge.querySelector('[data-bulk-clear]').click();
+        assert.equal(bulkBadge.classList.contains('hidden'), true);
+        assert.equal(headerCb.checked, false);
+
+        // 3. POS Customer Dropdown keyboard navigation (ArrowDown + Enter selects customer)
+        w.searchPosCustomers('');
+        w.handlePosCustomerKeydown({ key: 'ArrowDown', preventDefault() {} });
+        const highlightedCust = w.document.querySelector(
+            '#pos-customer-dropdown [data-pos-cust-item].bg-blue-50'
+        );
+        assert.ok(highlightedCust);
+        w.handlePosCustomerKeydown({ key: 'Enter', preventDefault() {} });
+        assert.ok(w.eval('state.posTabs[state.activePosTab].customer !== null'));
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 6 UX/UI: Stocktake/Transfer column sorting, Import load more, and bulk selection reset on re-render', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.setupTableCheckboxes();
+
+        // 1. Stocktake column sorting toggles direction and re-renders rows
+        w.eval(`
+            KVStore.data.stocktakes = [
+                { id: 'st1', code: 'KK01', branch: 'Kalo HCM', time: '20/10/2026', cashier: 'A', totalActual: 100, totalVariance: 5, status: 'balanced' },
+                { id: 'st2', code: 'KK02', branch: 'Kalo HCM', time: '21/10/2026', cashier: 'B', totalActual: 300, totalVariance: -2, status: 'draft' }
+            ];
+        `);
+        w.sortStocktakesBy('totalActual');
+        let rows = w.document.querySelectorAll('#stocktakes-tbody tr');
+        assert.ok(rows[0].textContent.includes('KK01'));
+        assert.equal(w.document.getElementById('sort-st-totalActual').textContent, '↑');
+        w.sortStocktakesBy('totalActual');
+        rows = w.document.querySelectorAll('#stocktakes-tbody tr');
+        assert.ok(rows[0].textContent.includes('KK02'));
+        assert.equal(w.document.getElementById('sort-st-totalActual').textContent, '↓');
+
+        // 2. Transfer column sorting by totalValue
+        w.eval(`
+            KVStore.data.transfers = [
+                { id: 'tf1', code: 'CH01', fromBranch: 'Kalo HCM', toBranch: 'Kalo Hà Nội', cashier: 'A', totalQty: 2, totalValue: 900000, status: 'shipping' },
+                { id: 'tf2', code: 'CH02', fromBranch: 'Kalo HCM', toBranch: 'Kalo Hà Nội', cashier: 'B', totalQty: 5, totalValue: 100000, status: 'completed' }
+            ];
+        `);
+        w.sortTransfersBy('totalValue');
+        rows = w.document.querySelectorAll('#transfers-tbody tr');
+        assert.ok(rows[0].textContent.includes('CH02'));
+        assert.equal(w.document.getElementById('sort-tf-totalValue').textContent, '↑');
+
+        // 3. Imports load-more paginates 60 records as 50 + 10
+        w.eval(`
+            KVStore.data.imports = Array.from({ length: 60 }, (_, i) => ({
+                id: 'imp' + i,
+                code: 'PN' + String(i + 1).padStart(4, '0'),
+                branch: 'Kalo HCM',
+                time: '20/10/2026 09:00',
+                needPay: 100000,
+                paid: 100000,
+                items: []
+            }));
+            renderImports();
+        `);
+        assert.equal(w.document.querySelectorAll('#import-tbody tr').length, 50);
+        assert.equal(
+            w.document.getElementById('imports-total-count').textContent,
+            'Hiển thị 50 / 60 phiếu nhập'
+        );
+        const moreImpBtn = w.document.getElementById('imports-load-more-btn');
+        assert.equal(moreImpBtn.classList.contains('hidden'), false);
+        w.loadMoreImports();
+        assert.equal(w.document.querySelectorAll('#import-tbody tr').length, 60);
+        assert.equal(moreImpBtn.classList.contains('hidden'), true);
+
+        // 4. Bulk selection badge resets when the table is re-rendered by a new search
+        const impTable = w.document.getElementById('import-tbody').closest('table');
+        const headerCb = impTable.querySelector('thead input.kv-checkbox');
+        headerCb.checked = true;
+        headerCb.dispatchEvent(new w.Event('change', { bubbles: true }));
+        const badge = impTable.closest('.glass-panel').querySelector('[data-bulk-badge]');
+        assert.equal(badge.classList.contains('hidden'), false);
+        w.document.getElementById('import-search-input').value = 'PN0001';
+        w.renderImports();
+        assert.equal(headerCb.checked, false);
+        assert.equal(badge.classList.contains('hidden'), true);
+    } finally {
+        w.close();
+    }
+});
+
+test('View transitions render before reveal, avoid display flips, restore scroll and honour reduced motion', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // 1. Rendering happens while the target view is still hidden (no empty-frame flash)
+        w.eval(`
+            window.hiddenAtRender = null;
+            renderReports = () => {
+                window.hiddenAtRender = document
+                    .getElementById('view-reports')
+                    .classList.contains('hidden');
+            };
+            switchView('reports');
+        `);
+        assert.equal(w.hiddenAtRender, true, 'view must still be hidden while rendering');
+        assert.equal(
+            w.document.getElementById('view-reports').classList.contains('hidden'),
+            false,
+            'view is revealed after rendering'
+        );
+
+        // 2. No inline display overrides are written (class-based toggling only)
+        assert.equal(w.document.getElementById('management-layout').style.display, '');
+        assert.equal(w.document.getElementById('pos-layout').style.display, '');
+
+        // 3. Reveal calls the enter-animation helper exactly once per switch
+        w.eval(`
+            window.enterCalls = [];
+            window.realPlayViewEnter = playViewEnter;
+            playViewEnter = (el, cls) => window.enterCalls.push((el && el.id) + '|' + cls);
+            switchView('products');
+        `);
+        assert.deepEqual(Array.from(w.enterCalls), ['view-products|view-entering']);
+
+        // 4. Scroll position of the previous view is remembered and restored
+        w.eval(`
+            const prev = document.getElementById('view-products');
+            prev.scrollTop = 240;
+            switchView('dashboard');
+        `);
+        // Vị trí được lưu cho chính view và mọi khung cuộn con (phần tử đầu là view).
+        assert.equal(w.eval('viewScrollPositions.get("view-products")[0].top'), 240);
+        w.eval(`
+            const back = document.getElementById('view-products');
+            back.scrollTop = 0;
+            switchView('products');
+        `);
+        assert.equal(w.document.getElementById('view-products').scrollTop, 240);
+
+        // 5. POS switch uses the layout fade helper and keeps class-based visibility
+        w.eval(`
+            window.enterCalls.length = 0;
+            switchView('pos');
+        `);
+        assert.deepEqual(Array.from(w.enterCalls), ['pos-layout|layout-entering']);
+        assert.equal(
+            w.document.getElementById('management-layout').classList.contains('hidden'),
+            true
+        );
+        assert.equal(w.document.getElementById('pos-layout').classList.contains('hidden'), false);
+
+        // 6. Reduced-motion users get no animation class (use the original helper)
+        const originalMatchMedia = w.matchMedia;
+        w.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+        w.eval(`
+            const el = document.getElementById('pos-layout');
+            el.classList.add('layout-entering');
+            window.realPlayViewEnter(el, 'layout-entering');
+        `);
+        assert.equal(
+            w.document.getElementById('pos-layout').classList.contains('layout-entering'),
+            false
+        );
+        w.matchMedia = originalMatchMedia;
+    } finally {
+        w.close();
+    }
+});
+
+test('Import detail modal and import list display product image thumbnails and photo badges', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            KVStore.data.imports = [
+                {
+                    id: 'imp_photo_1',
+                    code: 'PN_PHOTO_01',
+                    branch: 'Kalo HCM',
+                    time: '30/10/2026 10:00',
+                    nccName: 'Synnex FPT',
+                    needPay: 50000000,
+                    paid: 50000000,
+                    paymentMethod: 'transfer',
+                    items: [
+                        {
+                            code: 'SP_IMG_01',
+                            name: 'iPhone 15 Pro Max',
+                            qty: 1,
+                            price: 30000000,
+                            images: ['/uploads/img_iphone15pm.jpg']
+                        },
+                        {
+                            code: 'SP_IMG_02',
+                            name: 'Củ sạc Anker GaN',
+                            qty: 2,
+                            price: 10000000,
+                            images: ['/uploads/img_anker_charger.jpg']
+                        }
+                    ]
+                }
+            ];
+            renderImports();
+        `);
+
+        // 1. Import list table displays the photo indicator badge
+        const importRow = w.document.querySelector('#import-tbody tr');
+        assert.ok(importRow);
+        assert.ok(importRow.textContent.includes('Ảnh'));
+        assert.ok(importRow.querySelector('span[title="Phiếu nhập có ảnh sản phẩm"]'));
+
+        // 2. Import detail modal renders thumbnail images for items with photos
+        w.viewImportDetail('PN_PHOTO_01');
+        const detailModal = w.document.getElementById('import-detail-modal');
+        assert.ok(!detailModal.classList.contains('hidden'));
+        const thumbs = w.document.querySelectorAll('#imp-detail-tbody img');
+        assert.equal(thumbs.length, 2);
+        assert.equal(thumbs[0].getAttribute('src'), '/uploads/img_iphone15pm.jpg');
+        assert.equal(thumbs[1].getAttribute('src'), '/uploads/img_anker_charger.jpg');
+    } finally {
+        w.close();
+    }
+});
+
+test('IMEI-level photos render in private warehouse lists and POS selector', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            KVStore.data.products = [
+                {
+                    id: 'P_USED',
+                    code: 'P_USED',
+                    name: 'iPhone 13 cũ',
+                    branch: 'Kalo HCM',
+                    status: 'active',
+                    stock: 2,
+                    hasImei: true,
+                    imeis: ['IMEI-A', 'IMEI-B'],
+                    images: ['/uploads/product.jpg'],
+                    condition: 'like_new',
+                    imeiDetails: {
+                        'IMEI-A': {
+                            images: ['/uploads/imei-a-1.jpg', '/uploads/imei-a-2.jpg'],
+                            condition: 'like_new',
+                            conditionDetail: 'Pin 99%, sạc 25 lần'
+                        },
+                        'IMEI-B': { images: [], condition: 'good', conditionDetail: 'Trầy nhẹ góc' }
+                    }
+                }
+            ];
+        `);
+
+        // 1. Modal danh sách IMEI: mỗi máy có thumbnail + badge ảnh chung khi thiếu ảnh riêng.
+        w.viewProductImeis('P_USED');
+        const list = w.document.getElementById('prod-imeis-list');
+        const cards = list.querySelectorAll(':scope > div > div');
+        assert.equal(cards.length, 2);
+        // Máy A dùng ảnh riêng.
+        assert.equal(cards[0].querySelector('img').getAttribute('src'), '/uploads/imei-a-1.jpg');
+        assert.ok(cards[0].textContent.includes('Pin 99%, sạc 25 lần'));
+        // Máy B không có ảnh riêng → rơi về ảnh sản phẩm và có nhãn "Ảnh chung".
+        assert.equal(cards[1].querySelector('img').getAttribute('src'), '/uploads/product.jpg');
+        assert.ok(cards[1].textContent.includes('Ảnh chung'));
+        assert.match(
+            w.document.getElementById('prod-imeis-count-text').textContent,
+            /1\/2 máy có ảnh riêng/
+        );
+
+        // 2. POS IMEI selector cũng hiển thị thumbnail theo từng máy.
+        w.eval(`
+            state.posTabs[0].cart = [{ code: 'P_USED', name: 'iPhone 13 cũ', price: 5000000, qty: 1, stock: 2 }];
+            openPosImeiSelector('P_USED');
+        `);
+        const posRows = w.document.querySelectorAll('#pos-imei-list-container label');
+        assert.equal(posRows.length, 2);
+        assert.equal(posRows[0].querySelector('img').getAttribute('src'), '/uploads/imei-a-1.jpg');
+        assert.ok(posRows[0].textContent.includes('Pin 99%, sạc 25 lần'));
+    } finally {
+        w.close();
+    }
+});
+
+test('shared warehouse viewer shows per-IMEI photo sets for own and partner items', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            KVStore.data.shared_products = [
+                {
+                    id: 'SP_SHARED',
+                    code: 'P_USED',
+                    name: 'iPhone 13 cũ',
+                    ownerName: 'Kalo Sport',
+                    status: 'active',
+                    imeis: ['IMEI-A', 'IMEI-B'],
+                    images: ['/uploads/product.jpg'],
+                    imeiDetails: {
+                        'IMEI-A': { images: ['/uploads/imei-a-1.jpg'], condition: 'like_new', conditionDetail: 'Pin 99%' },
+                        'IMEI-B': { images: [], condition: 'good' }
+                    }
+                }
+            ];
+            partnerCatalog.items = [
+                {
+                    id: 'PARTNER_ITEM',
+                    code: 'P_PARTNER',
+                    name: 'Máy đối tác',
+                    partnerName: 'TechMotion',
+                    status: 'active',
+                    imeis: ['P-IMEI-1'],
+                    images: [],
+                    imeiDetails: {
+                        // Ảnh đối tác đi qua proxy nội bộ.
+                        'P-IMEI-1': { images: ['/hub-media/${'a'.repeat(32)}'], condition: 'fair', conditionDetail: 'Móp nhẹ' }
+                    }
+                }
+            ];
+        `);
+
+        // 1. Hàng của tôi: mở modal xem máy, đổi IMEI thì đổi bộ ảnh.
+        w.openSharedImeiViewer('SP_SHARED');
+        const modal = w.document.getElementById('shared-imei-viewer-modal');
+        assert.equal(modal.classList.contains('hidden'), false);
+        assert.equal(
+            w.document.getElementById('shared-imei-main-image').getAttribute('src'),
+            '/uploads/imei-a-1.jpg'
+        );
+        const pills = w.document.querySelectorAll('#shared-imei-viewer-pills [data-shared-imei]');
+        assert.equal(pills.length, 2);
+        // Máy B chưa có ảnh riêng → fallback ảnh sản phẩm + cảnh báo.
+        pills[1].click();
+        assert.equal(
+            w.document.getElementById('shared-imei-main-image').getAttribute('src'),
+            '/uploads/product.jpg'
+        );
+        assert.equal(
+            w.document.getElementById('shared-imei-fallback-note').classList.contains('hidden'),
+            false
+        );
+        w.closeSharedImeiViewer();
+
+        // 2. Hàng đối tác: ảnh proxy /hub-media/<id> phải được giữ lại (không bị lọc).
+        w.openSharedImeiViewer('PARTNER_ITEM');
+        const mainSrc = w.document.getElementById('shared-imei-main-image').getAttribute('src');
+        assert.match(mainSrc, /^\/hub-media\/[a-f0-9]{32}$/);
+        assert.equal(
+            w.document.getElementById('shared-imei-condition-detail').textContent,
+            'Móp nhẹ'
+        );
+    } finally {
+        w.close();
     }
 });

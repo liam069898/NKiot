@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="vi">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>NKiot - Quản trị nhà bán hàng &amp; Kho chung</title>
+        <link rel="stylesheet" href="/assets/inter.css" />
+        <link rel="stylesheet" href="/admin.css" />
+    </head>
+    <body>
+        <!-- 1. TOP NAVBAR -->
+        <header class="top-navbar">
+            <div class="nav-brand-section">
+                <a class="nav-logo-link" href="#" aria-label="NKiot Control Plane">
+                    <svg width="26" height="22" viewBox="0 0 28 24" fill="none" aria-hidden="true">
+                        <circle cx="8" cy="12" r="6.5" fill="#0066CC" />
+                        <path
+                            d="M19.5 3.5C14.8 3.5 11 7.3 11 12C11 16.7 14.8 20.5 19.5 20.5V3.5Z"
+                            fill="#059669"
+                        />
+                    </svg>
+                    <span class="brand-text-title">NKiot</span>
+                </a>
+                <span class="brand-sub-badge">Control Plane</span>
+                <div class="hub-status-badge" title="Hub trung tâm kết nối kho chung giữa các nhà bán hàng">
+                    <span class="status-dot pulse"></span>
+                    <span>Hub Central: 127.0.0.1:4000</span>
+                </div>
+            </div>
+
+            <!-- In-page Navigation Links (chỉ hiện khi đã đăng nhập) -->
+            <nav id="nav-center-links" class="nav-center-links" hidden>
+                <a href="#stats-section" class="nav-tab-btn active">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                    <span>Tổng quan</span>
+                </a>
+                <a href="#section-tenants" class="nav-tab-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                    <span>Nhà bán hàng</span>
+                </a>
+                <a href="#section-create" class="nav-tab-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span>Tạo mới</span>
+                </a>
+                <a href="#section-partners" class="nav-tab-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    <span>Kho chung</span>
+                </a>
+            </nav>
+
+            <!-- Actions Right (chỉ hiện khi đã đăng nhập) -->
+            <div class="nav-right-actions">
+                <span id="nav-next-port-pill" class="nav-kpi-pill" title="Cổng mạng tự động cấp cho shop tiếp theo" hidden>
+                    Cổng kế tiếp: <strong id="nav-next-port">3101</strong>
+                </span>
+                <div id="nav-user-tag" class="user-tag" hidden>
+                    <div class="user-tag-avatar">A</div>
+                    <span>Super Admin</span>
+                </div>
+                <button id="logout" type="button" class="btn-nav-logout" hidden>
+                    <svg
+                        class="icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
+                    <span>Đăng xuất</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- 2. LOGIN VIEW -->
+        <section id="login-view" hidden>
+            <div class="login-wrapper">
+                <div class="login-card">
+                    <div class="login-logo-wrap" aria-hidden="true">
+                        <svg width="32" height="26" viewBox="0 0 28 24" fill="none">
+                            <circle cx="8" cy="12" r="6.5" fill="#0066CC" />
+                            <path
+                                d="M19.5 3.5C14.8 3.5 11 7.3 11 12C11 16.7 14.8 20.5 19.5 20.5V3.5Z"
+                                fill="#059669"
+                            />
+                        </svg>
+                        <span class="brand-text-title login-brand-text">NKiot</span>
+                    </div>
+                    <div class="login-header">
+                        <h2>Đăng nhập Control Plane</h2>
+                        <p>
+                            Quản trị trung tâm chuỗi nhà bán hàng &amp; Phân phối mạng lưới kho
+                            chung B2B.
+                        </p>
+                    </div>
+                    <form id="login-form" class="login-form">
+                        <div class="form-group">
+                            <label for="login-password"
+                                >Mật khẩu quản trị <span class="required">*</span></label
+                            >
+                            <div class="password-input-wrap">
+                                <input
+                                    id="login-password"
+                                    type="password"
+                                    autocomplete="current-password"
+                                    required
+                                    placeholder="Nhập mật khẩu (mặc định: admin1234)"
+                                />
+                                <button
+                                    type="button"
+                                    class="btn-toggle-pwd"
+                                    id="btn-toggle-login-pwd"
+                                    title="Hiện/ẩn mật khẩu"
+                                >
+                                    👁
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" class="glass-btn-primary full-width">
+                            Đăng nhập hệ thống
+                        </button>
+                    </form>
+                    <div class="login-hint-box">
+                        <strong>Mật khẩu mặc định:</strong> <code>admin1234</code> (đã thiết lập cho phiên chạy hiện tại).
+                    </div>
+                    <div class="login-footer">
+                        <span>Hệ thống quản trị mạng lưới cục bộ · Loopback Chỉ định (127.0.0.1)</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Global Floating Status / Error Toast (luôn hiển thị cả ở màn hình Login và App) -->
+        <div class="message-wrapper">
+            <p id="message" role="status" aria-live="polite" title="Bấm để ẩn thông báo"></p>
+        </div>
+
+        <!-- 3. MAIN APP VIEW -->
+        <main id="app-view" class="app-container" hidden>
+
+            <!-- HÀNG 1: 4 Thẻ KPI thống kê số liệu -->
+            <div id="stats-section" class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon icon-blue" aria-hidden="true">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Tổng nhà bán hàng</span>
+                        <span id="kpi-total-tenants" class="stat-value">0</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon icon-emerald" aria-hidden="true">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">POS Đang hoạt động</span>
+                        <span id="kpi-running-tenants" class="stat-value text-emerald">0</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon icon-purple" aria-hidden="true">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"
+                            />
+                            <polyline points="18 8 22 12 18 16" />
+                            <line x1="6" y1="12" x2="22" y2="12" />
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Cặp liên kết kho</span>
+                        <span id="kpi-partner-pairs" class="stat-value">0</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon icon-amber" aria-hidden="true">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                            <line x1="6" y1="6" x2="6.01" y2="6" />
+                            <line x1="6" y1="18" x2="6.01" y2="18" />
+                        </svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-label">Cổng cấp phát kế tiếp</span>
+                        <span id="kpi-next-port" class="stat-value">3101</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Banner thông báo khi vừa tạo thành công (mặc định ẩn) -->
+            <div id="created" class="launch-card" hidden>
+                <div class="launch-icon" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div class="launch-details">
+                    <h3>Nhà bán hàng đã được khởi tạo thành công!</h3>
+                    <p>Database SQLite riêng biệt và process POS đã sẵn sàng phục vụ bán hàng.</p>
+                    <div class="launch-actions">
+                        <a id="created-link" class="btn-launch" target="_blank" rel="noopener"></a>
+                        <button type="button" id="btn-copy-created" class="btn-copy">
+                            📋 Sao chép URL POS
+                        </button>
+                    </div>
+                </div>
+                <button type="button" id="btn-dismiss-created" class="btn-close-banner" aria-label="Đóng thông báo">✕</button>
+            </div>
+
+            <!-- HÀNG 2: Hai block chính đặt song song cân đối (Bảng Tenants + Form Tạo) -->
+            <div class="main-grid">
+                <!-- Cột Trái: Bảng danh sách nhà bán hàng -->
+                <section id="section-tenants" class="glass-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 class="card-title">Mạng lưới nhà bán hàng (Tenants)</h2>
+                            <p class="card-sub">
+                                Quản lý các instance POS độc lập, trạng thái và liên kết Hub
+                            </p>
+                        </div>
+                        <div class="table-toolbar">
+                            <div class="filter-pills" id="tenant-filter-pills">
+                                <button type="button" class="filter-pill active" data-status="all">
+                                    Tất cả <span id="cnt-all" class="pill-count">0</span>
+                                </button>
+                                <button type="button" class="filter-pill" data-status="active">
+                                    Đang chạy <span id="cnt-running" class="pill-count">0</span>
+                                </button>
+                                <button type="button" class="filter-pill" data-status="suspended">
+                                    Tạm khóa <span id="cnt-suspended" class="pill-count">0</span>
+                                </button>
+                            </div>
+                            <div class="search-box">
+                                <svg
+                                    class="search-icon"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <circle cx="11" cy="11" r="8" />
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                                </svg>
+                                <input
+                                    id="tenant-search"
+                                    type="search"
+                                    placeholder="Tìm mã, tên, cổng..."
+                                />
+                                <button
+                                    type="button"
+                                    id="btn-clear-tenant-search"
+                                    class="search-clear-btn"
+                                    aria-label="Xóa tìm kiếm"
+                                    title="Xóa tìm kiếm (Esc)"
+                                    hidden
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Nhà bán hàng</th>
+                                    <th>Cổng &amp; URL POS</th>
+                                    <th>Dữ liệu &amp; DB</th>
+                                    <th style="min-width: 120px">Trạng thái</th>
+                                    <th style="text-align: right">Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tenant-rows"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Cột Phải: Form tạo nhà bán hàng mới -->
+                <section id="section-create" class="glass-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 class="card-title">Tạo nhà bán hàng mới</h2>
+                            <p class="card-sub">
+                                Cấp phát database SQLite riêng &amp; khởi chạy POS
+                            </p>
+                        </div>
+                    </div>
+                    <form id="tenant-form" class="stacked-form">
+                        <!-- Hàng 1: Mã & Tên -->
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="tenant-id">Mã Tenant <span class="required">*</span></label>
+                                <input
+                                    type="text"
+                                    id="tenant-id"
+                                    name="id"
+                                    required
+                                    maxlength="63"
+                                    pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+                                    placeholder="july, kalo, shop1"
+                                />
+                                <span class="field-sub">Chữ thường, số, gạch ngang</span>
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="tenant-name"
+                                    >Tên cửa hàng <span class="required">*</span></label
+                                >
+                                <input
+                                    type="text"
+                                    id="tenant-name"
+                                    name="name"
+                                    required
+                                    maxlength="200"
+                                    placeholder="Thời trang July..."
+                                />
+                                <span class="field-sub">Tên hiển thị thương hiệu</span>
+                            </div>
+                        </div>
+
+                        <!-- Hàng 2: SĐT & Ngành hàng -->
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="tenant-phone">Số điện thoại</label>
+                                <input
+                                    type="text"
+                                    id="tenant-phone"
+                                    name="phone"
+                                    placeholder="0901234567"
+                                />
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="tenant-category">Ngành hàng</label>
+                                <select id="tenant-category" name="category">
+                                    <option value="">-- Chọn ngành hàng --</option>
+                                    <option value="Thời trang &amp; Phụ kiện">
+                                        Thời trang &amp; Phụ kiện
+                                    </option>
+                                    <option value="Đồ thể thao &amp; Dã ngoại">
+                                        Đồ thể thao &amp; Dã ngoại
+                                    </option>
+                                    <option value="Điện thoại &amp; Công nghệ">
+                                        Điện thoại &amp; Công nghệ
+                                    </option>
+                                    <option value="Mỹ phẩm &amp; Làm đẹp">
+                                        Mỹ phẩm &amp; Làm đẹp
+                                    </option>
+                                    <option value="Mẹ &amp; Bé">Mẹ &amp; Bé</option>
+                                    <option value="Tạp hóa &amp; Tiện lợi">
+                                        Tạp hóa &amp; Tiện lợi
+                                    </option>
+                                    <option value="Khác">Khác</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Hàng 3: Email & Ghi chú -->
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="tenant-email">Email liên hệ</label>
+                                <input
+                                    type="email"
+                                    id="tenant-email"
+                                    name="email"
+                                    placeholder="shop@cuahang.vn"
+                                />
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="tenant-note">Ghi chú quản trị</label>
+                                <input
+                                    type="text"
+                                    id="tenant-note"
+                                    name="note"
+                                    placeholder="Ghi chú hợp đồng..."
+                                />
+                            </div>
+                        </div>
+
+                        <!-- Hàng 4: Tài khoản & Cổng -->
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="tenant-username"
+                                    >Tài khoản POS <span class="required">*</span></label
+                                >
+                                <input
+                                    type="text"
+                                    id="tenant-username"
+                                    name="username"
+                                    required
+                                    minlength="3"
+                                    maxlength="50"
+                                    value="admin"
+                                />
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="tenant-port"
+                                    >Cổng (Port) <span class="required">*</span></label
+                                >
+                                <input
+                                    id="tenant-port"
+                                    name="port"
+                                    type="number"
+                                    required
+                                    min="1024"
+                                    max="65535"
+                                    placeholder="3101"
+                                />
+                            </div>
+                        </div>
+
+                        <!-- Hàng 5: Mật khẩu POS (Full Width để không bị chật) -->
+                        <div class="form-group">
+                            <label for="tenant-password">Mật khẩu POS</label>
+                            <div class="password-input-wrap">
+                                <input
+                                    id="tenant-password"
+                                    name="password"
+                                    type="password"
+                                    minlength="8"
+                                    autocomplete="new-password"
+                                    placeholder="Tối thiểu 8 ký tự (mặc định: admin1234)"
+                                />
+                                <button
+                                    type="button"
+                                    class="btn-toggle-pwd"
+                                    id="btn-toggle-tenant-pwd"
+                                    title="Hiện/ẩn mật khẩu"
+                                >
+                                    👁
+                                </button>
+                            </div>
+                            <span class="field-sub">Mặc định sẽ là <code>admin1234</code> nếu để trống.</span>
+                        </div>
+
+                        <!-- Hàng 6: Preview URL & Nút Tạo -->
+                        <div
+                            class="form-row"
+                            style="
+                                align-items: center;
+                                justify-content: space-between;
+                                margin-top: 4px;
+                            "
+                        >
+                            <div class="field-sub">
+                                Địa chỉ truy cập dự kiến:
+                                <span
+                                    id="tenant-url-preview"
+                                    class="field-hint"
+                                    style="display: inline; margin-left: 4px; font-weight: 700"
+                                    >http://localhost:3101</span
+                                >
+                            </div>
+                            <button
+                                type="submit"
+                                class="glass-btn-primary"
+                                style="padding: 9px 20px"
+                            >
+                                <svg
+                                    width="15"
+                                    height="15"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                                <span>Tạo &amp; Khởi chạy POS</span>
+                            </button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+
+            <!-- HÀNG 3: Block Liên kết đối tác kho chung (Full Width Grid) -->
+            <section id="section-partners" class="glass-card">
+                <div class="card-header">
+                    <div>
+                        <h2 class="card-title">Mạng lưới liên kết kho chung</h2>
+                        <p class="card-sub">
+                            Mỗi nhà bán hàng có thể chia sẻ sản phẩm và tồn kho qua Hub trung tâm. Thiết lập hoặc ngắt liên kết 1-1 giữa các shop bên dưới.
+                        </p>
+                    </div>
+                </div>
+                <div class="partner-panel">
+                    <!-- Nửa Trái: Form thiết lập liên kết -->
+                    <form id="partner-form" class="partner-form">
+                        <div class="partner-select-box">
+                            <div class="form-group">
+                                <label for="partner-a">Tenant 1</label>
+                                <select id="partner-a" name="a" required></select>
+                            </div>
+                            <div class="partner-arrow" aria-hidden="true">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                            </div>
+                            <div class="form-group">
+                                <label for="partner-b">Tenant 2</label>
+                                <select id="partner-b" name="b" required></select>
+                            </div>
+                        </div>
+                        <div class="partner-buttons">
+                            <button type="submit" value="link" class="glass-btn-primary">
+                                <svg
+                                    width="15"
+                                    height="15"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path
+                                        d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"
+                                    />
+                                    <path
+                                        d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
+                                    />
+                                </svg>
+                                <span>Thiết lập liên kết kho</span>
+                            </button>
+                            <button type="submit" value="unlink" class="btn-danger-outline" title="Ngắt liên kết giữa 2 tenant đang chọn">
+                                <span>Hủy liên kết cặp này</span>
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Nửa Phải: Danh sách đối tác đã liên kết -->
+                    <div class="partner-list-section">
+                        <div class="partner-list-title">Mạng lưới đối tác đã kết nối</div>
+                        <ul id="partner-rows" class="partner-chips"></ul>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Modal Đổi Mật Khẩu Shop -->
+        <div id="modal-reset-pwd" class="admin-modal-backdrop" hidden>
+            <div class="admin-modal-box">
+                <div class="modal-header">
+                    <h3>Đổi mật khẩu Quản trị Shop</h3>
+                    <button type="button" class="btn-close-modal" id="btn-close-pwd-modal" aria-label="Đóng hộp thoại">
+                        ✕
+                    </button>
+                </div>
+                <form id="form-reset-pwd" autocomplete="off">
+                    <input type="hidden" id="reset-pwd-tenant-id" />
+                    <div class="form-group" style="margin-bottom: 12px">
+                        <span class="field-sub">Cửa hàng:</span>
+                        <div
+                            id="reset-pwd-tenant-name"
+                            style="font-weight: 700; color: #111827; font-size: 13.5px"
+                        ></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="reset-pwd-input"
+                            >Mật khẩu mới <span class="required">*</span></label
+                        >
+                        <input
+                            type="password"
+                            id="reset-pwd-input"
+                            name="new-password"
+                            required
+                            minlength="8"
+                            autocomplete="new-password"
+                            placeholder="Tối thiểu 8 ký tự"
+                            style="width: 100%; box-sizing: border-box"
+                        />
+                        <span class="field-sub"
+                            >Mật khẩu mới sẽ áp dụng ngay cho tài khoản admin của shop.</span
+                        >
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="glass-btn-secondary" id="btn-cancel-pwd">
+                            Hủy
+                        </button>
+                        <button type="submit" class="glass-btn-primary">Xác nhận đổi</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Xác Nhận Hành Động Quản Trị -->
+        <div id="modal-confirm-action" class="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" hidden>
+            <div class="admin-modal-box">
+                <div class="modal-header">
+                    <h3 id="confirm-modal-title">Xác nhận thao tác</h3>
+                    <button type="button" class="btn-close-modal" id="btn-close-confirm-modal" aria-label="Đóng hộp thoại">
+                        ✕
+                    </button>
+                </div>
+                <p id="confirm-modal-message" style="font-size: 13.5px; color: var(--text-secondary); line-height: 1.55"></p>
+                <div class="modal-actions">
+                    <button type="button" class="glass-btn-secondary" id="btn-cancel-confirm-modal">
+                        Hủy bỏ
+                    </button>
+                    <button type="button" class="btn-danger-outline" id="btn-accept-confirm-modal" style="background: var(--color-rose); color: #fff; border-color: var(--color-rose)">
+                        Xác nhận
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <script src="/admin.js"></script>
+    </body>
+</html>

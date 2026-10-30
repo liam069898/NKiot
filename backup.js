@@ -57,10 +57,7 @@ function rotateBackups(source, directory, keep = 7) {
 }
 
 if (require.main === module) {
-    const source =
-        process.env.NKIOT_DB_PATH ||
-        process.env.MINIKIOT_DB_PATH ||
-        path.join(__dirname, 'minikiot.db');
+    const source = require('./runtime-paths').resolveDbPath();
     const [first, second, third] = process.argv.slice(2);
     try {
         if (first === '--verify' && second) {

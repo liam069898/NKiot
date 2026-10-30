@@ -388,8 +388,37 @@ function returnGoods(data, user, input, cancel = false) {
             returned = totals.get(row.code) || 0;
         if (qty > item.qty - returned) fail(`Số lượng trả ${row.code} vượt số lượng còn lại.`, 409);
         const p = product(data, item.code, branchOf(inv));
-        const imeis = (item.imeis || []).slice(returned, returned + qty);
+        let imeis = [];
+        if (p.hasImei || item.hasImei || item.imeis?.length) {
+            const sold = item.imeis;
+            const priorLines = previous.flatMap((r) => r.items.filter((i) => i.code === row.code));
+            const priorSerials = priorLines.flatMap((i) => i.imeis || []);
+            if (
+                !p.hasImei ||
+                !Array.isArray(sold) ||
+                sold.length !== item.qty ||
+                new Set(sold).size !== sold.length ||
+                priorLines.some((i) => !Array.isArray(i.imeis) || i.imeis.length !== i.qty) ||
+                new Set(priorSerials).size !== priorSerials.length ||
+                priorSerials.some((serial) => !sold.includes(serial))
+            )
+                fail('Chứng từ thiếu hoặc sai lịch sử IMEI; cần đối soát trước khi trả.');
+            const available = sold.filter((serial) => !priorSerials.includes(serial));
+            // Full cancellation has no ambiguous choice; partial returns must identify devices.
+            imeis = cancel ? available : row.imeis;
+            if (
+                !Array.isArray(imeis) ||
+                imeis.length !== qty ||
+                new Set(imeis).size !== qty ||
+                imeis.some((serial) => !available.includes(serial))
+            )
+                fail('Chọn đúng IMEI chưa trả của hóa đơn, khớp với số lượng trả.');
+        }
+        if (!Number.isSafeInteger(item.costPrice) || item.costPrice < 0)
+            fail('Thiếu giá vốn lịch sử; cần đối soát trước khi hoàn kho.');
+        const restoredCost = averageCost(p.stock, p.costPrice, qty, item.costPrice);
         restoreStock(data, p, qty, imeis);
+        p.costPrice = restoredCost;
         const net = lineNet(inv, item),
             refund =
                 ratio(net, returned + qty, item.qty, true) - ratio(net, returned, item.qty, true);
@@ -499,6 +528,7 @@ function importGoods(data, user, input) {
         ]),
         seen = new Set();
     const items = input.items.map((row) => {
+        require('./media-validation').validateMedia(row);
         if (seen.has(row.code)) fail('Dòng sản phẩm trùng.');
         seen.add(row.code);
         const p = product(data, row.code, br),
@@ -520,6 +550,26 @@ function importGoods(data, user, input) {
             imeis.forEach((im) => allImeis.add(im));
             p.hasImei = true;
             p.imeis = (p.imeis || []).concat(imeis);
+            if (row.imeiDetails && typeof row.imeiDetails === 'object') {
+                p.imeiDetails = { ...(p.imeiDetails || {}), ...row.imeiDetails };
+            }
+            if (!p.images || !p.images.length) {
+                const firstWithImg = imeis.find((im) => p.imeiDetails?.[im]?.images?.length);
+                if (firstWithImg) {
+                    p.images = p.imeiDetails[firstWithImg].images;
+                    if (p.imeiDetails[firstWithImg].condition)
+                        p.condition = p.imeiDetails[firstWithImg].condition;
+                    if (p.imeiDetails[firstWithImg].conditionDetail)
+                        p.conditionDetail = p.imeiDetails[firstWithImg].conditionDetail;
+                }
+            }
+        } else {
+            if (Array.isArray(row.images) && row.images.length) {
+                p.images = row.images;
+            }
+            if (row.videoUrl) p.videoUrl = row.videoUrl;
+            if (row.condition) p.condition = row.condition;
+            if (row.conditionDetail) p.conditionDetail = row.conditionDetail;
         }
         p.costPrice = averageCost(p.stock, p.costPrice, qty, price);
         p.stock = amount(p.stock + qty, 'Tồn kho');
@@ -531,6 +581,11 @@ function importGoods(data, user, input) {
             total: amount(qty * price),
             hasImei: p.hasImei,
             imeis,
+            imeiDetails: row.imeiDetails || {},
+            images: Array.isArray(row.images) ? row.images : [],
+            videoUrl: row.videoUrl || '',
+            condition: row.condition || 'new',
+            conditionDetail: row.conditionDetail || '',
             stockBefore,
             stockAfter: p.stock,
             costPriceBefore,
@@ -642,6 +697,9 @@ function cancelImport(data, user, input) {
         if (row.hasImei && Array.isArray(row.imeis) && row.imeis.length) {
             const toRemove = new Set(row.imeis);
             p.imeis = (p.imeis || []).filter((im) => !toRemove.has(im));
+            if (p.imeiDetails && typeof p.imeiDetails === 'object') {
+                toRemove.forEach((im) => delete p.imeiDetails[im]);
+            }
         }
     });
 
@@ -786,6 +844,7 @@ function transfer(data, user, input) {
         seen.add(row.code);
         const p = product(data, row.code, from),
             qty = quantity(row.qty);
+        const imeis = takeStock(p, qty, row.imeis);
         return {
             code: p.code,
             name: p.name,
@@ -794,7 +853,14 @@ function transfer(data, user, input) {
             price: p.costPrice,
             total: amount(p.costPrice * qty),
             hasImei: p.hasImei,
-            imeis: takeStock(p, qty, row.imeis),
+            imeis,
+            imeiDetails: structuredClone(
+                Object.fromEntries(
+                    imeis
+                        .filter((im) => Object.hasOwn(p.imeiDetails || {}, im))
+                        .map((im) => [im, p.imeiDetails[im]])
+                )
+            ),
             productSnapshot: {
                 category: p.category,
                 price: p.price,
@@ -853,6 +919,20 @@ function receive(data, user, input) {
         if (!!p.hasImei !== !!item.hasImei) fail('Kiểu quản lý serial không khớp giữa hai kho.');
         p.costPrice = averageCost(p.stock, p.costPrice, item.qty, item.price);
         restoreStock(data, p, item.qty, item.imeis || [], record.id);
+        const source = data.products.find(
+            (row) => row.code === item.code && branchOf(row) === record.fromBranch
+        );
+        const details = item.imeiDetails ?? source?.imeiDetails ?? {};
+        p.imeiDetails = {
+            ...(p.imeiDetails || {}),
+            ...structuredClone(
+                Object.fromEntries(
+                    (item.imeis || [])
+                        .filter((im) => Object.hasOwn(details, im))
+                        .map((im) => [im, details[im]])
+                )
+            )
+        };
     }
     record.status = 'completed';
     const received = timestamp();
@@ -917,6 +997,153 @@ function stocktake(data, user, input) {
     record.totalVariance = record.items.reduce((s, i) => s + i.variance, 0);
     return record;
 }
+
+// ============================================================
+// Shared Warehouse (Kho Chung) Operations
+// ============================================================
+
+function syncSharedAvailability(data) {
+    if (!Array.isArray(data.shared_products) || !data.shared_products.length) return;
+    const productsById = new Map((data.products || []).map((p) => [p.id, p]));
+    for (const sp of data.shared_products) {
+        if (sp.status !== 'active') continue;
+        const p = productsById.get(sp.sourceProductId);
+        if (!p) {
+            sp.availability = 'out_of_stock';
+            sp.imeis = [];
+            sp.imeiDetails = {};
+            continue;
+        }
+        const minStock = Number(p.minStock) || 0;
+        const stock = p.status === 'active' ? Number(p.stock) || 0 : 0;
+        sp.availability = stock > minStock ? 'in_stock' : stock > 0 ? 'low_stock' : 'out_of_stock';
+        sp.name = p.name;
+        sp.price = Number(p.price) || 0;
+        sp.category = p.category || '';
+        sp.unit = p.unit || '';
+        sp.barcode = p.barcode || '';
+        sp.images = Array.isArray(p.images) ? p.images : [];
+        sp.videoUrl = p.videoUrl || '';
+        sp.condition = p.condition || 'new';
+        sp.conditionDetail = p.conditionDetail || '';
+        sp.description = p.description || '';
+        sp.imeis = stock > 0 && p.hasImei ? [...(p.imeis || [])] : [];
+        sp.imeiDetails = Object.fromEntries(
+            sp.imeis
+                .filter((serial) => Object.hasOwn(p.imeiDetails || {}, serial))
+                .map((serial) => [serial, p.imeiDetails[serial]])
+        );
+        sp.lastSyncAt = new Date().toISOString();
+    }
+}
+
+function shareProduct(data, user, input) {
+    requirePermission(user, 'products');
+    if (!input.productId || typeof input.productId !== 'string')
+        fail('Chưa chọn sản phẩm cần chia sẻ.');
+    const p = (data.products || []).find((pr) => pr.id === input.productId);
+    if (!p) fail('Không tìm thấy sản phẩm.');
+    if (p.status !== 'active') fail('Chỉ chia sẻ sản phẩm đang kinh doanh.');
+    const br = branchOf(p);
+    if (!allowedBranches(user, data).includes(br))
+        fail('Không có quyền chia sẻ sản phẩm ở chi nhánh khác.', 403);
+
+    if (!Array.isArray(data.shared_products)) data.shared_products = [];
+    const existing = data.shared_products.find(
+        (sp) => sp.sourceProductId === p.id && sp.status === 'active'
+    );
+    if (existing) {
+        if (existing.ownerUserId !== user.id && user.role !== 'admin')
+            fail('Chỉ chủ sở hữu hoặc quản trị viên mới có thể cập nhật sản phẩm.', 403);
+        if (input.wholesalePrice !== undefined)
+            existing.wholesalePrice = Math.max(0, Number(input.wholesalePrice) || 0);
+        if (input.minOrderQty !== undefined)
+            existing.minOrderQty = Math.max(1, Number(input.minOrderQty) || 1);
+        if (input.note !== undefined) existing.note = String(input.note).slice(0, 500);
+        existing.images = Array.isArray(p.images) ? p.images : [];
+        existing.videoUrl = p.videoUrl || '';
+        existing.condition = p.condition || 'new';
+        existing.conditionDetail = p.conditionDetail || '';
+        existing.description = p.description || '';
+        existing.imeiDetails =
+            p.imeiDetails && typeof p.imeiDetails === 'object' ? p.imeiDetails : {};
+        existing.lastSyncAt = new Date().toISOString();
+        return existing;
+    }
+
+    const ts = timestamp();
+    const minStock = Number(p.minStock) || 0;
+    const stock = Number(p.stock) || 0;
+    const availability = stock > minStock ? 'in_stock' : stock > 0 ? 'low_stock' : 'out_of_stock';
+    const id = code(data, 'SKC');
+    const branchInfo = (data.branches || []).find((b) => b.name === br);
+    const ownerPhone = branchInfo?.phone || user.phone || '';
+
+    const shared = {
+        id,
+        sourceProductId: p.id,
+        ownerUserId: user.id,
+        ownerBranch: br,
+        ownerName: user.name || user.username || 'Đối tác',
+        ownerPhone,
+        code: p.code,
+        name: p.name,
+        category: p.category || '',
+        price: Number(p.price) || 0,
+        unit: p.unit || '',
+        barcode: p.barcode || '',
+        availability,
+        minOrderQty: Math.max(1, Number(input.minOrderQty) || 1),
+        wholesalePrice:
+            input.wholesalePrice !== undefined
+                ? Math.max(0, Number(input.wholesalePrice) || 0)
+                : Number(p.price) || 0,
+        note: input.note ? String(input.note).slice(0, 500) : '',
+        images: Array.isArray(p.images) ? p.images : [],
+        videoUrl: p.videoUrl || '',
+        condition: p.condition || 'new',
+        conditionDetail: p.conditionDetail || '',
+        description: p.description || '',
+        imeiDetails: p.imeiDetails && typeof p.imeiDetails === 'object' ? p.imeiDetails : {},
+        sharedAt: ts.createdAt,
+        lastSyncAt: ts.createdAt,
+        status: 'active'
+    };
+    data.shared_products.unshift(shared);
+    return shared;
+}
+
+function unshareProduct(data, user, input) {
+    requirePermission(user, 'products');
+    if (!input.sharedProductId || typeof input.sharedProductId !== 'string')
+        fail('Chưa chọn sản phẩm cần gỡ.');
+    if (!Array.isArray(data.shared_products)) data.shared_products = [];
+    const sp = data.shared_products.find((s) => s.id === input.sharedProductId);
+    if (!sp) fail('Không tìm thấy sản phẩm kho chung.');
+    if (sp.ownerUserId !== user.id && user.role !== 'admin')
+        fail('Chỉ chủ sở hữu hoặc quản trị viên mới có thể gỡ sản phẩm.', 403);
+    sp.status = 'removed';
+    return { removed: true, id: sp.id };
+}
+
+function updateSharedProduct(data, user, input) {
+    requirePermission(user, 'products');
+    if (!input.sharedProductId || typeof input.sharedProductId !== 'string')
+        fail('Chưa chọn sản phẩm cần cập nhật.');
+    if (!Array.isArray(data.shared_products)) data.shared_products = [];
+    const sp = data.shared_products.find((s) => s.id === input.sharedProductId);
+    if (!sp) fail('Không tìm thấy sản phẩm kho chung.');
+    if (sp.ownerUserId !== user.id && user.role !== 'admin')
+        fail('Chỉ chủ sở hữu hoặc quản trị viên mới có thể cập nhật sản phẩm.', 403);
+    if (input.wholesalePrice !== undefined)
+        sp.wholesalePrice = Math.max(0, Number(input.wholesalePrice) || 0);
+    if (input.minOrderQty !== undefined)
+        sp.minOrderQty = Math.max(1, Number(input.minOrderQty) || 1);
+    if (input.note !== undefined) sp.note = String(input.note).slice(0, 500);
+    sp.lastSyncAt = new Date().toISOString();
+    return sp;
+}
+
 function execute(data, user, type, input) {
     if (!input || typeof input !== 'object' || Array.isArray(input))
         fail('Nội dung thao tác không hợp lệ.');
@@ -1088,8 +1315,36 @@ function execute(data, user, type, input) {
             });
             return st;
         }
+        case 'shareProduct': {
+            const sp = shareProduct(data, user, input);
+            recordActivity(data, {
+                type: 'shared_warehouse',
+                title: user.name || 'Quản lý',
+                action: `Chia sẻ sản phẩm ${sp.name} lên kho chung`,
+                branch: sp.ownerBranch
+            });
+            return sp;
+        }
+        case 'unshareProduct': {
+            const result = unshareProduct(data, user, input);
+            recordActivity(data, {
+                type: 'shared_warehouse',
+                title: user.name || 'Quản lý',
+                action: 'Gỡ sản phẩm khỏi kho chung'
+            });
+            return result;
+        }
+        case 'updateSharedProduct': {
+            const result = updateSharedProduct(data, user, input);
+            recordActivity(data, {
+                type: 'shared_warehouse',
+                title: user.name || 'Quản lý',
+                action: `Cập nhật thông tin sản phẩm kho chung ${result.name}`
+            });
+            return result;
+        }
         default:
             fail('Thao tác không hợp lệ.', 400);
     }
 }
-module.exports = { execute, amount, fail, branchOf, recordActivity };
+module.exports = { execute, amount, fail, branchOf, recordActivity, syncSharedAvailability };

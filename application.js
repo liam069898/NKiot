@@ -2,7 +2,15 @@
 const crypto = require('node:crypto');
 const db = require('./db');
 const { can, allowedBranches, publicUser, requirePermission, hashPassword } = require('./security');
-const { execute, fail, amount, branchOf, recordActivity } = require('./domain');
+const {
+    execute,
+    fail,
+    amount,
+    branchOf,
+    recordActivity,
+    syncSharedAvailability
+} = require('./domain');
+const hub = require('./hub-client');
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // Idempotency records must outlive any realistic offline/pending reconciliation window.
 const PROCESSED_REQUEST_RETENTION_MS = 30 * 86400000;
@@ -24,7 +32,9 @@ const readable = {
     returns: ['invoices', 'reports', 'dashboard'],
     stocktakes: ['stocktakes'],
     transfers: ['transfers'],
-    users: ['users']
+    users: ['users'],
+    shared_products: ['shared_warehouse', 'products'],
+    share_orders: ['shared_warehouse', 'products']
 };
 // Builds the user's view without deep-cloning: new arrays/objects at the top level, rows shared
 // with `data`. Callers must treat the result as read-only (it may come from the frozen snapshot).
@@ -41,6 +51,18 @@ function project(data, user) {
             );
     }
     result.users = result.users.map(publicUser);
+    // shared_products and share_orders are not branch-scoped; all shared items are globally visible.
+    if (result.shared_products && result.shared_products.length) {
+        result.shared_products = result.shared_products.filter(
+            (sp) => sp.status === 'active' || sp.ownerUserId === user.id || user.role === 'admin'
+        );
+    }
+    // share_orders: show orders where user is requester or owner
+    if (result.share_orders && result.share_orders.length) {
+        result.share_orders = result.share_orders.filter(
+            (o) => o.requesterId === user.id || o.ownerId === user.id || user.role === 'admin'
+        );
+    }
     // Branch directory is needed to select destinations; inventory is still scoped above.
     result.recentActivities = (data.recentActivities || []).filter(
         (r) => !r.branch || branches.has(r.branch) || r.branch === 'Toàn bộ chi nhánh'
@@ -148,7 +170,13 @@ const fields = {
         'barcode',
         'branch',
         'hasImei',
-        'imeis'
+        'imeis',
+        'images',
+        'videoUrl',
+        'condition',
+        'conditionDetail',
+        'description',
+        'imeiDetails'
     ],
     customers: ['id', 'code', 'name', 'phone', 'address', 'totalSpent', 'debt', 'points', 'note'],
     suppliers: ['id', 'code', 'name', 'phone', 'address', 'debt', 'totalBought', 'note'],
@@ -185,7 +213,9 @@ const NON_STRING_FIELDS = [
     'isDefault',
     'permissions',
     'branches',
-    'imeis'
+    'imeis',
+    'images',
+    'imeiDetails'
 ];
 function productHasHistory(data, product) {
     const branch = branchOf(product),
@@ -235,7 +265,7 @@ function validateRecord(table, row, data, old, user) {
             fail(`Trường ${key} phải là chuỗi.`);
         if (typeof value === 'string' && value.length > 5000) fail(`Trường ${key} quá dài.`);
         if (
-            !['permissions', 'branches', 'imeis'].includes(key) &&
+            !['permissions', 'branches', 'imeis', 'images', 'imeiDetails'].includes(key) &&
             value !== null &&
             typeof value === 'object'
         )
@@ -254,6 +284,7 @@ function validateRecord(table, row, data, old, user) {
             if (!equal(row[key], old[key]))
                 fail('Điều chỉnh số dư phải qua nghiệp vụ thanh toán hoặc quản trị viên.', 403);
     if (table === 'products') {
+        require('./media-validation').validateMedia(row);
         if (!allowedBranches(user, data).includes(branchOf(row)))
             fail('Không được sửa kho khác.', 403);
         if (old && (row.code !== old.code || row.branch !== old.branch))
@@ -270,6 +301,28 @@ function validateRecord(table, row, data, old, user) {
             fail('Tồn kho phải bằng số IMEI. Nhập hàng có IMEI qua phiếu nhập.');
         if (old && row.hasImei !== old.hasImei && (old.stock || productHasHistory(data, old)))
             fail('Không thể đổi cách quản lý IMEI khi còn tồn kho hoặc lịch sử chứng từ.');
+        if (row.images !== undefined) {
+            if (
+                !Array.isArray(row.images) ||
+                row.images.length > 20 ||
+                row.images.some((img) => typeof img !== 'string' || img.length > 500)
+            )
+                fail('Danh sách hình ảnh không hợp lệ.');
+        }
+        if (
+            row.condition !== undefined &&
+            !['new', 'like_new', 'good', 'fair'].includes(row.condition)
+        )
+            fail('Tình trạng sản phẩm không hợp lệ.');
+        if (row.imeiDetails !== undefined) {
+            if (
+                typeof row.imeiDetails !== 'object' ||
+                row.imeiDetails === null ||
+                Array.isArray(row.imeiDetails)
+            ) {
+                fail('Chi tiết IMEI không hợp lệ.');
+            }
+        }
         const otherSerials = new Set(
             data.products.filter((p) => p.id !== row.id).flatMap((p) => p.imeis || [])
         );
@@ -316,7 +369,13 @@ function validateRecord(table, row, data, old, user) {
         if (
             user.role !== 'admin' &&
             (old?.role === 'admin' ||
-                (row.branches || []).some((b) => !allowedBranches(user, data).includes(b)))
+                (old &&
+                    [...(old.branches || []), old.branch]
+                        .filter(Boolean)
+                        .some((b) => !allowedBranches(user, data).includes(b))) ||
+                [...(Array.isArray(row.branches) ? row.branches : []), row.branch]
+                    .filter(Boolean)
+                    .some((b) => !allowedBranches(user, data).includes(b)))
         )
             fail('Không được quản lý quản trị viên hoặc nhân viên ngoài chi nhánh.', 403);
         if (
@@ -335,7 +394,8 @@ function validateRecord(table, row, data, old, user) {
         if (
             !Array.isArray(row.branches) ||
             !row.branches.length ||
-            row.branches.some((b) => !data.branches.some((x) => x.name === b))
+            row.branches.some((b) => !data.branches.some((x) => x.name === b)) ||
+            !row.branches.includes(row.branch)
         )
             fail('Chi nhánh nhân viên không hợp lệ.');
         if (row.id === user.id && row.status !== 'active') fail('Không thể tự khóa tài khoản.');
@@ -405,16 +465,74 @@ function syncProductCodesAcrossBranches(data, user, originalProducts, oldBranchI
         }
     }
 }
-function applyEdit(data, user, incoming) {
+function applyCatalogPatch(data, user, patch) {
+    const object = (value) => value && typeof value === 'object' && !Array.isArray(value);
+    if (
+        !object(patch) ||
+        Object.keys(patch).some((key) => !['tables', 'settings'].includes(key)) ||
+        !object(patch.tables) ||
+        !object(patch.settings)
+    )
+        fail('Thay đổi danh mục không hợp lệ.');
+    const visible = project(data, user);
+    const incoming = {};
+    for (const [table, change] of Object.entries(patch.tables)) {
+        if (!Object.hasOwn(editable, table)) fail('Danh mục không được phép cập nhật.', 403);
+        requirePermission(user, editable[table]);
+        if (
+            !object(change) ||
+            Object.keys(change).some((key) => !['upsert', 'remove'].includes(key)) ||
+            !Array.isArray(change.upsert) ||
+            !Array.isArray(change.remove)
+        )
+            fail('Thay đổi bản ghi không hợp lệ.');
+        const visibleIds = new Set(visible[table].map((row) => row.id));
+        const existingIds = new Set(data[table].map((row) => row.id));
+        const ids = new Set();
+        for (const id of change.remove) {
+            if (typeof id !== 'string' || ids.has(id)) fail('Mã xóa không hợp lệ hoặc bị trùng.');
+            if (!visibleIds.has(id)) fail('Không được xóa dữ liệu ngoài phạm vi.', 403);
+            ids.add(id);
+        }
+        const removed = new Set(ids);
+        const updated = new Map();
+        for (const row of change.upsert) {
+            if (!object(row) || typeof row.id !== 'string' || ids.has(row.id))
+                fail('Mã cập nhật không hợp lệ hoặc bị trùng.');
+            if (existingIds.has(row.id) && !visibleIds.has(row.id))
+                fail('Không được sửa dữ liệu ngoài phạm vi.', 403);
+            ids.add(row.id);
+            updated.set(row.id, row);
+        }
+        incoming[table] = visible[table]
+            .filter((row) => !removed.has(row.id))
+            .map((row) => updated.get(row.id) || row);
+        incoming[table].push(...change.upsert.filter((row) => !existingIds.has(row.id)));
+    }
+    if (Object.keys(patch.settings).length) {
+        requirePermission(user, 'settings');
+        for (const key of Object.keys(patch.settings))
+            if (!Object.hasOwn(data.settings, key) || key === 'branch')
+                fail('Trường cài đặt không hợp lệ.');
+        incoming.settings = { ...data.settings, ...patch.settings };
+    }
+    return applyEdit(data, user, incoming, true);
+}
+function applyEdit(data, user, incoming, partial = false) {
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming))
         fail('Dữ liệu không hợp lệ.');
     const visible = project(data, user);
     const originalProducts = new Map(data.products.map((row) => [row.id, { ...row }]));
     const oldBranchIds = new Set(data.branches.map((row) => row.id));
     for (const table of db.ENTITY_TABLES) {
+        if (partial && !Object.hasOwn(incoming, table)) continue;
         if (!Array.isArray(incoming[table])) fail(`Thiếu danh sách ${table}.`);
         const incomingCmp = table === 'users' ? incoming[table].map(publicUser) : incoming[table];
-        if (equal(visible[table], incomingCmp)) continue;
+        if (
+            equal(visible[table], incomingCmp) &&
+            !(table === 'users' && incoming[table].some((row) => row.password))
+        )
+            continue;
         if (!editable[table])
             fail(`Chứng từ ${table} phải được cập nhật qua nghiệp vụ riêng.`, 403);
         requirePermission(user, editable[table]);
@@ -427,14 +545,16 @@ function applyEdit(data, user, incoming) {
             ids.add(row.id);
         }
         const visibleIds = new Set(visible[table].map((r) => r.id)),
-            oldMap = new Map(data[table].map((r) => [r.id, r]));
+            oldMap = new Map(data[table].map((r) => [r.id, r])),
+            visibleMap = new Map(visible[table].map((r) => [r.id, r]));
         for (const row of rows) {
             const old = oldMap.get(row.id);
             if (old && !visibleIds.has(row.id)) fail('Không được sửa dữ liệu ngoài phạm vi.', 403);
-            const before = visible[table].find((r) => r.id === row.id);
+            const before = visibleMap.get(row.id);
             const rowCmp = table === 'users' ? publicUser(row) : row;
             const beforeCmp = table === 'users' && before ? publicUser(before) : before;
-            if (!equal(rowCmp, beforeCmp)) validateRecord(table, row, data, old, user);
+            if (!equal(rowCmp, beforeCmp) || (table === 'users' && row.password))
+                validateRecord(table, row, data, old, user);
         }
         for (const old of visible[table].filter((r) => !ids.has(r.id))) {
             if (
@@ -465,7 +585,7 @@ function applyEdit(data, user, incoming) {
                 fail('Sản phẩm còn tồn/lịch sử không thể xóa.');
         }
         for (const row of rows) {
-            const before = visible[table].find((r) => r.id === row.id);
+            const before = visibleMap.get(row.id);
             const rowCmp = table === 'users' ? publicUser(row) : row;
             const beforeCmp = table === 'users' && before ? publicUser(before) : before;
             if (!before) {
@@ -519,7 +639,10 @@ function applyEdit(data, user, incoming) {
         }
     }
     syncProductCodesAcrossBranches(data, user, originalProducts, oldBranchIds);
-    if (!equal(visible.settings, incoming.settings)) {
+    if (
+        (!partial || Object.hasOwn(incoming, 'settings')) &&
+        !equal(visible.settings, incoming.settings)
+    ) {
         requirePermission(user, 'settings');
         if (
             !incoming.settings ||
@@ -585,15 +708,25 @@ function transact(user, envelope) {
                 409
             );
         db.assertReadableRecords();
-        const data = db.readForWrite();
+        const saleDraft =
+            envelope.type === 'sale' && process.env.NKIOT_SALE_WRITE_MODE !== 'snapshot'
+                ? db.readSaleForWrite(envelope.payload)
+                : null;
+        const data = saleDraft ? saleDraft.data : db.readForWrite();
         const current = data.users.find((u) => u.id === user.id);
         if (!current || current.status !== 'active') fail('Phiên đăng nhập đã hết hiệu lực.', 401);
         user = current;
         const result =
             envelope.type === 'edit'
                 ? applyEdit(data, user, envelope.payload)
-                : execute(data, user, envelope.type, envelope.payload || {});
-        db.saveAllData(data, true);
+                : envelope.type === 'catalogPatch'
+                  ? applyCatalogPatch(data, user, envelope.payload)
+                  : execute(data, user, envelope.type, envelope.payload || {});
+        syncSharedAvailability(data);
+        if (saleDraft) db.saveSaleData(saleDraft.base, data);
+        else db.saveAllData(data, true);
+        // Cùng transaction POS: crash sau commit vẫn còn snapshot để worker gửi lại.
+        require('./hub-client').enqueue(data);
         d.prepare('INSERT INTO audit_log (requestId,userId,action,time) VALUES (?,?,?,?)').run(
             envelope.requestId,
             user.id,

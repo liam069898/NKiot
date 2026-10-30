@@ -10,7 +10,11 @@ const [invoiceCount = 5000, productCount = 2000, runs = 20] = process.argv
     .slice(2)
     .map((v) => Number.parseInt(v, 10));
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'minikiot-bench-'));
-process.env.MINIKIOT_DB_PATH = path.join(dir, 'bench.db');
+process.env.NKIOT_DB_PATH = process.env.MINIKIOT_DB_PATH = path.join(dir, 'bench.db');
+process.env.NKIOT_UPLOADS_DIR = path.join(dir, 'uploads');
+// Benchmarks must never contact an operational Hub inherited from the shell.
+delete process.env.NKIOT_HUB_URL;
+delete process.env.NKIOT_HUB_API_KEY;
 process.env.MINIKIOT_ADMIN_PASSWORD = 'Bench-password-123';
 const db = require('../db');
 const { handler } = require('../server');
@@ -151,8 +155,13 @@ async function main() {
     if (login.status !== 200) throw new Error(`Login thất bại: ${login.body}`);
     const cookie = login.headers['set-cookie'].split(';')[0];
     console.log(`Dữ liệu: ${invoiceCount} hóa đơn, ${productCount} sản phẩm, 500 khách.`);
-    console.log(`Mỗi phép đo chạy ${runs} lần.\n`);
+    console.log(
+        `Mỗi phép đo chạy ${runs} lần. Sale writer: ${process.env.NKIOT_SALE_WRITE_MODE === 'snapshot' ? 'snapshot' : 'direct'}.\n`
+    );
     await time('GET /api/data', () => request('GET', '/api/data', undefined, cookie));
+    await time('GET /api/invoices (50)', () =>
+        request('GET', '/api/invoices?pageSize=50', undefined, cookie)
+    );
     await time('GET /api/data (gzip)', () =>
         request('GET', '/api/data', undefined, cookie, { 'accept-encoding': 'gzip' })
     );
@@ -183,6 +192,32 @@ async function main() {
             if (res.status === 200) revision = JSON.parse(res.body).revision;
             return res;
         });
+    const application = require('../application');
+    const { buildCatalogPatch } = require('../catalog-patch');
+    for (const type of ['edit', 'catalogPatch']) {
+        let requestBytes = 0;
+        await time(`POST catalog (${type})`, async () => {
+            const snapshot = db.readSnapshot();
+            const base = application.project(snapshot, snapshot.users[0]);
+            const draft = {
+                ...base,
+                products: base.products.map((p, index) =>
+                    index === 0 ? { ...p, price: p.price + 1 } : p
+                )
+            };
+            const payload =
+                type === 'edit' ? structuredClone(draft) : buildCatalogPatch(base, draft);
+            const envelope = { type, payload, revision, requestId: crypto.randomUUID() };
+            requestBytes = Buffer.byteLength(JSON.stringify(envelope));
+            const res = await request('POST', '/api/command', envelope, cookie, {
+                'x-minikiot-csrf': JSON.parse(login.body).csrfToken,
+                'x-minikiot-base': String(revision)
+            });
+            if (res.status === 200) revision = JSON.parse(res.body).revision;
+            return res;
+        });
+        console.log(`  Request payload: ${requestBytes} bytes`);
+    }
     await time('GET /app.js', () => request('GET', '/app.js'));
     await time('GET /app.js (gzip)', () =>
         request('GET', '/app.js', undefined, undefined, { 'accept-encoding': 'gzip' })

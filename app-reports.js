@@ -28,8 +28,7 @@ function updateKpiCard(index, icon, label, val, subHtml, iconClasses) {
 
     if (iconEl) {
         iconEl.textContent = icon;
-        if (iconClasses)
-            iconEl.className = `w-11 h-11 rounded-xl border border-current/20 flex items-center justify-center font-bold text-[18px] flex-shrink-0 shadow-xs ${iconClasses}`;
+        if (iconClasses) iconEl.className = 'hidden';
     }
     if (labelEl) labelEl.textContent = label;
     if (subEl) subEl.innerHTML = subHtml;
@@ -55,7 +54,7 @@ function renderDualBarChart(containerId, items, label1, color1, label2, color2) 
     if (!items || items.length === 0) {
         container.innerHTML = renderHTML`
             <div class="h-full w-full flex flex-col items-center justify-center text-gray-400 py-6">
-                <span class="text-3xl mb-1">📊</span>
+                <svg class="w-8 h-8 mb-1.5 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16v-4m4 4V8m4 8v-6m4 6v-9"/></svg>
                 <span class="text-[12px] font-medium">Chưa có dữ liệu giao dịch trong khoảng thời gian này</span>
             </div>
         `;
@@ -81,7 +80,12 @@ function renderDualBarChart(containerId, items, label1, color1, label2, color2) 
                           Math.min(100, Math.round((Math.abs(it.val2 || 0) / maxVal) * 100))
                       );
             return renderHTML`
-            <div class="flex-1 flex flex-col items-center h-full justify-end group min-w-[42px] max-w-[70px] relative cursor-pointer" title="${it.fullName || it.label}\n${label1}: ${formatVND(it.val1)} đ\n${label2}: ${it.val2 == null ? 'Thiếu giá vốn lịch sử' : formatVND(it.val2) + ' đ'}">
+            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[42px] max-w-[70px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${label1}: ${formatVND(it.val1)} đ\n${label2}: ${it.val2 == null ? 'Thiếu giá vốn lịch sử' : formatVND(it.val2) + ' đ'}">
+                <div class="hidden group-hover:block group-focus:block absolute -top-12 left-1/2 -translate-x-1/2 bg-gray-900/95 text-white text-[10.5px] leading-snug px-2 py-1 rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
+                    <div class="font-bold">${it.fullName || it.label}</div>
+                    <div>${label1}: ${formatVND(it.val1)} đ</div>
+                    <div>${label2}: ${it.val2 == null ? 'Thiếu giá vốn lịch sử' : formatVND(it.val2) + ' đ'}</div>
+                </div>
                 <div class="w-full flex items-end justify-center space-x-1.5 h-[132px] pb-1">
                     <div style="height: ${h1}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color1}"></div>
                     <div style="height: ${h2}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color2}"></div>
@@ -99,7 +103,7 @@ function renderSingleBarChart(containerId, items, barColor) {
     if (!items || items.length === 0) {
         container.innerHTML = renderHTML`
             <div class="h-full w-full flex flex-col items-center justify-center text-gray-400 py-6">
-                <span class="text-3xl mb-1">📦</span>
+                <svg class="w-8 h-8 mb-1.5 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16v-4m4 4V8m4 8v-6m4 6v-9"/></svg>
                 <span class="text-[12px] font-medium">Chưa có phát sinh số liệu</span>
             </div>
         `;
@@ -112,7 +116,11 @@ function renderSingleBarChart(containerId, items, barColor) {
         .map((it) => {
             const h = Math.max(8, Math.min(100, Math.round(((it.value || 0) / maxVal) * 100)));
             return renderHTML`
-            <div class="flex-1 flex flex-col items-center h-full justify-end group min-w-[50px] max-w-[85px] relative cursor-pointer" title="${it.fullName || it.label}\n${it.subLabel || ''}\n${formatVND(it.value)} đ">
+            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[50px] max-w-[85px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${it.subLabel || ''}\n${formatVND(it.value)} đ">
+                <div class="hidden group-hover:block group-focus:block absolute -top-11 left-1/2 -translate-x-1/2 bg-gray-900/95 text-white text-[10.5px] leading-snug px-2 py-1 rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
+                    <div class="font-bold">${it.fullName || it.label}</div>
+                    <div>${formatVND(it.value)} đ</div>
+                </div>
                 <div class="w-full flex items-end justify-center h-[132px] pb-1">
                     <div style="height: ${h}%;" class="w-6 sm:w-8 rounded-t-lg transition-all duration-300 group-hover:brightness-110 shadow-xs ${barColor || 'bg-[#0066cc]'}"></div>
                 </div>
@@ -198,7 +206,10 @@ function exportCurrentReport() {
     const csvRows = [headers.join(',')];
     rows.forEach((r) => {
         const cols = Array.from(r.querySelectorAll('td')).map((td) => {
-            const txt = td.innerText.replace(/"/g, '""').replace(/\n/g, ' ').trim();
+            let txt = td.innerText.replace(/"/g, '""').replace(/\n/g, ' ').trim();
+            if (/^[=+\-@\t\r]/.test(txt)) {
+                txt = "'" + txt;
+            }
             return `"${txt}"`;
         });
         csvRows.push(cols.join(','));
@@ -273,6 +284,8 @@ function renderReports() {
                 prodMap.set(code, {
                     ...p,
                     stock: 0,
+                    costValue: 0,
+                    retailValue: 0,
                     minStock: 0,
                     imeis: [],
                     branchStocks: []
@@ -282,6 +295,8 @@ function renderReports() {
             const bName = p.branch || FALLBACK_BRANCH;
             const bStock = Number(p.stock) || 0;
             item.stock += bStock;
+            item.costValue += bStock * (Number(p.costPrice) || 0);
+            item.retailValue += bStock * (Number(p.price) || 0);
             item.minStock = Math.max(item.minStock, Number(p.minStock) || 0);
             if (Array.isArray(p.imeis)) {
                 item.imeis.push(...p.imeis);
@@ -292,6 +307,8 @@ function renderReports() {
             if (!item.costPrice && p.costPrice) item.costPrice = p.costPrice;
         });
         branchProducts = Array.from(prodMap.values()).map((item) => {
+            item.costPrice = item.stock ? item.costValue / item.stock : 0;
+            item.price = item.stock ? item.retailValue / item.stock : 0;
             item.branchBreakdown = item.branchStocks
                 .map((b) => `${b.branch}: ${b.stock}`)
                 .join(' · ');
@@ -386,13 +403,15 @@ function renderSalesReportTab(
         matchesDateFilter(i.time, dateFilter, customFrom, customTo)
     );
 
+    const legacyCancelled = new Set(
+        (data.invoices || [])
+            .filter((i) => i.status === 'cancelled' && i.bookingVersion !== 2)
+            .map((i) => i.code)
+    );
     const branchReturns = (data.returns || []).filter(
         (r) =>
             (isAll || (r.branch || FALLBACK_BRANCH) === currentBranch) &&
-            !data.invoices.some(
-                (i) =>
-                    i.code === r.invoiceCode && i.status === 'cancelled' && i.bookingVersion !== 2
-            )
+            !legacyCancelled.has(r.invoiceCode)
     );
     const validReturns = branchReturns.filter((r) =>
         matchesDateFilter(r.time, dateFilter, customFrom, customTo)
@@ -408,7 +427,6 @@ function renderSalesReportTab(
     let totalCost = 0;
     validInvoices.forEach((inv) => {
         (inv.items || []).forEach((item) => {
-            const p = branchProducts.find((x) => x.code === item.code);
             totalCost += (item.costPrice ?? 0) * item.qty;
         });
     });
@@ -437,7 +455,7 @@ function renderSalesReportTab(
     );
     updateKpiCard(
         2,
-        '📈',
+        '',
         'Lợi nhuận gộp',
         unknownCost ? 'Thiếu giá vốn lịch sử' : `${formatVND(grossProfit)} đ`,
         renderHTML`Tỷ suất: <span id="rep-margin" class="font-bold text-[#0066cc]">${unknownCost ? '—' : margin + '%'}</span>`,
@@ -445,15 +463,15 @@ function renderSalesReportTab(
     );
     updateKpiCard(
         3,
-        '🧾',
+        '',
         'Số lượng hóa đơn',
         `${invoicesCount} đơn`,
         renderHTML`TB đơn (AOV): <span id="rep-kpi-aov-sub" class="font-bold text-gray-700">${formatVND(aov)} đ</span>`,
-        'bg-indigo-500/15 text-indigo-600'
+        'bg-[#0066cc]/15 text-[#0066cc]'
     );
     updateKpiCard(
         4,
-        '↩️',
+        '',
         'Tổng giá trị trả hàng',
         `${formatVND(totalReturns)} đ`,
         renderHTML`<span class="font-semibold text-gray-800">${returnsCount}</span> phiếu trả hàng`,
@@ -497,7 +515,6 @@ function renderSalesReportTab(
         dayMap[dayKey].gross += inv.total || 0;
         dayMap[dayKey].count += 1;
         (inv.items || []).forEach((item) => {
-            const p = branchProducts.find((x) => x.code === item.code);
             dayMap[dayKey].cost += (item.costPrice ?? 0) * item.qty;
             dayMap[dayKey].unknownCost ||= item.costPrice == null;
         });
@@ -571,7 +588,7 @@ function renderSalesReportTab(
             dotClass: 'bg-emerald-500',
             barClass: 'bg-emerald-500'
         },
-        { label: 'Thẻ', value: methods.card, dotClass: 'bg-indigo-500', barClass: 'bg-indigo-500' },
+        { label: 'Thẻ', value: methods.card, dotClass: 'bg-[#0066cc]', barClass: 'bg-[#0066cc]' },
         {
             label: 'Khách nợ / Chưa trả',
             value: debtTotal,
@@ -663,11 +680,18 @@ function renderProductsReportTab(
         matchesDateFilter(i.time, dateFilter, customFrom, customTo)
     );
 
+    const productsByCode = new Map();
+    for (const p of branchProducts) if (!productsByCode.has(p.code)) productsByCode.set(p.code, p);
+    const legacyCancelled = new Set(
+        (data.invoices || [])
+            .filter((i) => i.status === 'cancelled' && i.bookingVersion !== 2)
+            .map((i) => i.code)
+    );
     const prodMap = Object.create(null);
     validInvoices.forEach((inv) => {
         (inv.items || []).forEach((it) => {
             if (!prodMap[it.code]) {
-                const p = branchProducts.find((x) => x.code === it.code);
+                const p = productsByCode.get(it.code);
                 prodMap[it.code] = {
                     code: it.code,
                     name: it.name,
@@ -693,12 +717,7 @@ function renderProductsReportTab(
             (r) =>
                 (isAll || (r.branch || FALLBACK_BRANCH) === currentBranch) &&
                 matchesDateFilter(r.time, dateFilter, customFrom, customTo) &&
-                !data.invoices.some(
-                    (i) =>
-                        i.code === r.invoiceCode &&
-                        i.status === 'cancelled' &&
-                        i.bookingVersion !== 2
-                )
+                !legacyCancelled.has(r.invoiceCode)
         )
         .forEach((r) =>
             (r.items || []).forEach((it) => {
@@ -741,7 +760,7 @@ function renderProductsReportTab(
     // 1. KPI Cards
     updateKpiCard(
         1,
-        '🛍️',
+        '',
         'Tổng sản phẩm đã bán',
         `${totalQtySold} SP`,
         renderHTML`Từ <span class="font-semibold text-gray-800">${validInvoices.length}</span> hóa đơn bán`,
@@ -757,17 +776,17 @@ function renderProductsReportTab(
     );
     updateKpiCard(
         3,
-        '💰',
+        '',
         'Lợi nhuận hàng hóa',
         prodList.some((p) => p.unknownCost)
             ? 'Thiếu giá vốn lịch sử'
             : `${formatVND(totalProdProfit)} đ`,
         renderHTML`Tỷ suất TB: <span id="rep-margin" class="font-bold text-[#0066cc]">${prodList.some((p) => p.unknownCost) ? '—' : avgMargin + '%'}</span>`,
-        'bg-indigo-500/15 text-indigo-600'
+        'bg-[#0066cc]/15 text-[#0066cc]'
     );
     updateKpiCard(
         4,
-        '🏆',
+        '',
         'Mặt hàng dẫn đầu',
         topProd
             ? topProd.name.length > 20
@@ -821,9 +840,9 @@ function renderProductsReportTab(
         const colors = [
             { dot: 'bg-blue-500', bar: 'bg-blue-500' },
             { dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
-            { dot: 'bg-indigo-500', bar: 'bg-indigo-500' },
+            { dot: 'bg-[#0066cc]', bar: 'bg-[#0066cc]' },
             { dot: 'bg-amber-500', bar: 'bg-amber-500' },
-            { dot: 'bg-purple-500', bar: 'bg-purple-500' }
+            { dot: 'bg-slate-700', bar: 'bg-slate-700' }
         ];
         const c = colors[idx % colors.length];
         return { label: name, value: val, dotClass: c.dot, barClass: c.bar };
@@ -933,7 +952,7 @@ function renderCashflowReportTab(
     // 1. KPI Cards
     updateKpiCard(
         1,
-        '📥',
+        '',
         'Tổng thu trong kỳ',
         `${formatVND(totalThu)} đ`,
         renderHTML`<span class="text-blue-600 font-semibold">${thuList.length} phiếu thu</span>`,
@@ -941,7 +960,7 @@ function renderCashflowReportTab(
     );
     updateKpiCard(
         2,
-        '📤',
+        '',
         'Tổng chi trong kỳ',
         `${formatVND(totalChi)} đ`,
         renderHTML`<span class="text-rose-600 font-semibold">${chiList.length} phiếu chi</span>`,
@@ -949,7 +968,7 @@ function renderCashflowReportTab(
     );
     updateKpiCard(
         3,
-        '⚖️',
+        '',
         'Dòng tiền ròng (Thu - Chi)',
         `${netCash >= 0 ? '+' : ''}${formatVND(netCash)} đ`,
         renderHTML`<span class="${netCash >= 0 ? 'text-emerald-600' : 'text-rose-600'} font-semibold">${netCash >= 0 ? 'Thặng dư tiền mặt' : 'Thâm hụt dòng tiền'}</span>`,
@@ -957,7 +976,7 @@ function renderCashflowReportTab(
     );
     updateKpiCard(
         4,
-        '🏦',
+        '',
         'Tồn quỹ chi nhánh',
         `${formatVND(allBalance)} đ`,
         renderHTML`<span class="font-semibold text-gray-800">Toàn bộ quỹ tích lũy</span>`,
@@ -1112,8 +1131,10 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     const products = branchProducts.filter((p) => p.status === 'active');
 
     const totalStockQty = products.reduce((a, b) => a + (b.stock || 0), 0);
-    const totalCostVal = products.reduce((a, b) => a + (b.stock || 0) * (b.costPrice || 0), 0);
-    const totalRetailVal = products.reduce((a, b) => a + (b.stock || 0) * (b.price || 0), 0);
+    const costValue = (p) => p.costValue ?? (p.stock || 0) * (p.costPrice || 0);
+    const retailValue = (p) => p.retailValue ?? (p.stock || 0) * (p.price || 0);
+    const totalCostVal = products.reduce((sum, p) => sum + costValue(p), 0);
+    const totalRetailVal = products.reduce((sum, p) => sum + retailValue(p), 0);
     const potentialProfit = Math.max(0, totalRetailVal - totalCostVal);
     const invMargin =
         totalRetailVal > 0 ? ((potentialProfit / totalRetailVal) * 100).toFixed(1) : '0.0';
@@ -1128,7 +1149,7 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     // 1. KPI Cards
     updateKpiCard(
         1,
-        '📦',
+        '',
         'Giá trị tồn theo vốn',
         `${formatVND(totalCostVal)} đ`,
         renderHTML`<span class="font-semibold text-gray-700">${products.length} mặt hàng</span> (${totalStockQty} SP)`,
@@ -1136,7 +1157,7 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     );
     updateKpiCard(
         2,
-        '🏷️',
+        '',
         'Giá trị tồn theo giá bán',
         `${formatVND(totalRetailVal)} đ`,
         `Doanh số tiềm năng`,
@@ -1144,15 +1165,15 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     );
     updateKpiCard(
         3,
-        '✨',
+        '',
         'Lợi nhuận gộp kho ước tính',
         `${formatVND(potentialProfit)} đ`,
         renderHTML`Biên LN kho: <span id="rep-margin" class="font-bold text-[#0066cc]">${invMargin}%</span>`,
-        'bg-indigo-500/15 text-indigo-600'
+        'bg-[#0066cc]/15 text-[#0066cc]'
     );
     updateKpiCard(
         4,
-        '⚠️',
+        '',
         'Cảnh báo dưới định mức',
         `${warningCount} mặt hàng`,
         renderHTML`<span class="text-rose-600 font-semibold">${outOfStock.length} hết hàng</span> · <span class="text-amber-600 font-semibold">${lowStock.length} sắp hết</span>`,
@@ -1177,7 +1198,7 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     // 3. Main Chart: Category stock value
     const catMap = Object.create(null);
     products.forEach((p) => {
-        const val = (p.stock || 0) * (p.costPrice || 0);
+        const val = costValue(p);
         catMap[p.category] = (catMap[p.category] || 0) + val;
     });
 
@@ -1236,14 +1257,14 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
         const aWarn = a.stock <= 0 ? 2 : a.stock <= a.minStock ? 1 : 0;
         const bWarn = b.stock <= 0 ? 2 : b.stock <= b.minStock ? 1 : 0;
         if (bWarn !== aWarn) return bWarn - aWarn;
-        return (b.stock || 0) * (b.costPrice || 0) - (a.stock || 0) * (a.costPrice || 0);
+        return costValue(b) - costValue(a);
     });
 
     const tbody = document.getElementById('rep-table-tbody');
     if (tbody) {
         tbody.innerHTML = sortedProducts
             .map((p) => {
-                const valCost = (p.stock || 0) * (p.costPrice || 0);
+                const valCost = costValue(p);
                 let badgeHtml = '';
                 if (p.stock <= 0) {
                     badgeHtml = trustedHTML(
