@@ -11897,5 +11897,554 @@ deleteStaff = guardMutation(deleteStaff);
 handleChangePasswordSubmit = guardMutation(handleChangePasswordSubmit);
 forceSyncDatabase = guardMutation(forceSyncDatabase);
 
+// ==========================================
+// CATALOG TƯ VẤN GỬI KHÁCH (PUBLIC CATALOG)
+// ==========================================
+let selectedCatalogItems = new Map();
+let loadedPublicCatalogs = [];
+
+function catalogSelectionKey(code, imei = '') {
+    return imei ? `${code}|${imei}` : String(code || '');
+}
+
+function getProductImeiEntry(prod, imei) {
+    const details =
+        prod?.imeiDetails && typeof prod.imeiDetails === 'object' ? prod.imeiDetails : {};
+    const d = details[imei] || {};
+    const imeiImgs = Array.isArray(d.images) ? d.images.filter(Boolean) : [];
+    const prodImgs = Array.isArray(prod?.images) ? prod.images.filter(Boolean) : [];
+    const thumb = imeiImgs[0] || prodImgs[0] || '';
+    const cond = d.condition || prod?.condition || 'new';
+    const condDetail = d.conditionDetail || prod?.conditionDetail || '';
+    return {
+        imei,
+        images: imeiImgs.length ? imeiImgs : prodImgs,
+        thumb,
+        condition: cond,
+        conditionDetail: condDetail
+    };
+}
+
+function getAvailableCatalogProducts() {
+    const currentBranch = getCurrentBranch();
+    const isAll = currentBranch === ALL_BRANCHES;
+    const map = new Map();
+    (KVStore.data.products || []).forEach((p) => {
+        if (p.status === 'archived') return;
+        if (!isAll && (p.branch || FALLBACK_BRANCH) !== currentBranch) return;
+        const pImeis = Array.isArray(p.imeis) ? [...p.imeis] : [];
+        const pDetails =
+            p.imeiDetails && typeof p.imeiDetails === 'object' ? { ...p.imeiDetails } : {};
+        if (!map.has(p.code)) {
+            map.set(p.code, {
+                ...p,
+                stock: Number(p.stock) || 0,
+                imeis: pImeis,
+                imeiDetails: pDetails
+            });
+        } else {
+            const cur = map.get(p.code);
+            cur.stock += Number(p.stock) || 0;
+            for (const im of pImeis) {
+                if (!cur.imeis.includes(im)) cur.imeis.push(im);
+            }
+            cur.imeiDetails = { ...cur.imeiDetails, ...pDetails };
+        }
+    });
+    return Array.from(map.values());
+}
+
+function addProductOrImeisToCatalogSelection(prod) {
+    if (!prod) return;
+    const imeis = prod.hasImei && Array.isArray(prod.imeis) ? prod.imeis : [];
+    if (imeis.length > 0) {
+        for (const im of imeis) {
+            const key = catalogSelectionKey(prod.code, im);
+            if (selectedCatalogItems.size >= 50 && !selectedCatalogItems.has(key)) break;
+            const info = getProductImeiEntry(prod, im);
+            selectedCatalogItems.set(key, {
+                key,
+                code: prod.code,
+                imei: im,
+                name: prod.name,
+                displayPrice: Number(prod.price) || 0,
+                thumb: info.thumb,
+                conditionDetail: info.conditionDetail
+            });
+        }
+    } else {
+        const key = catalogSelectionKey(prod.code, '');
+        const prodImgs = Array.isArray(prod.images) ? prod.images.filter(Boolean) : [];
+        selectedCatalogItems.set(key, {
+            key,
+            code: prod.code,
+            imei: '',
+            name: prod.name,
+            displayPrice: Number(prod.price) || 0,
+            thumb: prodImgs[0] || '',
+            conditionDetail: prod.conditionDetail || ''
+        });
+    }
+}
+
+function openPublicCatalogModal(tab = 'create') {
+    if (typeof hasPermission === 'function' && !hasPermission('products')) {
+        showToast('Bạn không có quyền truy cập Hàng hóa để tạo catalog!', 'error');
+        return;
+    }
+    const modal = document.getElementById('public-catalog-modal');
+    if (!modal) return;
+
+    // Tự động lấy các dòng đang được tích chọn trên bảng Hàng hóa (nếu có)
+    const checkedRows = document.querySelectorAll('#products-tbody input.kv-checkbox:checked');
+    if (checkedRows.length > 0 && selectedCatalogItems.size === 0) {
+        const allProds = getAvailableCatalogProducts();
+        checkedRows.forEach((cb) => {
+            const code = cb.closest('tr')?.dataset?.exportKey;
+            const prod = allProds.find((p) => p.code === code);
+            if (prod) addProductOrImeisToCatalogSelection(prod);
+        });
+    }
+
+    const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+    const nameInput = document.getElementById('catalog-contact-name');
+    const phoneInput = document.getElementById('catalog-contact-phone');
+    if (nameInput && !nameInput.value) {
+        nameInput.value = user?.name || KVStore.data?.settings?.storeName || 'NKiot';
+    }
+    if (phoneInput && !phoneInput.value) {
+        phoneInput.value =
+            user?.phone || KVStore.data?.settings?.hotline || KVStore.data?.settings?.phone || '';
+    }
+    document.getElementById('catalog-created-banner')?.classList.add('hidden');
+
+    modal.classList.remove('hidden');
+    switchPublicCatalogTab(tab);
+    renderCatalogProductPicker();
+    renderSelectedCatalogItems();
+}
+
+function closePublicCatalogModal() {
+    document.getElementById('public-catalog-modal')?.classList.add('hidden');
+}
+
+function switchPublicCatalogTab(tab) {
+    const createPane = document.getElementById('catalog-tab-create');
+    const listPane = document.getElementById('catalog-tab-list');
+    const btnCreate = document.getElementById('catalog-tab-btn-create');
+    const btnList = document.getElementById('catalog-tab-btn-list');
+    const isCreate = tab !== 'list';
+    if (createPane) createPane.classList.toggle('hidden', !isCreate);
+    if (listPane) listPane.classList.toggle('hidden', isCreate);
+    if (btnCreate) {
+        btnCreate.className = isCreate
+            ? 'px-3 py-1 rounded-lg bg-white text-[#0066cc] shadow-2xs transition'
+            : 'px-3 py-1 rounded-lg text-gray-600 hover:text-gray-900 transition';
+    }
+    if (btnList) {
+        btnList.className = !isCreate
+            ? 'px-3 py-1 rounded-lg bg-white text-[#0066cc] shadow-2xs transition'
+            : 'px-3 py-1 rounded-lg text-gray-600 hover:text-gray-900 transition';
+    }
+    if (!isCreate) loadPublicCatalogsList();
+}
+
+function getFilteredCatalogProducts() {
+    const q = (document.getElementById('catalog-prod-search')?.value || '').toLowerCase().trim();
+    const minRaw = document.getElementById('catalog-price-min')?.value || '';
+    const maxRaw = document.getElementById('catalog-price-max')?.value || '';
+    const minPrice = minRaw !== '' ? Number(minRaw) : null;
+    const maxPrice = maxRaw !== '' ? Number(maxRaw) : null;
+
+    return getAvailableCatalogProducts().filter((p) => {
+        const price = Number(p.price) || 0;
+        if (minPrice !== null && Number.isFinite(minPrice) && price < minPrice) return false;
+        if (maxPrice !== null && Number.isFinite(maxPrice) && price > maxPrice) return false;
+        if (q) {
+            const matchName = String(p.name || '')
+                .toLowerCase()
+                .includes(q);
+            const matchCode = String(p.code || '')
+                .toLowerCase()
+                .includes(q);
+            const matchCat = String(p.category || '')
+                .toLowerCase()
+                .includes(q);
+            if (!matchName && !matchCode && !matchCat) return false;
+        }
+        return true;
+    });
+}
+
+function renderCatalogImeiPickerRow(p, im) {
+    const key = catalogSelectionKey(p.code, im);
+    const isChecked = selectedCatalogItems.has(key);
+    const info = getProductImeiEntry(p, im);
+    const thumbHtml = info.thumb
+        ? renderHTML`<img src="${info.thumb}" alt="" class="w-8 h-8 rounded-md object-cover border border-gray-200 flex-shrink-0" />`
+        : renderHTML`<div class="w-8 h-8 rounded-md bg-gray-100 border border-gray-200 text-[10px] text-gray-400 flex items-center justify-center flex-shrink-0">Ảnh</div>`;
+    return renderHTML`
+        <label class="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border ${isChecked ? 'border-[#0066cc] bg-blue-50/40' : 'border-gray-100 bg-gray-50/70'} hover:border-blue-300 cursor-pointer transition text-[11.5px]">
+            <div class="flex items-center gap-2 min-w-0">
+                <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleCatalogImeiSelection('${p.code}', '${im}')" class="rounded text-[#0066cc] focus:ring-0" />
+                ${trustedHTML(thumbHtml)}
+                <div class="min-w-0">
+                    <div class="font-mono font-bold text-gray-800 truncate">IMEI: ${im}</div>
+                    <div class="text-[10.5px] text-gray-500 truncate">${info.conditionDetail || 'Ảnh riêng theo IMEI'} · ${info.images.length} ảnh</div>
+                </div>
+            </div>
+            <span class="text-[10.5px] font-semibold text-[#0066cc] flex-shrink-0">Chọn máy</span>
+        </label>
+    `;
+}
+
+function renderCatalogProductPicker() {
+    const listEl = document.getElementById('catalog-product-picker-list');
+    const countEl = document.getElementById('catalog-picker-count');
+    if (!listEl) return;
+    const list = getFilteredCatalogProducts();
+    if (countEl) countEl.textContent = `${list.length} sản phẩm phù hợp`;
+    if (list.length === 0) {
+        listEl.innerHTML = renderHTML`<div class="py-8 text-center text-gray-400 text-[12.5px]">Không có sản phẩm phù hợp bộ lọc</div>`;
+        return;
+    }
+    listEl.innerHTML = list
+        .slice(0, 80)
+        .map((p) => {
+            const imeis = p.hasImei && Array.isArray(p.imeis) ? p.imeis : [];
+            if (imeis.length > 0) {
+                const selectedCount = imeis.filter((im) =>
+                    selectedCatalogItems.has(catalogSelectionKey(p.code, im))
+                ).length;
+                const allChecked = selectedCount === imeis.length;
+                const imeiRows = imeis.map((im) => renderCatalogImeiPickerRow(p, im)).join('');
+                return renderHTML`
+                    <div class="p-2.5 rounded-xl bg-white border ${selectedCount > 0 ? 'border-[#0066cc]' : 'border-gray-200/80'} transition text-[12.5px] space-y-2">
+                        <div class="flex items-center justify-between gap-2">
+                            <label class="flex items-center gap-2 min-w-0 cursor-pointer">
+                                <input type="checkbox" ${allChecked ? 'checked' : ''} onchange="toggleCatalogProductSelection('${p.code}')" class="rounded text-[#0066cc] focus:ring-0" />
+                                <div class="min-w-0">
+                                    <div class="font-semibold text-gray-900 truncate">${p.name}</div>
+                                    <div class="text-[11px] text-gray-500">${p.code} · Chọn từng IMEI (${selectedCount}/${imeis.length} máy)</div>
+                                </div>
+                            </label>
+                            <div class="font-bold text-[#0066cc] tabular-nums flex-shrink-0">${formatVND(p.price)}</div>
+                        </div>
+                        <div class="pl-3 space-y-1 border-l-2 border-blue-100">${trustedHTML(imeiRows)}</div>
+                    </div>
+                `;
+            }
+            const key = catalogSelectionKey(p.code, '');
+            const checked = selectedCatalogItems.has(key);
+            return renderHTML`
+                <label class="flex items-center justify-between gap-2 p-2 rounded-xl bg-white border ${checked ? 'border-[#0066cc] bg-blue-50/30' : 'border-gray-200/80'} hover:border-blue-300 cursor-pointer transition text-[12.5px]">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleCatalogProductSelection('${p.code}')" class="rounded text-[#0066cc] focus:ring-0" />
+                        <div class="min-w-0">
+                            <div class="font-semibold text-gray-900 truncate">${p.name}</div>
+                            <div class="text-[11px] text-gray-500">${p.code} · Tồn: ${p.stock}</div>
+                        </div>
+                    </div>
+                    <div class="font-bold text-[#0066cc] tabular-nums flex-shrink-0">${formatVND(p.price)}</div>
+                </label>
+            `;
+        })
+        .join('');
+}
+
+function toggleCatalogImeiSelection(code, imei) {
+    const prod = getAvailableCatalogProducts().find((p) => p.code === code);
+    if (!prod) return;
+    const key = catalogSelectionKey(code, imei);
+    if (selectedCatalogItems.has(key)) {
+        selectedCatalogItems.delete(key);
+    } else {
+        if (selectedCatalogItems.size >= 50) {
+            showToast('Một catalog chỉ được chọn tối đa 50 mục!', 'warning');
+            renderCatalogProductPicker();
+            return;
+        }
+        const info = getProductImeiEntry(prod, imei);
+        selectedCatalogItems.set(key, {
+            key,
+            code: prod.code,
+            imei,
+            name: prod.name,
+            displayPrice: Number(prod.price) || 0,
+            thumb: info.thumb,
+            conditionDetail: info.conditionDetail
+        });
+    }
+    renderCatalogProductPicker();
+    renderSelectedCatalogItems();
+}
+
+function toggleCatalogProductSelection(code) {
+    const prod = getAvailableCatalogProducts().find((p) => p.code === code);
+    if (!prod) return;
+    const imeis = prod.hasImei && Array.isArray(prod.imeis) ? prod.imeis : [];
+    if (imeis.length > 0) {
+        const allSelected = imeis.every((im) =>
+            selectedCatalogItems.has(catalogSelectionKey(code, im))
+        );
+        if (allSelected) {
+            for (const im of imeis) selectedCatalogItems.delete(catalogSelectionKey(code, im));
+        } else {
+            addProductOrImeisToCatalogSelection(prod);
+        }
+    } else {
+        const key = catalogSelectionKey(code, '');
+        if (selectedCatalogItems.has(key)) selectedCatalogItems.delete(key);
+        else addProductOrImeisToCatalogSelection(prod);
+    }
+    renderCatalogProductPicker();
+    renderSelectedCatalogItems();
+}
+
+function removeSelectedCatalogItem(key) {
+    selectedCatalogItems.delete(key);
+    renderCatalogProductPicker();
+    renderSelectedCatalogItems();
+}
+
+function selectAllFilteredCatalogProducts() {
+    const list = getFilteredCatalogProducts();
+    for (const p of list) {
+        if (selectedCatalogItems.size >= 50) break;
+        addProductOrImeisToCatalogSelection(p);
+    }
+    renderCatalogProductPicker();
+    renderSelectedCatalogItems();
+}
+
+function clearSelectedCatalogProducts() {
+    selectedCatalogItems.clear();
+    renderCatalogProductPicker();
+    renderSelectedCatalogItems();
+}
+
+function updateSelectedCatalogItemPrice(key, value) {
+    const item = selectedCatalogItems.get(key);
+    if (!item) return;
+    const num = Number(value);
+    if (Number.isFinite(num) && num >= 0) {
+        item.displayPrice = Math.round(num);
+    }
+}
+
+function renderSelectedCatalogItems() {
+    const countEl = document.getElementById('catalog-selected-count');
+    const listEl = document.getElementById('catalog-selected-items-list');
+    if (countEl) countEl.textContent = String(selectedCatalogItems.size);
+    if (!listEl) return;
+    if (selectedCatalogItems.size === 0) {
+        listEl.innerHTML = renderHTML`<div class="py-6 text-center text-gray-400 text-[12px]">Chưa chọn sản phẩm nào</div>`;
+        return;
+    }
+    listEl.innerHTML = Array.from(selectedCatalogItems.values())
+        .map((item) => {
+            const itemKey = item.key || catalogSelectionKey(item.code, item.imei || '');
+            const thumbHtml = item.thumb
+                ? renderHTML`<img src="${item.thumb}" alt="" class="w-8 h-8 rounded-md object-cover border border-gray-200 flex-shrink-0" />`
+                : '';
+            return renderHTML`
+            <div class="flex items-center justify-between gap-2 bg-white border border-gray-200/80 rounded-lg px-2.5 py-1.5 text-[12px]">
+                <div class="flex items-center gap-2 min-w-0 flex-1">
+                    ${trustedHTML(thumbHtml)}
+                    <div class="min-w-0 flex-1">
+                        <div class="font-semibold text-gray-800 truncate">${item.name}</div>
+                        <div class="text-[10.5px] text-gray-500 font-mono truncate">${item.code}${item.imei ? ` · IMEI: ${item.imei}` : ''}${item.conditionDetail ? ` · ${item.conditionDetail}` : ''}</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <input type="number" min="0" step="10000" value="${item.displayPrice}" onchange="updateSelectedCatalogItemPrice('${itemKey}', this.value)" class="w-28 border border-gray-200 rounded px-2 py-0.5 text-right font-bold text-gray-800 tabular-nums text-[12px]" title="Giá hiển thị trên catalog" />
+                    <button type="button" onclick="removeSelectedCatalogItem('${itemKey}')" class="text-rose-500 hover:text-rose-700 font-bold px-1">✕</button>
+                </div>
+            </div>
+        `;
+        })
+        .join('');
+}
+
+function buildPublicCatalogAbsoluteUrl(relUrl) {
+    const pathStr = String(relUrl || '');
+    if (
+        typeof window !== 'undefined' &&
+        window.location?.origin &&
+        window.location.origin !== 'null'
+    ) {
+        return `${window.location.origin}${pathStr.startsWith('/') ? '' : '/'}${pathStr}`;
+    }
+    return pathStr;
+}
+
+async function submitCreatePublicCatalog() {
+    const title = (document.getElementById('catalog-title-input')?.value || '').trim();
+    const message = (document.getElementById('catalog-message-input')?.value || '').trim();
+    const contactName = (document.getElementById('catalog-contact-name')?.value || '').trim();
+    const contactPhone = (document.getElementById('catalog-contact-phone')?.value || '').trim();
+    const expiresInHours = Number(document.getElementById('catalog-expiry-select')?.value ?? 72);
+    if (!title) {
+        showToast('Vui lòng nhập tiêu đề catalog!', 'warning');
+        return;
+    }
+    if (selectedCatalogItems.size === 0) {
+        showToast('Vui lòng chọn ít nhất 1 sản phẩm đưa vào catalog!', 'warning');
+        return;
+    }
+    const btn = document.getElementById('catalog-submit-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await KVStore.request('/api/catalogs', {
+            method: 'POST',
+            body: JSON.stringify({
+                title,
+                message,
+                contactName,
+                contactPhone,
+                expiresInHours,
+                branch: getCurrentBranch(),
+                items: Array.from(selectedCatalogItems.values())
+            })
+        });
+        const created = res.catalog;
+        const fullUrl = buildPublicCatalogAbsoluteUrl(created.url);
+        const banner = document.getElementById('catalog-created-banner');
+        const urlInput = document.getElementById('catalog-created-url');
+        const openLink = document.getElementById('catalog-created-open-link');
+        if (urlInput) urlInput.value = fullUrl;
+        if (openLink) openLink.href = created.url;
+        if (banner) banner.classList.remove('hidden');
+        showToast('Đã tạo link catalog gửi khách thành công!', 'success');
+    } catch (error) {
+        showToast(error.message || 'Không thể tạo catalog.', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function copyCreatedCatalogUrl() {
+    const val = document.getElementById('catalog-created-url')?.value || '';
+    if (!val) return;
+    await copyTextToClipboard(val, 'Đã sao chép link catalog!');
+}
+
+async function copyTextToClipboard(text, successMsg = 'Đã sao chép!') {
+    try {
+        if (navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+        }
+        showToast(successMsg, 'success');
+    } catch {
+        showToast(successMsg, 'info');
+    }
+}
+
+function formatCatalogExpiryDisplay(iso) {
+    if (!iso) return 'Không giới hạn';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadPublicCatalogsList() {
+    const tbody = document.getElementById('public-catalogs-tbody');
+    if (!tbody) return;
+    try {
+        const branch = getCurrentBranch();
+        const res = await KVStore.request(
+            `/api/catalogs?branch=${encodeURIComponent(branch || 'ALL')}`
+        );
+        loadedPublicCatalogs = Array.isArray(res.catalogs) ? res.catalogs : [];
+        renderPublicCatalogsTable();
+    } catch (error) {
+        tbody.innerHTML = renderHTML`<tr><td colspan="5" class="py-6 text-center text-rose-600">${error.message}</td></tr>`;
+    }
+}
+
+function renderPublicCatalogsTable() {
+    const tbody = document.getElementById('public-catalogs-tbody');
+    if (!tbody) return;
+    if (!loadedPublicCatalogs.length) {
+        tbody.innerHTML = renderHTML`<tr><td colspan="5" class="py-8 text-center text-gray-400">Chưa có link catalog nào được tạo</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = loadedPublicCatalogs
+        .map((cat) => {
+            const fullUrl = buildPublicCatalogAbsoluteUrl(cat.url);
+            const badge =
+                cat.status === 'active'
+                    ? renderHTML`<span class="kv-badge kv-badge-success">Đang hoạt động</span>`
+                    : cat.status === 'expired'
+                      ? renderHTML`<span class="kv-badge kv-badge-warning">Đã hết hạn</span>`
+                      : renderHTML`<span class="kv-badge kv-badge-danger">Đã thu hồi</span>`;
+            return renderHTML`
+                <tr class="border-b border-gray-100 hover:bg-gray-50/70" data-catalog-id="${cat.id}">
+                    <td class="py-2.5 px-3">
+                        <div class="font-bold text-gray-900">${cat.title}</div>
+                        <div class="text-[11px] text-gray-400 font-mono truncate max-w-[260px]">${fullUrl}</div>
+                    </td>
+                    <td class="py-2.5 px-3 text-center font-semibold">${cat.itemCount}</td>
+                    <td class="py-2.5 px-3 text-gray-600">${formatCatalogExpiryDisplay(cat.expiresAt)}</td>
+                    <td class="py-2.5 px-3 text-center">${trustedHTML(badge)}</td>
+                    <td class="py-2.5 px-3 text-right space-x-1 whitespace-nowrap">
+                        <button type="button" onclick="copyPublicCatalogLink('${cat.id}')" class="px-2 py-1 rounded-lg bg-blue-50 text-[#0066cc] hover:bg-[#0066cc] hover:text-white font-semibold text-[11.5px] transition">Copy link</button>
+                        <a href="${cat.url}" target="_blank" rel="noopener" class="inline-block px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium text-[11.5px] transition">Xem</a>
+                        <button type="button" onclick="extendPublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white font-medium text-[11.5px] transition">+3 ngày</button>
+                        <button type="button" onclick="duplicatePublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white font-medium text-[11.5px] transition">Nhân bản</button>
+                        ${trustedHTML(cat.status === 'active' ? renderHTML`<button type="button" onclick="revokePublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white font-medium text-[11.5px] transition">Thu hồi</button>` : '')}
+                    </td>
+                </tr>
+            `;
+        })
+        .join('');
+}
+
+async function copyPublicCatalogLink(catalogId) {
+    const cat = loadedPublicCatalogs.find((c) => c.id === catalogId);
+    if (!cat) return;
+    await copyTextToClipboard(buildPublicCatalogAbsoluteUrl(cat.url), 'Đã sao chép link catalog!');
+}
+
+async function revokePublicCatalogItem(catalogId) {
+    try {
+        await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/revoke`, {
+            method: 'POST',
+            body: '{}'
+        });
+        showToast('Đã thu hồi link catalog!', 'success');
+        await loadPublicCatalogsList();
+    } catch (error) {
+        showToast(error.message || 'Không thể thu hồi catalog.', 'error');
+    }
+}
+
+async function extendPublicCatalogItem(catalogId) {
+    try {
+        await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/extend`, {
+            method: 'POST',
+            body: JSON.stringify({ expiresInHours: 72 })
+        });
+        showToast('Đã gia hạn catalog thêm 3 ngày!', 'success');
+        await loadPublicCatalogsList();
+    } catch (error) {
+        showToast(error.message || 'Không thể gia hạn catalog.', 'error');
+    }
+}
+
+async function duplicatePublicCatalogItem(catalogId) {
+    try {
+        await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/duplicate`, {
+            method: 'POST',
+            body: JSON.stringify({ expiresInHours: 72 })
+        });
+        showToast('Đã nhân bản catalog thành link mới!', 'success');
+        await loadPublicCatalogsList();
+    } catch (error) {
+        showToast(error.message || 'Không thể nhân bản catalog.', 'error');
+    }
+}
+
 // Start on load
 window.addEventListener('DOMContentLoaded', initApp);

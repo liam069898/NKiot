@@ -1745,6 +1745,14 @@
                     </div>
                     <div class="flex items-center space-x-2 self-end sm:self-auto flex-shrink-0">
                         <button
+                            id="open-catalog-builder-btn"
+                            type="button"
+                            onclick="openPublicCatalogModal()"
+                            class="glass-btn-secondary text-[#0066cc] hover:text-blue-800 border border-blue-200/90 font-semibold px-3 sm:px-3.5 py-1.5 rounded-xl flex items-center space-x-1.5 text-[12.5px] sm:text-[13px]"
+                        >
+                            <span>🔗 Tạo catalog gửi khách</span>
+                        </button>
+                        <button
                             onclick="openAddProductModal()"
                             class="glass-btn-primary font-semibold px-3 sm:px-3.5 py-1.5 rounded-xl text-white flex items-center space-x-1.5 text-[12.5px] sm:text-[13px]"
                         >
@@ -9601,6 +9609,103 @@
                             class="hidden text-[12.5px] text-gray-700 bg-gray-50 rounded-xl px-3 py-2 border border-gray-100"
                         ></div>
                         <div id="shared-imei-meta" class="text-[11.5px] text-gray-400 mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Tạo & Quản lý Catalog gửi khách -->
+        <div id="public-catalog-modal" class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[150] flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="public-catalog-modal-title">
+            <div class="bg-white rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl border border-gray-200/70">
+                <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100/90 flex-shrink-0">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <h3 id="public-catalog-modal-title" class="font-bold text-[16px] text-gray-900 truncate">Catalog tư vấn gửi khách</h3>
+                        <div class="inline-flex rounded-xl bg-gray-100 p-0.5 text-[12px] font-semibold">
+                            <button type="button" id="catalog-tab-btn-create" onclick="switchPublicCatalogTab('create')" class="px-3 py-1 rounded-lg bg-white text-[#0066cc] shadow-2xs transition">+ Tạo catalog mới</button>
+                            <button type="button" id="catalog-tab-btn-list" onclick="switchPublicCatalogTab('list')" class="px-3 py-1 rounded-lg text-gray-600 hover:text-gray-900 transition">Danh sách link đã tạo</button>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closePublicCatalogModal()" class="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center flex-shrink-0 transition cursor-pointer" aria-label="Đóng">✕</button>
+                </div>
+                <div id="catalog-tab-create" class="flex-1 min-h-0 overflow-y-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    <div class="lg:col-span-6 flex flex-col border border-gray-200/80 rounded-xl p-3 bg-gray-50/50 min-h-[300px]">
+                        <div class="text-[13px] font-bold text-gray-800 mb-2">1. Chọn sản phẩm đưa vào catalog</div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
+                            <input id="catalog-prod-search" type="text" oninput="renderCatalogProductPicker()" placeholder="Tìm tên, mã hàng..." class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            <input id="catalog-price-min" type="number" min="0" step="100000" oninput="renderCatalogProductPicker()" placeholder="Giá từ (VD: 10000000)" class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            <input id="catalog-price-max" type="number" min="0" step="100000" oninput="renderCatalogProductPicker()" placeholder="Giá đến (VD: 15000000)" class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                        </div>
+                        <div class="flex items-center justify-between text-[11.5px] text-gray-500 mb-1.5">
+                            <span id="catalog-picker-count">0 sản phẩm phù hợp</span>
+                            <button type="button" onclick="selectAllFilteredCatalogProducts()" class="text-[#0066cc] hover:underline font-semibold cursor-pointer">+ Chọn tất cả SP đang lọc</button>
+                        </div>
+                        <div id="catalog-product-picker-list" class="flex-1 overflow-y-auto space-y-1.5 max-h-[340px] pr-1"></div>
+                    </div>
+                    <div class="lg:col-span-6 flex flex-col gap-2.5">
+                        <div class="text-[13px] font-bold text-gray-800">2. Thông tin trang catalog & thời hạn link</div>
+                        <div>
+                            <label class="block text-[12px] font-medium text-gray-700 mb-1">Tiêu đề catalog *</label>
+                            <input id="catalog-title-input" type="text" placeholder="VD: Mẫu đồng hồ tầm giá 10 - 15 triệu" class="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-[13px]" />
+                        </div>
+                        <div>
+                            <label class="block text-[12px] font-medium text-gray-700 mb-1">Lời nhắn tư vấn gửi khách</label>
+                            <textarea id="catalog-message-input" rows="2" placeholder="VD: Em gửi anh/chị các mẫu đang sẵn hàng phù hợp ngân sách..." class="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-[12.5px]"></textarea>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div>
+                                <label class="block text-[11.5px] font-medium text-gray-600 mb-1">Người liên hệ</label>
+                                <input id="catalog-contact-name" type="text" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            </div>
+                            <div>
+                                <label class="block text-[11.5px] font-medium text-gray-600 mb-1">SĐT / Zalo liên hệ</label>
+                                <input id="catalog-contact-phone" type="text" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            </div>
+                            <div>
+                                <label class="block text-[11.5px] font-medium text-gray-600 mb-1">Thời hạn hiệu lực</label>
+                                <select id="catalog-expiry-select" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white">
+                                    <option value="24">24 giờ (1 ngày)</option>
+                                    <option value="72" selected>3 ngày</option>
+                                    <option value="168">7 ngày</option>
+                                    <option value="720">30 ngày</option>
+                                    <option value="0">Không giới hạn</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="border border-gray-200/80 rounded-xl p-2.5 bg-gray-50/40 flex-1 flex flex-col min-h-[140px]">
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-[12px] font-bold text-gray-700">Sản phẩm trong catalog (<span id="catalog-selected-count">0</span>)</span>
+                                <button type="button" onclick="clearSelectedCatalogProducts()" class="text-[11.5px] text-rose-600 hover:underline font-medium">Xóa hết</button>
+                            </div>
+                            <div id="catalog-selected-items-list" class="flex-1 overflow-y-auto space-y-1.5 max-h-[170px]"></div>
+                        </div>
+                        <div id="catalog-created-banner" class="hidden p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-col gap-2">
+                            <div class="text-[12.5px] font-bold text-emerald-800">Đã tạo link catalog thành công!</div>
+                            <div class="flex items-center gap-2">
+                                <input id="catalog-created-url" type="text" readonly class="flex-1 bg-white border border-emerald-300 rounded-lg px-2.5 py-1 text-[12.5px] font-mono text-gray-800" />
+                                <button type="button" onclick="copyCreatedCatalogUrl()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-semibold">Sao chép</button>
+                                <a id="catalog-created-open-link" href="#" target="_blank" rel="noopener" class="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-700 text-[12px] font-semibold">Mở xem</a>
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-2 pt-1">
+                            <button type="button" onclick="closePublicCatalogModal()" class="glass-btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium text-gray-700">Đóng</button>
+                            <button type="button" id="catalog-submit-btn" onclick="submitCreatePublicCatalog()" class="glass-btn-primary px-4 py-2 rounded-xl text-[13px] font-bold text-white">🔗 Tạo link catalog</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="catalog-tab-list" class="hidden flex-1 min-h-0 overflow-y-auto p-4">
+                    <div class="overflow-x-auto border border-gray-200/80 rounded-xl">
+                        <table class="w-full text-left border-collapse text-[12.5px]">
+                            <thead>
+                                <tr class="border-b border-gray-200/80 bg-gray-50/80 text-gray-600 font-semibold">
+                                    <th class="py-2.5 px-3">Tiêu đề</th>
+                                    <th class="py-2.5 px-3 text-center">Số SP</th>
+                                    <th class="py-2.5 px-3">Hiệu lực đến</th>
+                                    <th class="py-2.5 px-3 text-center">Trạng thái</th>
+                                    <th class="py-2.5 px-3 text-right">Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="public-catalogs-tbody"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>

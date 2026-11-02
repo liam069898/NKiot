@@ -107,6 +107,50 @@ const MIGRATIONS = [
             );
             db.exec('CREATE INDEX IF NOT EXISTS returns_invoice_code ON returns(invoiceCode)');
         }
+    },
+    {
+        version: 7,
+        name: 'public_catalogs',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS public_catalogs (
+                    id TEXT PRIMARY KEY,
+                    token TEXT NOT NULL UNIQUE,
+                    branch TEXT NOT NULL DEFAULT '',
+                    createdBy TEXT NOT NULL,
+                    createdByName TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL,
+                    message TEXT NOT NULL DEFAULT '',
+                    contactName TEXT NOT NULL DEFAULT '',
+                    contactPhone TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    expiresAt TEXT,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL,
+                    revokedAt TEXT
+                );
+                CREATE TABLE IF NOT EXISTS public_catalog_items (
+                    id TEXT PRIMARY KEY,
+                    catalogId TEXT NOT NULL,
+                    sourceType TEXT NOT NULL DEFAULT 'local',
+                    sourceProductId TEXT NOT NULL DEFAULT '',
+                    productCode TEXT NOT NULL DEFAULT '',
+                    imei TEXT NOT NULL DEFAULT '',
+                    sortOrder INTEGER NOT NULL DEFAULT 0,
+                    name TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT '',
+                    displayPrice REAL NOT NULL DEFAULT 0,
+                    description TEXT NOT NULL DEFAULT '',
+                    condition TEXT NOT NULL DEFAULT 'new',
+                    conditionDetail TEXT NOT NULL DEFAULT '',
+                    images TEXT NOT NULL DEFAULT '[]',
+                    availabilitySnapshot TEXT NOT NULL DEFAULT 'in_stock',
+                    createdAt TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS public_catalogs_token_active ON public_catalogs(token, status, expiresAt);
+                CREATE INDEX IF NOT EXISTS public_catalog_items_catalog_order ON public_catalog_items(catalogId, sortOrder);
+            `);
+        }
     }
 ];
 
@@ -138,6 +182,15 @@ function applyMigrations(db, context) {
 // Data invariants checked on every start, independent of schema version.
 function repairData(db) {
     db.prepare("UPDATE products SET status='archived' WHERE status='inactive'").run();
+    if (
+        db
+            .prepare(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='public_catalog_items'"
+            )
+            .get()
+    ) {
+        addColumn(db, 'public_catalog_items', "imei TEXT NOT NULL DEFAULT ''");
+    }
     // Migrate existing credentials without changing the user's password or business data.
     for (const user of db.prepare('SELECT id, password FROM users').all()) {
         if (!user.password?.startsWith('scrypt$'))

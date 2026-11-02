@@ -75,7 +75,7 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
                 .prepare('SELECT version FROM schema_migrations ORDER BY version')
                 .all()
                 .map((row) => row.version),
-            [1, 2, 3, 4, 5, 6]
+            [1, 2, 3, 4, 5, 6, 7]
         );
         assert.equal(
             upgraded.prepare("SELECT total FROM invoices WHERE id='KEEP'").get().total,

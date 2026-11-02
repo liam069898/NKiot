@@ -528,11 +528,138 @@ async function handler(req, res) {
                 const { dbPath, ...stats } = db.getStats();
                 return json(res, 200, { success: true, stats, hub: hub.status() });
             }
+            if (url.pathname === '/api/catalogs' && req.method === 'GET') {
+                auth.requirePermission(user, 'products');
+                const catalogs = require('./catalog-service').listCatalogs(user, url.searchParams);
+                return json(res, 200, { success: true, catalogs });
+            }
+            if (url.pathname === '/api/catalogs' && req.method === 'POST') {
+                auth.requirePermission(user, 'products');
+                const input = await body(req);
+                const catalog = require('./catalog-service').createCatalog(user, input);
+                return json(res, 201, { success: true, catalog });
+            }
+            const catalogActionMatch =
+                /^\/api\/catalogs\/([A-Za-z0-9_-]+)(?:\/(revoke|extend|duplicate))?$/.exec(
+                    url.pathname
+                );
+            if (catalogActionMatch) {
+                auth.requirePermission(user, 'products');
+                const [, catalogId, action] = catalogActionMatch;
+                const catalogService = require('./catalog-service');
+                if (!action && req.method === 'GET') {
+                    return json(res, 200, {
+                        success: true,
+                        catalog: catalogService.getCatalogForUser(user, catalogId)
+                    });
+                }
+                if (action === 'revoke' && req.method === 'POST') {
+                    return json(res, 200, {
+                        success: true,
+                        catalog: catalogService.revokeCatalog(user, catalogId)
+                    });
+                }
+                if (action === 'extend' && req.method === 'POST') {
+                    const input = await body(req);
+                    return json(res, 200, {
+                        success: true,
+                        catalog: catalogService.extendCatalog(user, catalogId, input)
+                    });
+                }
+                if (action === 'duplicate' && req.method === 'POST') {
+                    const input = await body(req);
+                    return json(res, 201, {
+                        success: true,
+                        catalog: catalogService.duplicateCatalog(user, catalogId, input)
+                    });
+                }
+            }
             // Snapshot replacement/reset are intentionally not public API operations.
             return json(res, 404, { success: false, error: 'API không tồn tại.' });
         }
         if (!['GET', 'HEAD'].includes(req.method))
             return json(res, 405, { success: false, error: 'Method not allowed' });
+        const publicCatalogMatch = /^\/catalog\/([A-Za-z0-9_-]+)(\/data)?$/.exec(url.pathname);
+        if (publicCatalogMatch) {
+            const [, token, isData] = publicCatalogMatch;
+            const catalogService = require('./catalog-service');
+            const lookup = catalogService.getPublicCatalogByToken(token);
+            const statusCode =
+                lookup.state === 'active' ? 200 : lookup.state === 'not_found' ? 404 : 410;
+            if (isData) {
+                return json(res, statusCode, {
+                    success: lookup.state === 'active',
+                    state: lookup.state,
+                    catalog: lookup.catalog
+                });
+            }
+            const html = Buffer.from(catalogService.renderPublicCatalogHtml(lookup), 'utf8');
+            res.writeHead(statusCode, {
+                ...securityHeaders(),
+                'Content-Type': 'text/html; charset=utf-8',
+                'Content-Length': html.length,
+                'Cache-Control': 'private, no-store',
+                'X-Robots-Tag': 'noindex, nofollow, noarchive',
+                'Referrer-Policy': 'no-referrer'
+            });
+            return res.end(req.method === 'HEAD' ? undefined : html);
+        }
+        const catalogMediaMatch = /^\/catalog-media\/([A-Za-z0-9_-]+)\/([a-f0-9]{24})$/i.exec(
+            url.pathname
+        );
+        if (catalogMediaMatch) {
+            const [, token, mediaId] = catalogMediaMatch;
+            const resolved = require('./catalog-service').resolveCatalogMediaFile(
+                token,
+                mediaId,
+                UPLOADS_DIR
+            );
+            if (!resolved)
+                return json(res, 404, { success: false, error: 'Không tìm thấy ảnh catalog.' });
+            try {
+                const stat = await fs.promises.lstat(resolved.safePath);
+                if (!stat.isFile())
+                    return json(res, 404, { success: false, error: 'Không tìm thấy ảnh catalog.' });
+                const ext = path.extname(resolved.safePath).toLowerCase();
+                const mimeTypes = {
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.png': 'image/png',
+                    '.webp': 'image/webp',
+                    '.gif': 'image/gif'
+                };
+                const contentType = mimeTypes[ext];
+                if (!contentType)
+                    return json(res, 404, { success: false, error: 'Định dạng ảnh không hợp lệ.' });
+                const isDownload = url.searchParams.get('download') === '1';
+                const customName = String(url.searchParams.get('name') || '')
+                    .replace(/[^a-zA-Z0-9_-]/g, '-')
+                    .replace(/-+/g, '-')
+                    .replace(/^-|-$/g, '')
+                    .slice(0, 60);
+                const downloadFilename = `${customName || `catalog-${mediaId.slice(0, 8)}`}${ext}`;
+                res.writeHead(200, {
+                    ...securityHeaders(),
+                    'Content-Type': contentType,
+                    'Content-Length': stat.size,
+                    'Cache-Control': 'private, max-age=3600',
+                    'X-Robots-Tag': 'noindex, nofollow',
+                    'Referrer-Policy': 'no-referrer',
+                    ...(isDownload
+                        ? {
+                              'Content-Disposition': `attachment; filename="${downloadFilename}"`
+                          }
+                        : {})
+                });
+                if (req.method === 'HEAD') return res.end();
+                const stream = fs.createReadStream(resolved.safePath);
+                stream.on('error', () => res.destroy());
+                res.on('close', () => stream.destroy());
+                return stream.pipe(res);
+            } catch {
+                return json(res, 404, { success: false, error: 'Không tìm thấy ảnh catalog.' });
+            }
+        }
         if (url.pathname.startsWith('/hub-media/')) {
             // Proxy ảnh đối tác: browser không có API key Hub, server tenant giữ key.
             const viewer = sessionUser(req);
