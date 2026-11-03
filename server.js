@@ -13,6 +13,21 @@ const { securityHeaders } = require('./security-headers');
 const sessions = new Map(),
     attempts = new Map();
 const MAX_BODY = 16 * 1024 * 1024;
+// Per-process safeguard; production reverse proxies must also enforce distributed limits.
+const openAttempts = new Map();
+function checkOpenRateLimit(req) {
+    const now = Date.now();
+    for (const [key, entry] of openAttempts) if (entry.until <= now) openAttempts.delete(key);
+    const ip = req.socket?.remoteAddress || 'unknown';
+    const token = String(req.headers.authorization || '');
+    const key = crypto.createHash('sha256').update(`${ip}|${token}`).digest('hex');
+    if (!openAttempts.has(key) && openAttempts.size >= 10000)
+        throw Object.assign(new Error('Máy chủ đang bận.'), { status: 429 });
+    const entry = openAttempts.get(key) || { count: 0, until: now + 60000 };
+    if (++entry.count > 120)
+        throw Object.assign(new Error('Quá nhiều yêu cầu, vui lòng thử lại sau.'), { status: 429 });
+    openAttempts.set(key, entry);
+}
 const UPLOADS_DIR = process.env.NKIOT_UPLOADS_DIR || path.join(__dirname, 'public', 'uploads');
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true, mode: 0o700 });
@@ -56,13 +71,14 @@ async function loadAsset(file) {
 // Responses whose request accepted gzip. Kept outside `res` so test doubles need no extra fields.
 const acceptsGzip = new WeakSet();
 const gzipAsync = promisify(zlib.gzip);
-async function json(res, status, data) {
+async function json(res, status, data, extraHeaders = {}) {
     let payload = JSON.stringify(data);
     const headers = {
         ...securityHeaders(),
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'no-store',
-        Vary: 'Accept-Encoding'
+        Vary: 'Accept-Encoding',
+        ...extraHeaders
     };
     // Full views are several MB of repetitive JSON; level 1 gives ~95% reduction in ~15 ms and
     // runs on the libuv threadpool, so the event loop stays free while compressing.
@@ -143,6 +159,130 @@ async function handler(req, res) {
                 version: require('./package.json').version,
                 time: new Date().toISOString()
             });
+        if (url.pathname.startsWith('/api/v1/open/')) {
+            checkOpenRateLimit(req);
+            const corsHeaders = {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Authorization, Content-Type, ETag, If-None-Match'
+            };
+            if (req.method === 'OPTIONS') {
+                res.writeHead(204, { ...securityHeaders(), ...corsHeaders });
+                return res.end();
+            }
+            if (!['GET', 'HEAD'].includes(req.method)) {
+                return json(res, 405, { success: false, error: 'Method not allowed' }, corsHeaders);
+            }
+            const openApi = require('./open-api-service');
+            const mediaMatch = /^\/api\/v1\/open\/media\/([a-f0-9]{64})$/.exec(url.pathname);
+            if (mediaMatch) {
+                const { tokenRecord } = openApi.authenticateOpenRequest(req, url);
+                const resolved = openApi.resolveOpenMediaFile(
+                    mediaMatch[1],
+                    UPLOADS_DIR,
+                    tokenRecord
+                );
+                if (!resolved) {
+                    return json(
+                        res,
+                        404,
+                        { success: false, error: 'Không tìm thấy tệp ảnh.' },
+                        corsHeaders
+                    );
+                }
+                const handle = await fs.promises.open(
+                    resolved.safePath,
+                    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+                );
+                let stat;
+                try {
+                    stat = await handle.stat();
+                    if (!stat.isFile()) {
+                        await handle.close();
+                        return json(
+                            res,
+                            404,
+                            { success: false, error: 'Không tìm thấy tệp ảnh.' },
+                            corsHeaders
+                        );
+                    }
+                } catch (error) {
+                    await handle.close();
+                    throw error;
+                }
+                const etag = `"${stat.mtimeMs.toString(16)}-${stat.size.toString(16)}"`;
+                if (req.headers['if-none-match'] === etag) {
+                    await handle.close();
+                    res.writeHead(304, {
+                        ...securityHeaders(),
+                        ...corsHeaders,
+                        ETag: etag,
+                        'Cache-Control': 'private, no-store'
+                    });
+                    return res.end();
+                }
+                const isDownload = url.searchParams.get('download') === '1';
+                const customName = String(url.searchParams.get('name') || '')
+                    .replace(/[^a-zA-Z0-9_-]/g, '-')
+                    .replace(/-+/g, '-')
+                    .replace(/^-|-$/g, '')
+                    .slice(0, 60);
+                const downloadFilename = `${customName || path.basename(resolved.filename, resolved.ext)}${resolved.ext}`;
+                res.writeHead(200, {
+                    ...securityHeaders(),
+                    ...corsHeaders,
+                    'Content-Type': resolved.contentType,
+                    'Content-Length': stat.size,
+                    'Cache-Control': 'private, no-store',
+                    'X-Robots-Tag': 'noindex, nofollow',
+                    ETag: etag,
+                    ...(isDownload
+                        ? { 'Content-Disposition': `attachment; filename="${downloadFilename}"` }
+                        : {})
+                });
+                if (req.method === 'HEAD') {
+                    await handle.close();
+                    return res.end();
+                }
+                const stream = handle.createReadStream();
+                stream.on('error', () => res.destroy());
+                res.on('close', () => stream.destroy());
+                return stream.pipe(res);
+            }
+
+            const prodDetailMatch = /^\/api\/v1\/open\/products\/([A-Za-z0-9_-]+)$/.exec(
+                url.pathname
+            );
+            if (prodDetailMatch) {
+                const { tokenRecord, rawToken } = openApi.authenticateOpenRequest(req, url);
+                const result = openApi.getOpenProductByCode(
+                    tokenRecord,
+                    rawToken,
+                    prodDetailMatch[1],
+                    req.headers.host
+                );
+                return json(res, 200, result, corsHeaders);
+            }
+
+            if (url.pathname === '/api/v1/open/products') {
+                const { tokenRecord, rawToken } = openApi.authenticateOpenRequest(req, url);
+                const result = openApi.getOpenProducts(
+                    tokenRecord,
+                    rawToken,
+                    url.searchParams,
+                    req.headers.host
+                );
+                return json(res, 200, result, corsHeaders);
+            }
+
+            return json(
+                res,
+                404,
+                { success: false, error: 'Endpoint Open API không tồn tại.' },
+                corsHeaders
+            );
+        }
+
         if (url.pathname.startsWith('/api/')) {
             if (req.headers.origin) {
                 let origin;
@@ -530,8 +670,8 @@ async function handler(req, res) {
             }
             if (url.pathname === '/api/catalogs' && req.method === 'GET') {
                 auth.requirePermission(user, 'products');
-                const catalogs = require('./catalog-service').listCatalogs(user, url.searchParams);
-                return json(res, 200, { success: true, catalogs });
+                const result = require('./catalog-service').listCatalogs(user, url.searchParams);
+                return json(res, 200, { success: true, ...result });
             }
             if (url.pathname === '/api/catalogs' && req.method === 'POST') {
                 auth.requirePermission(user, 'products');
@@ -572,6 +712,43 @@ async function handler(req, res) {
                         success: true,
                         catalog: catalogService.duplicateCatalog(user, catalogId, input)
                     });
+                }
+            }
+            if (url.pathname === '/api/tokens' && req.method === 'GET') {
+                auth.requirePermission(user, 'settings');
+                if (user.role !== 'admin')
+                    throw Object.assign(new Error('Chỉ quản trị viên được quản lý token.'), {
+                        status: 403
+                    });
+                const tokens = require('./open-api-service').listTokens(user);
+                return json(res, 200, { success: true, tokens });
+            }
+            if (url.pathname === '/api/tokens' && req.method === 'POST') {
+                auth.requirePermission(user, 'settings');
+                if (user.role !== 'admin')
+                    throw Object.assign(new Error('Chỉ quản trị viên được quản lý token.'), {
+                        status: 403
+                    });
+                const input = await body(req);
+                const token = require('./open-api-service').createToken(user, input);
+                return json(res, 201, { success: true, token });
+            }
+            const tokenActionMatch = /^\/api\/tokens\/([A-Za-z0-9_-]+)(?:\/revoke)?$/.exec(
+                url.pathname
+            );
+            if (tokenActionMatch) {
+                auth.requirePermission(user, 'settings');
+                if (user.role !== 'admin')
+                    throw Object.assign(new Error('Chỉ quản trị viên được quản lý token.'), {
+                        status: 403
+                    });
+                const [, tokenId] = tokenActionMatch;
+                const openApiService = require('./open-api-service');
+                if (url.pathname.endsWith('/revoke') && req.method === 'POST') {
+                    return json(res, 200, openApiService.revokeToken(user, tokenId));
+                }
+                if (req.method === 'DELETE') {
+                    return json(res, 200, openApiService.deleteToken(user, tokenId));
                 }
             }
             // Snapshot replacement/reset are intentionally not public API operations.
@@ -617,9 +794,6 @@ async function handler(req, res) {
             if (!resolved)
                 return json(res, 404, { success: false, error: 'Không tìm thấy ảnh catalog.' });
             try {
-                const stat = await fs.promises.lstat(resolved.safePath);
-                if (!stat.isFile())
-                    return json(res, 404, { success: false, error: 'Không tìm thấy ảnh catalog.' });
                 const ext = path.extname(resolved.safePath).toLowerCase();
                 const mimeTypes = {
                     '.jpg': 'image/jpeg',
@@ -638,11 +812,29 @@ async function handler(req, res) {
                     .replace(/^-|-$/g, '')
                     .slice(0, 60);
                 const downloadFilename = `${customName || `catalog-${mediaId.slice(0, 8)}`}${ext}`;
+                const handle = await fs.promises.open(
+                    resolved.safePath,
+                    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+                );
+                let stat;
+                try {
+                    stat = await handle.stat();
+                    if (!stat.isFile()) {
+                        await handle.close();
+                        return json(res, 404, {
+                            success: false,
+                            error: 'Không tìm thấy ảnh catalog.'
+                        });
+                    }
+                } catch (error) {
+                    await handle.close();
+                    throw error;
+                }
                 res.writeHead(200, {
                     ...securityHeaders(),
                     'Content-Type': contentType,
                     'Content-Length': stat.size,
-                    'Cache-Control': 'private, max-age=3600',
+                    'Cache-Control': 'private, no-store',
                     'X-Robots-Tag': 'noindex, nofollow',
                     'Referrer-Policy': 'no-referrer',
                     ...(isDownload
@@ -651,8 +843,11 @@ async function handler(req, res) {
                           }
                         : {})
                 });
-                if (req.method === 'HEAD') return res.end();
-                const stream = fs.createReadStream(resolved.safePath);
+                if (req.method === 'HEAD') {
+                    await handle.close();
+                    return res.end();
+                }
+                const stream = handle.createReadStream();
                 stream.on('error', () => res.destroy());
                 res.on('close', () => stream.destroy());
                 return stream.pipe(res);

@@ -11902,6 +11902,7 @@ forceSyncDatabase = guardMutation(forceSyncDatabase);
 // ==========================================
 let selectedCatalogItems = new Map();
 let loadedPublicCatalogs = [];
+let catalogPage = 1;
 
 function catalogSelectionKey(code, imei = '') {
     return imei ? `${code}|${imei}` : String(code || '');
@@ -11973,6 +11974,12 @@ function addProductOrImeisToCatalogSelection(prod) {
             });
         }
     } else {
+        if (prod.hasImei) return;
+        if (
+            selectedCatalogItems.size >= 50 &&
+            !selectedCatalogItems.has(catalogSelectionKey(prod.code))
+        )
+            return;
         const key = catalogSelectionKey(prod.code, '');
         const prodImgs = Array.isArray(prod.images) ? prod.images.filter(Boolean) : [];
         selectedCatalogItems.set(key, {
@@ -11994,6 +12001,10 @@ function openPublicCatalogModal(tab = 'create') {
     }
     const modal = document.getElementById('public-catalog-modal');
     if (!modal) return;
+    if (getCurrentBranch() === ALL_BRANCHES) {
+        showToast('Vui lòng chọn một chi nhánh cụ thể để tạo và quản lý catalog.', 'warning');
+        return;
+    }
 
     // Tự động lấy các dòng đang được tích chọn trên bảng Hàng hóa (nếu có)
     const checkedRows = document.querySelectorAll('#products-tbody input.kv-checkbox:checked');
@@ -12098,18 +12109,32 @@ function renderCatalogImeiPickerRow(p, im) {
     `;
 }
 
-function renderCatalogProductPicker() {
+let catalogPickerLimit = 40;
+
+function loadMoreCatalogPickerProducts() {
+    catalogPickerLimit += 40;
+    renderCatalogProductPicker(false);
+}
+
+function renderCatalogProductPicker(resetLimit = false) {
+    if (resetLimit) catalogPickerLimit = 40;
     const listEl = document.getElementById('catalog-product-picker-list');
     const countEl = document.getElementById('catalog-picker-count');
     if (!listEl) return;
     const list = getFilteredCatalogProducts();
-    if (countEl) countEl.textContent = `${list.length} sản phẩm phù hợp`;
     if (list.length === 0) {
+        if (countEl) countEl.textContent = '0 sản phẩm phù hợp';
         listEl.innerHTML = renderHTML`<div class="py-8 text-center text-gray-400 text-[12.5px]">Không có sản phẩm phù hợp bộ lọc</div>`;
         return;
     }
-    listEl.innerHTML = list
-        .slice(0, 80)
+    if (countEl) {
+        countEl.textContent =
+            list.length <= catalogPickerLimit
+                ? `${list.length} sản phẩm phù hợp`
+                : `Hiển thị ${catalogPickerLimit}/${list.length} sản phẩm phù hợp`;
+    }
+    const visibleList = list.slice(0, catalogPickerLimit);
+    const renderedItems = visibleList
         .map((p) => {
             const imeis = p.hasImei && Array.isArray(p.imeis) ? p.imeis : [];
             if (imeis.length > 0) {
@@ -12150,6 +12175,19 @@ function renderCatalogProductPicker() {
             `;
         })
         .join('');
+
+    const moreBtnHtml =
+        list.length > catalogPickerLimit
+            ? renderHTML`
+                <div class="pt-2 text-center">
+                    <button type="button" onclick="loadMoreCatalogPickerProducts()" class="w-full py-2 rounded-xl bg-white border border-gray-200 text-[#0066cc] hover:bg-blue-50/50 text-[12px] font-semibold transition cursor-pointer">
+                        Xem thêm (${Math.min(40, list.length - catalogPickerLimit)} sản phẩm khác)
+                    </button>
+                </div>
+            `
+            : trustedHTML('');
+
+    listEl.innerHTML = renderedItems + (moreBtnHtml ? moreBtnHtml.toString() : '');
 }
 
 function toggleCatalogImeiSelection(code, imei) {
@@ -12209,12 +12247,65 @@ function removeSelectedCatalogItem(key) {
 
 function selectAllFilteredCatalogProducts() {
     const list = getFilteredCatalogProducts();
+    let added = 0;
+    let hitCap = false;
     for (const p of list) {
-        if (selectedCatalogItems.size >= 50) break;
-        addProductOrImeisToCatalogSelection(p);
+        const imeis = p.hasImei && Array.isArray(p.imeis) ? p.imeis : [];
+        if (imeis.length > 0) {
+            for (const im of imeis) {
+                const key = catalogSelectionKey(p.code, im);
+                if (selectedCatalogItems.size >= 50) {
+                    if (!selectedCatalogItems.has(key)) hitCap = true;
+                    break;
+                }
+                if (!selectedCatalogItems.has(key)) {
+                    const info = getProductImeiEntry(p, im);
+                    selectedCatalogItems.set(key, {
+                        key,
+                        code: p.code,
+                        imei: im,
+                        name: p.name,
+                        displayPrice: Number(p.price) || 0,
+                        thumb: info.thumb,
+                        conditionDetail: info.conditionDetail
+                    });
+                    added++;
+                }
+            }
+        } else {
+            if (p.hasImei) continue;
+            const key = catalogSelectionKey(p.code, '');
+            if (selectedCatalogItems.size >= 50) {
+                if (!selectedCatalogItems.has(key)) hitCap = true;
+                break;
+            }
+            if (!selectedCatalogItems.has(key)) {
+                const prodImgs = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
+                selectedCatalogItems.set(key, {
+                    key,
+                    code: p.code,
+                    imei: '',
+                    name: p.name,
+                    displayPrice: Number(p.price) || 0,
+                    thumb: prodImgs[0] || '',
+                    conditionDetail: p.conditionDetail || ''
+                });
+                added++;
+            }
+        }
     }
     renderCatalogProductPicker();
     renderSelectedCatalogItems();
+    if (hitCap) {
+        showToast(
+            'Đã đạt giới hạn tối đa 50 mục của catalog! Một số sản phẩm chưa được thêm.',
+            'warning'
+        );
+    } else if (added > 0) {
+        showToast(`Đã thêm ${added} sản phẩm/máy vào catalog.`, 'success');
+    } else {
+        showToast('Tất cả sản phẩm đang lọc đã có trong catalog.', 'info');
+    }
 }
 
 function clearSelectedCatalogProducts() {
@@ -12235,7 +12326,7 @@ function updateSelectedCatalogItemPrice(key, value) {
 function renderSelectedCatalogItems() {
     const countEl = document.getElementById('catalog-selected-count');
     const listEl = document.getElementById('catalog-selected-items-list');
-    if (countEl) countEl.textContent = String(selectedCatalogItems.size);
+    if (countEl) countEl.textContent = `${selectedCatalogItems.size}/50`;
     if (!listEl) return;
     if (selectedCatalogItems.size === 0) {
         listEl.innerHTML = renderHTML`<div class="py-6 text-center text-gray-400 text-[12px]">Chưa chọn sản phẩm nào</div>`;
@@ -12258,12 +12349,123 @@ function renderSelectedCatalogItems() {
                 </div>
                 <div class="flex items-center gap-1.5 flex-shrink-0">
                     <input type="number" min="0" step="10000" value="${item.displayPrice}" onchange="updateSelectedCatalogItemPrice('${itemKey}', this.value)" class="w-28 border border-gray-200 rounded px-2 py-0.5 text-right font-bold text-gray-800 tabular-nums text-[12px]" title="Giá hiển thị trên catalog" />
-                    <button type="button" onclick="removeSelectedCatalogItem('${itemKey}')" class="text-rose-500 hover:text-rose-700 font-bold px-1">✕</button>
+                    <button type="button" onclick="removeSelectedCatalogItem('${itemKey}')" class="text-rose-500 hover:text-rose-700 font-bold px-1 cursor-pointer">✕</button>
                 </div>
             </div>
         `;
         })
         .join('');
+}
+
+function clearCatalogFormErrors() {
+    const titleErr = document.getElementById('catalog-title-error');
+    const itemsErr = document.getElementById('catalog-items-error');
+    if (titleErr) {
+        titleErr.classList.add('hidden');
+        titleErr.textContent = '';
+    }
+    if (itemsErr) {
+        itemsErr.classList.add('hidden');
+        itemsErr.textContent = '';
+    }
+    document
+        .getElementById('catalog-title-input')
+        ?.classList.remove('border-rose-400', 'bg-rose-50/20');
+}
+
+function resetCreateCatalogForm() {
+    selectedCatalogItems.clear();
+    const titleInput = document.getElementById('catalog-title-input');
+    const msgInput = document.getElementById('catalog-message-input');
+    const searchInput = document.getElementById('catalog-prod-search');
+    const priceMin = document.getElementById('catalog-price-min');
+    const priceMax = document.getElementById('catalog-price-max');
+    if (titleInput) titleInput.value = '';
+    if (msgInput) msgInput.value = '';
+    if (searchInput) searchInput.value = '';
+    if (priceMin) priceMin.value = '';
+    if (priceMax) priceMax.value = '';
+    document.getElementById('catalog-created-banner')?.classList.add('hidden');
+    clearCatalogFormErrors();
+    catalogPickerLimit = 40;
+    renderCatalogProductPicker(true);
+    renderSelectedCatalogItems();
+}
+
+function openCatalogDraftPreview() {
+    clearCatalogFormErrors();
+    const title =
+        (document.getElementById('catalog-title-input')?.value || '').trim() ||
+        'Bản xem trước catalog';
+    const message = (document.getElementById('catalog-message-input')?.value || '').trim();
+    const contactName =
+        (document.getElementById('catalog-contact-name')?.value || '').trim() || 'Tư vấn viên';
+    const contactPhone = (document.getElementById('catalog-contact-phone')?.value || '').trim();
+    const expiryHours = Number(document.getElementById('catalog-expiry-select')?.value ?? 72);
+    if (selectedCatalogItems.size === 0) {
+        const itemsErr = document.getElementById('catalog-items-error');
+        if (itemsErr) {
+            itemsErr.textContent = 'Vui lòng chọn ít nhất 1 sản phẩm để xem trước!';
+            itemsErr.classList.remove('hidden');
+        }
+        showToast('Vui lòng chọn ít nhất 1 sản phẩm để xem trước!', 'warning');
+        return;
+    }
+    const modal = document.getElementById('catalog-draft-preview-modal');
+    const body = document.getElementById('catalog-draft-preview-body');
+    if (!modal || !body) return;
+    const storeName = KVStore.data?.settings?.storeName || 'NKiot';
+    const curBranch = getCurrentBranch();
+    const items = Array.from(selectedCatalogItems.values());
+
+    const cardsHtml = items
+        .map((it) => {
+            const thumbHtml = it.thumb
+                ? `<img src="${escapeHTML(safeMediaUrl(it.thumb))}" alt="${escapeHTML(it.name)}" class="w-full h-full object-contain p-3" />`
+                : `<div class="w-full h-full flex flex-col items-center justify-center p-6 text-center select-none bg-slate-100 text-slate-400 text-xs font-semibold">Chưa có ảnh</div>`;
+            return `
+            <div class="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col h-full">
+                <div class="relative w-full aspect-square bg-slate-50 flex items-center justify-center overflow-hidden border-b border-slate-100">
+                    ${thumbHtml}
+                    ${it.imei ? `<span class="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10.5px] font-mono font-bold bg-slate-900 text-white">Máy ***${escapeHTML(it.imei.slice(-6))}</span>` : ''}
+                </div>
+                <div class="p-3.5 flex-1 flex flex-col justify-between gap-2">
+                    <div>
+                        <h4 class="font-bold text-slate-900 text-[14px] leading-snug line-clamp-2">${escapeHTML(it.name)}</h4>
+                        ${it.conditionDetail ? `<p class="text-[11.5px] text-slate-600 mt-1 line-clamp-1">${escapeHTML(it.conditionDetail)}</p>` : ''}
+                    </div>
+                    <div class="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span class="text-[16px] font-extrabold text-rose-600">${formatVND(it.displayPrice)}</span>
+                        <span class="px-2.5 py-1 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold">Xem mẫu</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        })
+        .join('');
+
+    body.innerHTML = `
+        <div class="bg-white rounded-2xl p-4 border border-gray-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-black uppercase px-2 py-0.5 rounded-md bg-blue-50 text-blue-700">${escapeHTML(storeName)}</span>
+                    <span class="text-xs text-slate-500 font-medium">${escapeHTML(curBranch)}</span>
+                </div>
+                <h2 class="text-lg font-bold text-slate-900 mt-1">${escapeHTML(title)}</h2>
+            </div>
+            <div class="text-xs text-slate-600 font-medium">
+                ${contactPhone ? `<span class="font-bold text-blue-700">📞 ${escapeHTML(contactPhone)}</span> · ` : ''}
+                <span>Thời hạn: ${expiryHours === 0 ? 'Không giới hạn' : `${expiryHours} giờ`}</span>
+            </div>
+        </div>
+        ${message ? `<div class="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/60 text-xs text-slate-700 leading-relaxed font-medium"><strong>Lời nhắn từ ${escapeHTML(contactName)}:</strong> ${escapeHTML(message)}</div>` : ''}
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">${cardsHtml}</div>
+    `;
+    modal.classList.remove('hidden');
+}
+
+function closeCatalogDraftPreview() {
+    document.getElementById('catalog-draft-preview-modal')?.classList.add('hidden');
 }
 
 function buildPublicCatalogAbsoluteUrl(relUrl) {
@@ -12279,16 +12481,30 @@ function buildPublicCatalogAbsoluteUrl(relUrl) {
 }
 
 async function submitCreatePublicCatalog() {
+    clearCatalogFormErrors();
     const title = (document.getElementById('catalog-title-input')?.value || '').trim();
     const message = (document.getElementById('catalog-message-input')?.value || '').trim();
     const contactName = (document.getElementById('catalog-contact-name')?.value || '').trim();
     const contactPhone = (document.getElementById('catalog-contact-phone')?.value || '').trim();
     const expiresInHours = Number(document.getElementById('catalog-expiry-select')?.value ?? 72);
     if (!title) {
+        const titleErr = document.getElementById('catalog-title-error');
+        const titleInput = document.getElementById('catalog-title-input');
+        if (titleErr) {
+            titleErr.textContent = 'Vui lòng nhập tiêu đề cho catalog!';
+            titleErr.classList.remove('hidden');
+        }
+        titleInput?.classList.add('border-rose-400', 'bg-rose-50/20');
+        titleInput?.focus();
         showToast('Vui lòng nhập tiêu đề catalog!', 'warning');
         return;
     }
     if (selectedCatalogItems.size === 0) {
+        const itemsErr = document.getElementById('catalog-items-error');
+        if (itemsErr) {
+            itemsErr.textContent = 'Vui lòng chọn ít nhất 1 sản phẩm đưa vào catalog!';
+            itemsErr.classList.remove('hidden');
+        }
         showToast('Vui lòng chọn ít nhất 1 sản phẩm đưa vào catalog!', 'warning');
         return;
     }
@@ -12331,12 +12547,14 @@ async function copyCreatedCatalogUrl() {
 
 async function copyTextToClipboard(text, successMsg = 'Đã sao chép!') {
     try {
-        if (navigator?.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-        }
+        if (!navigator?.clipboard?.writeText) throw new Error('Clipboard unavailable');
+        await navigator.clipboard.writeText(text);
         showToast(successMsg, 'success');
     } catch {
-        showToast(successMsg, 'info');
+        showToast(
+            'Không thể sao chép tự động. Vui lòng chọn và sao chép link thủ công.',
+            'warning'
+        );
     }
 }
 
@@ -12348,15 +12566,19 @@ function formatCatalogExpiryDisplay(iso) {
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-async function loadPublicCatalogsList() {
+async function loadPublicCatalogsList(page = catalogPage) {
     const tbody = document.getElementById('public-catalogs-tbody');
     if (!tbody) return;
     try {
         const branch = getCurrentBranch();
         const res = await KVStore.request(
-            `/api/catalogs?branch=${encodeURIComponent(branch || 'ALL')}`
+            `/api/catalogs?branch=${encodeURIComponent(branch || 'ALL')}&page=${encodeURIComponent(page)}`
         );
+        catalogPage = res.page;
         loadedPublicCatalogs = Array.isArray(res.catalogs) ? res.catalogs : [];
+        document.getElementById('catalog-page-label').textContent = `Trang ${catalogPage}`;
+        document.getElementById('catalog-page-prev').disabled = catalogPage <= 1;
+        document.getElementById('catalog-page-next').disabled = !res.hasMore;
         renderPublicCatalogsTable();
     } catch (error) {
         tbody.innerHTML = renderHTML`<tr><td colspan="5" class="py-6 text-center text-rose-600">${error.message}</td></tr>`;
@@ -12408,12 +12630,20 @@ async function copyPublicCatalogLink(catalogId) {
 }
 
 async function revokePublicCatalogItem(catalogId) {
+    const cat = loadedPublicCatalogs.find((c) => c.id === catalogId);
+    const title = cat?.title ? `catalog "${cat.title}"` : 'link catalog này';
+    const confirmed = await askAction({
+        title: 'Thu hồi link catalog',
+        message: `Khách hàng sẽ không thể truy cập ${title} sau khi thu hồi. Bạn có chắc chắn muốn thu hồi link?`,
+        confirmText: 'Thu hồi link'
+    });
+    if (!confirmed) return;
     try {
         await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/revoke`, {
             method: 'POST',
             body: '{}'
         });
-        showToast('Đã thu hồi link catalog!', 'success');
+        showToast('Đã thu hồi link catalog thành công!', 'success');
         await loadPublicCatalogsList();
     } catch (error) {
         showToast(error.message || 'Không thể thu hồi catalog.', 'error');
@@ -12421,12 +12651,21 @@ async function revokePublicCatalogItem(catalogId) {
 }
 
 async function extendPublicCatalogItem(catalogId) {
+    const cat = loadedPublicCatalogs.find((c) => c.id === catalogId);
+    const title = cat?.title ? `catalog "${cat.title}"` : 'link catalog';
+    const confirmed = await askAction({
+        title: 'Gia hạn catalog',
+        message: `Gia hạn thêm 3 ngày hiệu lực cho ${title}?`,
+        confirmText: 'Gia hạn +3 ngày'
+    });
+    if (!confirmed) return;
     try {
-        await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/extend`, {
+        const res = await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/extend`, {
             method: 'POST',
             body: JSON.stringify({ expiresInHours: 72 })
         });
-        showToast('Đã gia hạn catalog thêm 3 ngày!', 'success');
+        const expStr = formatCatalogExpiryDisplay(res.catalog?.expiresAt);
+        showToast(`Đã gia hạn catalog (Hạn mới: ${expStr})!`, 'success');
         await loadPublicCatalogsList();
     } catch (error) {
         showToast(error.message || 'Không thể gia hạn catalog.', 'error');
@@ -12443,6 +12682,199 @@ async function duplicatePublicCatalogItem(catalogId) {
         await loadPublicCatalogsList();
     } catch (error) {
         showToast(error.message || 'Không thể nhân bản catalog.', 'error');
+    }
+}
+
+// ==========================================
+// KẾT NỐI API TOKEN (CRM & WEBSITE NGOÀI)
+// ==========================================
+let loadedApiTokens = [];
+
+function openApiTokensModal() {
+    if (typeof hasPermission === 'function' && !hasPermission('settings')) {
+        showToast('Chỉ Quản trị viên mới có quyền quản lý API Token kết nối!', 'error');
+        return;
+    }
+    const modal = document.getElementById('api-tokens-modal');
+    if (!modal) return;
+
+    const branchSelect = document.getElementById('new-token-branch');
+    if (branchSelect) {
+        const branches = KVStore.data?.branches || [];
+        branchSelect.innerHTML = renderHTML`
+            <option value="">Chọn chi nhánh</option>
+            ${trustedHTML(branches.map((b) => renderHTML`<option value="${b.name}">${b.name}</option>`).join(''))}
+        `;
+    }
+
+    toggleCreateTokenForm(false);
+    document.getElementById('new-token-banner')?.classList.add('hidden');
+    modal.classList.remove('hidden');
+    loadApiTokensList();
+}
+
+function closeApiTokensModal() {
+    document.getElementById('api-tokens-modal')?.classList.add('hidden');
+}
+
+function toggleCreateTokenForm(show = true) {
+    const card = document.getElementById('create-token-form-card');
+    if (!card) return;
+    card.classList.toggle('hidden', !show);
+    if (show) {
+        document.getElementById('new-token-name')?.focus();
+    }
+}
+
+async function loadApiTokensList() {
+    const tbody = document.getElementById('api-tokens-tbody');
+    if (!tbody) return;
+    try {
+        const res = await KVStore.request('/api/tokens');
+        loadedApiTokens = Array.isArray(res.tokens) ? res.tokens : [];
+        renderApiTokensTable();
+    } catch (error) {
+        tbody.innerHTML = renderHTML`<tr><td colspan="7" class="py-6 text-center text-rose-600">${error.message}</td></tr>`;
+    }
+}
+
+function renderApiTokensTable() {
+    const tbody = document.getElementById('api-tokens-tbody');
+    if (!tbody) return;
+    if (!loadedApiTokens.length) {
+        tbody.innerHTML = renderHTML`<tr><td colspan="7" class="py-8 text-center text-gray-400">Chưa có API Token nào được tạo</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = loadedApiTokens
+        .map((tok) => {
+            const badge =
+                tok.status === 'active'
+                    ? renderHTML`<span class="kv-badge kv-badge-success">Đang hoạt động</span>`
+                    : tok.status === 'expired'
+                      ? renderHTML`<span class="kv-badge kv-badge-warning">Đã hết hạn</span>`
+                      : renderHTML`<span class="kv-badge kv-badge-danger">Đã thu hồi</span>`;
+            const expiryStr = formatCatalogExpiryDisplay(tok.expiresAt);
+            const lastUsedStr = tok.lastUsedAt
+                ? formatCatalogExpiryDisplay(tok.lastUsedAt)
+                : 'Chưa dùng';
+            const branchStr = tok.branch === 'ALL' || !tok.branch ? 'Toàn bộ' : tok.branch;
+
+            return renderHTML`
+                <tr class="border-b border-gray-100 hover:bg-gray-50/70" data-token-id="${tok.id}">
+                    <td class="py-2.5 px-3">
+                        <div class="font-bold text-gray-900">${tok.name}</div>
+                        <div class="text-[11px] text-gray-400">Tạo bởi: ${tok.createdByName || 'Admin'}</div>
+                    </td>
+                    <td class="py-2.5 px-3 font-mono font-semibold text-slate-700">${tok.maskedToken}</td>
+                    <td class="py-2.5 px-3 text-slate-600">${branchStr}</td>
+                    <td class="py-2.5 px-3 text-slate-600">${expiryStr}</td>
+                    <td class="py-2.5 px-3 text-slate-500 text-[11.5px]">${lastUsedStr}</td>
+                    <td class="py-2.5 px-3 text-center">${trustedHTML(badge)}</td>
+                    <td class="py-2.5 px-3 text-right space-x-1 whitespace-nowrap">
+                        <button type="button" onclick="copySampleCurl('${tok.maskedToken}')" class="px-2 py-1 rounded-lg bg-blue-50 text-[#0066cc] hover:bg-[#0066cc] hover:text-white font-semibold text-[11px] transition" title="Sao chép câu lệnh curl mẫu">Copy cURL</button>
+                        ${trustedHTML(
+                            tok.status === 'active'
+                                ? renderHTML`<button type="button" onclick="revokeApiToken('${tok.id}')" class="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-600 hover:text-white font-medium text-[11px] transition">Thu hồi</button>`
+                                : ''
+                        )}
+                        <button type="button" onclick="deleteApiToken('${tok.id}')" class="px-2 py-1 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white font-medium text-[11px] transition">Xóa</button>
+                    </td>
+                </tr>
+            `;
+        })
+        .join('');
+}
+async function submitCreateApiToken() {
+    const name = (document.getElementById('new-token-name')?.value || '').trim();
+    const branch = document.getElementById('new-token-branch')?.value || '';
+    const expiresInDays = Number(document.getElementById('new-token-expiry')?.value || 0);
+
+    if (!name) {
+        showToast('Vui lòng nhập tên gợi nhớ cho Token!', 'warning');
+        document.getElementById('new-token-name')?.focus();
+        return;
+    }
+
+    if (!branch) {
+        showToast('Vui lòng chọn chi nhánh cho token.', 'warning');
+        document.getElementById('new-token-branch')?.focus();
+        return;
+    }
+    const btn = document.getElementById('btn-submit-create-token');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await KVStore.request('/api/tokens', {
+            method: 'POST',
+            body: JSON.stringify({ name, branch, expiresInDays })
+        });
+
+        const created = res.token;
+        const banner = document.getElementById('new-token-banner');
+        const rawInput = document.getElementById('new-token-raw-value');
+        if (rawInput) rawInput.value = created.token;
+        if (banner) banner.classList.remove('hidden');
+
+        toggleCreateTokenForm(false);
+        document.getElementById('new-token-name').value = '';
+        showToast('Đã tạo API Token thành công!', 'success');
+        await loadApiTokensList();
+    } catch (error) {
+        showToast(error.message || 'Không thể tạo Token.', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function copyRawTokenValue() {
+    const val = document.getElementById('new-token-raw-value')?.value || '';
+    if (!val) return;
+    await copyTextToClipboard(val, 'Đã sao chép API Token vào bộ nhớ tạm!');
+}
+
+async function copySampleCurl(maskedToken) {
+    const origin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const curl = `curl -H "Authorization: Bearer <NHAP_TOKEN_CUA_BAN>" "${origin}/api/v1/open/products?in_stock=true"`;
+    await copyTextToClipboard(curl, 'Đã sao chép câu lệnh curl mẫu!');
+}
+
+async function revokeApiToken(tokenId) {
+    const confirmed = await askAction({
+        title: 'Thu hồi API Token',
+        message:
+            'Các ứng dụng CRM hoặc website đang dùng Token này sẽ không thể lấy dữ liệu sản phẩm nữa. Bạn có chắc chắn muốn thu hồi?',
+        confirmText: 'Thu hồi Token'
+    });
+    if (!confirmed) return;
+
+    try {
+        await KVStore.request(`/api/tokens/${encodeURIComponent(tokenId)}/revoke`, {
+            method: 'POST',
+            body: '{}'
+        });
+        showToast('Đã thu hồi API Token thành công!', 'success');
+        await loadApiTokensList();
+    } catch (error) {
+        showToast(error.message || 'Không thể thu hồi Token.', 'error');
+    }
+}
+
+async function deleteApiToken(tokenId) {
+    const confirmed = await askAction({
+        title: 'Xóa API Token',
+        message: 'Mã Token này sẽ bị xóa hoàn toàn khỏi cơ sở dữ liệu. Bạn có chắc chắn muốn xóa?',
+        confirmText: 'Xóa Token'
+    });
+    if (!confirmed) return;
+
+    try {
+        await KVStore.request(`/api/tokens/${encodeURIComponent(tokenId)}`, {
+            method: 'DELETE'
+        });
+        showToast('Đã xóa API Token!', 'success');
+        await loadApiTokensList();
+    } catch (error) {
+        showToast(error.message || 'Không thể xóa Token.', 'error');
     }
 }
 

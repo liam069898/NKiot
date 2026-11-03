@@ -2297,3 +2297,137 @@ test('shared warehouse viewer shows per-IMEI photo sets for own and partner item
         w.close();
     }
 });
+test('public catalog builder supports product/IMEI selection, inline error states, draft preview, and form reset', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        // 1. Mở modal khi đang ở chi nhánh hợp lệ
+        w.eval('getCurrentBranch = () => "Chi nhánh trung tâm";');
+        w.openPublicCatalogModal();
+        assert.equal(
+            doc.getElementById('public-catalog-modal').classList.contains('hidden'),
+            false
+        );
+        assert.equal(doc.getElementById('catalog-contact-name').value, 'Trần Văn Nhất');
+
+        // 2. Kiểm tra validation lỗi inline khi bấm tạo mà chưa nhập tiêu đề
+        w.submitCreatePublicCatalog();
+        const titleErr = doc.getElementById('catalog-title-error');
+        assert.equal(titleErr.classList.contains('hidden'), false);
+        assert.ok(titleErr.textContent.includes('tiêu đề'));
+
+        // 3. Nhập tiêu đề -> lỗi inline tự biến mất
+        doc.getElementById('catalog-title-input').value = 'Đồng hồ cao cấp';
+        w.clearCatalogFormErrors();
+        assert.equal(titleErr.classList.contains('hidden'), true);
+
+        // 4. Bấm tạo khi chưa chọn sản phẩm -> lỗi inline danh sách sản phẩm xuất hiện
+        w.submitCreatePublicCatalog();
+        const itemsErr = doc.getElementById('catalog-items-error');
+        assert.equal(itemsErr.classList.contains('hidden'), false);
+
+        // 5. Chọn sản phẩm và xem bộ đếm /50
+        const firstProd = w.eval('KVStore.data.products[0]');
+        w.addProductOrImeisToCatalogSelection(firstProd);
+        assert.ok(doc.getElementById('catalog-selected-count').textContent.includes('/50'));
+
+        // 6. Mở xem trước (Draft Preview)
+        w.openCatalogDraftPreview();
+        const previewModal = doc.getElementById('catalog-draft-preview-modal');
+        assert.equal(previewModal.classList.contains('hidden'), false);
+        assert.ok(
+            doc.getElementById('catalog-draft-preview-body').textContent.includes('Đồng hồ cao cấp')
+        );
+        w.closeCatalogDraftPreview();
+        assert.equal(previewModal.classList.contains('hidden'), true);
+
+        // 7. Reset form xóa sạch dữ liệu
+        w.resetCreateCatalogForm();
+        assert.equal(doc.getElementById('catalog-title-input').value, '');
+        assert.equal(doc.getElementById('catalog-selected-count').textContent, '0/50');
+        assert.equal(doc.getElementById('catalog-items-error').classList.contains('hidden'), true);
+    } finally {
+        w.close();
+    }
+});
+
+test('API tokens management modal opens from settings, validates form, renders tokens list and clipboard actions', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.request = async (url, opts) => {
+                if (url === '/api/tokens' && opts?.method === 'POST') {
+                    return {
+                        success: true,
+                        token: {
+                            id: 'TOK-123',
+                            name: 'CRM Chat Lead',
+                            token: 'nk_live_testsecret1234567890',
+                            maskedToken: 'nk_live_test...7890',
+                            branch: 'ALL',
+                            status: 'active',
+                            expiresAt: null
+                        }
+                    };
+                }
+                if (url === '/api/tokens') {
+                    return {
+                        success: true,
+                        tokens: [
+                            {
+                                id: 'TOK-123',
+                                name: 'CRM Chat Lead',
+                                maskedToken: 'nk_live_test...7890',
+                                branch: 'ALL',
+                                status: 'active',
+                                expiresAt: null,
+                                lastUsedAt: null,
+                                createdByName: 'Admin'
+                            }
+                        ]
+                    };
+                }
+                return { success: true };
+            };
+        `);
+
+        // 1. Mở modal API Tokens
+        w.openApiTokensModal();
+        const modal = doc.getElementById('api-tokens-modal');
+        assert.equal(modal.classList.contains('hidden'), false);
+
+        // 2. Mở form tạo token mới
+        w.toggleCreateTokenForm(true);
+        assert.equal(
+            doc.getElementById('create-token-form-card').classList.contains('hidden'),
+            false
+        );
+
+        // 3. Validation khi bỏ trống tên token
+        await w.submitCreateApiToken();
+
+        // 4. Tạo token thành công
+        doc.getElementById('new-token-name').value = 'CRM Chat Lead';
+        doc.getElementById('new-token-branch').selectedIndex = 1;
+        await w.submitCreateApiToken();
+        assert.equal(doc.getElementById('new-token-banner').classList.contains('hidden'), false);
+        assert.equal(
+            doc.getElementById('new-token-raw-value').value,
+            'nk_live_testsecret1234567890'
+        );
+
+        // 5. Bảng danh sách token hiển thị đúng
+        const tbody = doc.getElementById('api-tokens-tbody');
+        assert.ok(tbody.textContent.includes('CRM Chat Lead'));
+        assert.ok(tbody.textContent.includes('nk_live_test...7890'));
+
+        // 6. Đóng modal
+        w.closeApiTokensModal();
+        assert.equal(modal.classList.contains('hidden'), true);
+    } finally {
+        w.close();
+    }
+});

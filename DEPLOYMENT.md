@@ -100,9 +100,27 @@ Caddy tự cấp/gia hạn chứng chỉ và chuyển tiếp `Host` mặc địn
 - Portal chạy mỗi tenant với `NKIOT_UPLOADS_DIR=<thư-mục-tenant>/uploads`, kể cả tenant.env cũ. Bản chạy POS độc lập cần đặt biến này riêng cho từng cửa hàng.
 - `/uploads/` yêu cầu phiên đăng nhập và không cache công khai. Symlink không được phục vụ. Upload không phải kho file công khai cho đối tác.
 - **Trước khi khởi động lại tenant cũ:** sao lưu DB và thư mục `public/uploads`, đối soát các URL trong sản phẩm/IMEI rồi copy đúng file thuộc tenant sang thư mục uploads riêng (giữ nguyên tên). Không copy toàn bộ thư mục chung sang mọi tenant. Code không tự di chuyển vì chưa có metadata sở hữu đáng tin cậy.
-- Nút backup và CLI hiện chỉ sao lưu SQLite, **không bao gồm ảnh/video**. Dừng ghi khi chụp bộ backup DB + uploads; lưu cùng nhau, kiểm tra phục hồi cả chứng từ và media. Chưa có gói backup media/manifest tự động.
+- Nút backup và lệnh backup SQLite cũ chỉ sao lưu DB, **không bao gồm ảnh/video**. CLI có thêm chế độ bundle DB + uploads (xem bên dưới); phải dừng mọi tiến trình ghi trước khi chạy.
 - URL media tương đối `/uploads/...` của đối tác không dùng được giữa các tenant đã cách ly. Cần kho media công khai có kiểm soát hoặc proxy Hub được phân quyền ở giai đoạn tiếp theo; không mở lại toàn bộ upload để khắc phục. URL HTTPS công khai hợp lệ vẫn được hỗ trợ.
 - URL media mới chỉ nhận HTTP/HTTPS không chứa credentials hoặc `/uploads/<tên-file>`. Dữ liệu cũ không tự sửa; khi sửa bản ghi chứa URL không hợp lệ cần thay URL trước khi lưu.
+
+### Bộ sao lưu DB + uploads (CLI)
+
+Dừng POS, worker và **mọi tiến trình khác có thể ghi** vào DB hoặc thư mục uploads trước khi chạy. Cờ `--writers-stopped` là xác nhận của người vận hành, **không tự kiểm tra hay khóa** các tiến trình. Chọn thư mục đích mới, có thư mục cha tồn tại, nằm ngoài uploads:
+
+```bash
+NKIOT_DB_PATH=/duong-dan/tenant/nkiot.db NKIOT_UPLOADS_DIR=/duong-dan/tenant/uploads \
+  npm run backup -- --bundle /duong-dan/backup-moi --writers-stopped
+npm run backup -- --verify-bundle /duong-dan/backup-moi
+```
+
+Bundle chứa `database.db`, thư mục `uploads/` và `manifest.json` với SHA-256. Chế độ kiểm tra phát hiện file thiếu/thừa/bị sửa và kiểm tra SQLite; nó không xác nhận dữ liệu nghiệp vụ hoặc tính nhất quán nếu vẫn có tiến trình ghi khi tạo bundle. Không hỗ trợ symlink trong uploads. Hub DB và Hub media **không nằm trong bundle** và phải được sao lưu riêng.
+
+Để phục hồi: dừng các tiến trình, kiểm tra bundle, sao lưu hiện trạng, rồi sao chép `database.db` và toàn bộ `uploads/` vào vị trí tenant mới; không ghi đè DB đang mở. Đối soát hóa đơn, tồn kho và ảnh trước khi chạy lại; thực hiện lưu ý đồng bộ Hub ở trên.
+
+### Open API cho CRM (server-to-server)
+
+Chỉ quản trị viên tạo token, mỗi token giới hạn một chi nhánh. Lưu token tại backend CRM; chỉ dùng header `Authorization: Bearer <TOKEN>`, không đưa token vào URL, frontend, log hoặc dịch vụ chat. `GET /api/v1/open/products` trả thông tin hàng hóa và đường dẫn media tương đối; backend CRM gọi đường dẫn đó với cùng header để tải ảnh được phép. Không nhúng URL media trực tiếp vào trình duyệt hay gửi token cho bên thứ ba. Không trả số tồn chính xác hoặc IMEI đầy đủ. Dùng HTTPS và cấu hình giới hạn request ở reverse proxy; chưa có rate limit phân tán. Sau thu hồi, không thể xóa ảnh đã được CRM tải về.
 
 ## Hub Media Proxy (ảnh theo từng IMEI cho hàng cũ)
 

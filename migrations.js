@@ -151,6 +151,38 @@ const MIGRATIONS = [
                 CREATE INDEX IF NOT EXISTS public_catalog_items_catalog_order ON public_catalog_items(catalogId, sortOrder);
             `);
         }
+    },
+    {
+        version: 8,
+        name: 'public_catalog_item_imei',
+        up(db) {
+            addColumn(db, 'public_catalog_items', "imei TEXT NOT NULL DEFAULT ''");
+        }
+    },
+    {
+        version: 9,
+        name: 'api_tokens',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS api_tokens (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    tokenHash TEXT NOT NULL UNIQUE,
+                    maskedToken TEXT NOT NULL,
+                    branch TEXT NOT NULL DEFAULT '',
+                    createdBy TEXT NOT NULL,
+                    createdByName TEXT NOT NULL DEFAULT '',
+                    scopes TEXT NOT NULL DEFAULT '["products:read"]',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    expiresAt TEXT,
+                    lastUsedAt TEXT,
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL,
+                    revokedAt TEXT
+                );
+                CREATE INDEX IF NOT EXISTS api_tokens_hash_status ON api_tokens(tokenHash, status, expiresAt);
+            `);
+        }
     }
 ];
 
@@ -182,15 +214,6 @@ function applyMigrations(db, context) {
 // Data invariants checked on every start, independent of schema version.
 function repairData(db) {
     db.prepare("UPDATE products SET status='archived' WHERE status='inactive'").run();
-    if (
-        db
-            .prepare(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='public_catalog_items'"
-            )
-            .get()
-    ) {
-        addColumn(db, 'public_catalog_items', "imei TEXT NOT NULL DEFAULT ''");
-    }
     // Migrate existing credentials without changing the user's password or business data.
     for (const user of db.prepare('SELECT id, password FROM users').all()) {
         if (!user.password?.startsWith('scrypt$'))

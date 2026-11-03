@@ -8,7 +8,8 @@ const path = require('node:path');
 const db = require('../db');
 const { hashPassword } = require('../security');
 const { handler } = require('../server');
-const { computeCatalogMediaId } = require('../catalog-service');
+const { computeCatalogMediaId, renderPublicCatalogHtml } = require('../catalog-service');
+const { JSDOM } = require('jsdom');
 
 let server;
 let baseUrl;
@@ -233,6 +234,17 @@ test('sale creates public catalog link, snapshot stays immutable, and public vie
     const mediaRes = await apiRequest(`/catalog-media/${cat.token}/${validMediaId}`);
     assert.equal(mediaRes.status, 200);
     assert.equal(mediaRes.headers.get('content-type'), 'image/jpeg');
+    assert.match(mediaRes.headers.get('cache-control'), /no-store/);
+    const originalImage = path.join(process.env.NKIOT_UPLOADS_DIR, 'watch-prx.jpg');
+    const heldImage = path.join(process.env.NKIOT_UPLOADS_DIR, 'held.jpg');
+    fs.renameSync(originalImage, heldImage);
+    try {
+        fs.symlinkSync(heldImage, originalImage);
+        assert.equal((await apiRequest(`/catalog-media/${cat.token}/${validMediaId}`)).status, 404);
+    } finally {
+        fs.rmSync(originalImage, { force: true });
+        fs.renameSync(heldImage, originalImage);
+    }
 
     // Ảnh nội bộ không nằm trong catalog bị chặn hoàn toàn
     const secretMediaId = computeCatalogMediaId(cat.token, '/uploads/secret-internal.jpg');
@@ -301,6 +313,21 @@ test('public catalog expiration, revocation, extension, duplication, and branch 
     assert.equal(extended.body.catalog.status, 'active');
     assert.equal((await apiRequest(`/catalog/${cat.token}`)).status, 200);
 
+    // Gia hạn tiếp khi catalog đang active thì cộng thêm thời gian vào hạn cũ
+    const exp1Ms = Date.parse(extended.body.catalog.expiresAt);
+    const extendedFurther = await apiRequest(`/api/catalogs/${cat.id}/extend`, {
+        method: 'POST',
+        cookie: sale.cookie,
+        csrf: sale.csrf,
+        body: { expiresInHours: 72 }
+    });
+    assert.equal(extendedFurther.status, 200);
+    const exp2Ms = Date.parse(extendedFurther.body.catalog.expiresAt);
+    assert.ok(
+        exp2Ms >= exp1Ms + 71 * 3600 * 1000,
+        'Gia hạn active link phải cộng thêm thời gian vào hạn cũ'
+    );
+
     // Nhân bản catalog sinh ra token mới độc lập
     const duplicated = await apiRequest(`/api/catalogs/${cat.id}/duplicate`, {
         method: 'POST',
@@ -357,6 +384,11 @@ test('multi-IMEI product allows selecting individual IMEIs onto catalog with IME
         pubHtml.includes('⬇ Tải tất cả ảnh (2)'),
         'Ô sản phẩm hiển thị nút tải tất cả ảnh kèm số lượng ảnh của IMEI đó'
     );
+    const page = new JSDOM(pubHtml);
+    const links = [...page.window.document.querySelectorAll('details a')];
+    assert.equal(links.length, 2);
+    assert.ok(links.every((link) => link.getAttribute('href').endsWith('?download=1')));
+    page.window.close();
 
     const imei1MediaId = computeCatalogMediaId(singleCat.token, '/uploads/omega-imei1-front.jpg');
     const imei2MediaId = computeCatalogMediaId(singleCat.token, '/uploads/omega-imei2-only.jpg');
@@ -395,4 +427,127 @@ test('multi-IMEI product allows selecting individual IMEIs onto catalog with IME
     assert.equal(bothCat.items[0].imei, 'OMEGA-SN-111111');
     assert.equal(bothCat.items[1].imei, 'OMEGA-SN-222222');
     assert.deepEqual(bothCat.items[1].images, ['/uploads/omega-imei2-only.jpg']);
+});
+
+test('catalog rejects duplicate and stale IMEIs and products outside the requested branch', async () => {
+    const admin = await loginAs('admin', 'Admin-pass-123');
+    const request = (body) => apiRequest('/api/catalogs', { method: 'POST', ...admin, body });
+    const sameImei = { code: 'DH_OMEGA', imei: 'OMEGA-SN-111111' };
+    assert.equal(
+        (await request({ title: 'Thiếu IMEI', branch: 'Chi nhánh A', items: ['DH_OMEGA'] })).status,
+        400
+    );
+    assert.equal(
+        (await request({ title: 'Trùng', branch: 'Chi nhánh A', items: [sameImei, sameImei] }))
+            .status,
+        400
+    );
+    assert.equal(
+        (
+            await request({
+                title: 'Sai chi nhánh',
+                branch: 'Chi nhánh A',
+                items: [{ productId: 'P_BRANCH_B' }]
+            })
+        ).status,
+        404
+    );
+    assert.equal(
+        (await request({ title: 'Tất cả', branch: 'Toàn bộ chi nhánh', items: ['DH001'] })).status,
+        400
+    );
+    const data = db.getAllData();
+    const product = data.products.find((p) => p.code === 'DH_OMEGA');
+    product.imeis = product.imeis.filter((im) => im !== 'OMEGA-SN-222222');
+    db.saveAllData(data);
+    assert.equal(
+        (
+            await request({
+                title: 'Đã bán',
+                branch: 'Chi nhánh A',
+                items: [{ code: 'DH_OMEGA', imei: 'OMEGA-SN-222222' }]
+            })
+        ).status,
+        404
+    );
+});
+
+test('catalog image controls treat product name and image URLs as data', () => {
+    const payload = "x');window.reviewXss=1;//";
+    const html = renderPublicCatalogHtml({
+        state: 'active',
+        catalog: {
+            title: 'Test',
+            items: [
+                {
+                    id: '1',
+                    name: payload,
+                    images: ['https://example.com/a.jpg', `https://example.com/${payload}`],
+                    displayPrice: 1
+                }
+            ]
+        }
+    });
+    const dom = new JSDOM(html, {
+        runScripts: 'dangerously',
+        url: 'https://example.com/catalog/token'
+    });
+    try {
+        dom.window.document.querySelector('.catalog-main-img').click();
+        dom.window.document.querySelectorAll('.catalog-thumb-btn')[1].click();
+        assert.equal(dom.window.reviewXss, undefined);
+        assert.equal(
+            dom.window.document.getElementById('catalog-lightbox-title').textContent,
+            payload
+        );
+    } finally {
+        dom.window.close();
+    }
+});
+
+test('catalog list paginates and enforces branch visibility', async () => {
+    const database = db.getDb();
+    const insert = database.prepare(
+        "INSERT INTO public_catalogs (id,token,branch,createdBy,title,status,createdAt,updatedAt) VALUES (?,?,?,?,?,'active',?,?)"
+    );
+    for (let i = 0; i < 30; i++)
+        insert.run(
+            `page-${i}`,
+            `page-token-${String(i).padStart(16, '0')}`,
+            'Chi nhánh A',
+            'U_ADMIN',
+            `Page ${i}`,
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:00.000Z'
+        );
+    insert.run(
+        'page-hidden',
+        'page-token-hidden0000000',
+        'Chi nhánh B',
+        'U_ADMIN',
+        'Hidden',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+    );
+    const sale = await loginAs('sale_a', 'SaleA-pass-123');
+    const first = await apiRequest('/api/catalogs?page=1', sale);
+    const second = await apiRequest('/api/catalogs?page=2', sale);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.catalogs.length, 25);
+    assert.equal(first.body.hasMore, true);
+    assert.equal(second.body.hasMore, false);
+    assert.ok(
+        ![...first.body.catalogs, ...second.body.catalogs].some((c) => c.id === 'page-hidden')
+    );
+    assert.ok(first.body.catalogs.every((c) => !('items' in c)));
+    assert.equal(
+        new Set([...first.body.catalogs, ...second.body.catalogs].map((c) => c.id)).size,
+        first.body.catalogs.length + second.body.catalogs.length
+    );
+    assert.equal((await apiRequest('/api/catalogs?page=-1', sale)).status, 400);
+});
+
+test('built CSS contains the catalog image aspect ratio rule', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'tailwind.css'), 'utf8');
+    assert.match(css, /\.aspect-square\s*\{/);
 });

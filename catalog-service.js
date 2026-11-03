@@ -181,7 +181,9 @@ function createCatalog(user, input = {}) {
 
     const snapshot = db.readSnapshot();
     const targetBranch = String(input.branch || user.branch || FALLBACK_BRANCH).trim();
-    if (targetBranch && targetBranch !== 'ALL' && !canAccessBranch(user, targetBranch, snapshot))
+    if (targetBranch === 'ALL' || targetBranch === 'Toàn bộ chi nhánh')
+        fail('Vui lòng chọn một chi nhánh cụ thể để tạo catalog.', 400);
+    if (!canAccessBranch(user, targetBranch, snapshot))
         fail('Bạn không có quyền tạo catalog cho chi nhánh này.', 403);
 
     const allowedBranches = allowedBranchesForUser(user, snapshot);
@@ -221,27 +223,33 @@ function createCatalog(user, input = {}) {
     if (expandedEntries.length > MAX_CATALOG_ITEMS)
         fail(`Mỗi catalog chỉ tối đa ${MAX_CATALOG_ITEMS} sản phẩm/máy.`, 400);
 
+    const selectedImeis = new Set();
     const resolvedItems = expandedEntries.map((itemObj, idx) => {
         const wantId = String(itemObj.productId || itemObj.id || '').trim();
         const wantCode = String(itemObj.code || itemObj.productCode || '').trim();
         const wantImei = String(itemObj.imei || itemObj.serial || '').trim();
         const candidates = products.filter((p) => {
             const branchName = p.branch || FALLBACK_BRANCH;
+            if (branchName !== targetBranch) return false;
             if (user.role !== 'admin' && !allowedBranches.has(branchName)) return false;
             return (wantId && String(p.id) === wantId) || (wantCode && p.code === wantCode);
         });
         if (!candidates.length) fail(`Không tìm thấy sản phẩm hợp lệ ở mục #${idx + 1}.`, 404);
+        if (!wantImei && candidates.some((product) => product.hasImei))
+            fail(`Vui lòng chọn IMEI cho sản phẩm ở mục #${idx + 1}.`, 400);
 
         let matchedCandidate = null;
         let imeiDetail = null;
         if (wantImei) {
+            if (selectedImeis.has(wantImei)) fail('IMEI đã được chọn trong catalog.', 400);
+            selectedImeis.add(wantImei);
             for (const cand of candidates) {
                 const imeiList = Array.isArray(cand.imeis) ? cand.imeis : [];
                 const details =
                     cand.imeiDetails && typeof cand.imeiDetails === 'object'
                         ? cand.imeiDetails
                         : {};
-                if (imeiList.includes(wantImei) || Object.hasOwn(details, wantImei)) {
+                if (imeiList.includes(wantImei)) {
                     matchedCandidate = cand;
                     imeiDetail = details[wantImei] || null;
                     break;
@@ -368,45 +376,55 @@ function createCatalog(user, input = {}) {
     return getCatalogForUser(user, catalogId);
 }
 
-function loadCatalogItemsMap(database, catalogIds) {
-    const map = new Map();
-    if (!catalogIds.length) return map;
-    const placeholders = catalogIds.map(() => '?').join(',');
-    const rows = database
-        .prepare(
-            `SELECT * FROM public_catalog_items WHERE catalogId IN (${placeholders}) ORDER BY sortOrder ASC`
-        )
-        .all(...catalogIds);
-    for (const r of rows) {
-        if (!map.has(r.catalogId)) map.set(r.catalogId, []);
-        map.get(r.catalogId).push(r);
-    }
-    return map;
-}
-
 function listCatalogs(user, searchParams) {
     if (!user) fail('Vui lòng đăng nhập.', 401);
     const snapshot = db.readSnapshot();
     const allowed = allowedBranchesForUser(user, snapshot);
     const database = db.getDb();
-    const rows = database.prepare('SELECT * FROM public_catalogs ORDER BY createdAt DESC').all();
     const nowIso = new Date().toISOString();
     const filterBranch = searchParams?.get ? String(searchParams.get('branch') || '').trim() : '';
     const filterStatus = searchParams?.get ? String(searchParams.get('status') || '').trim() : '';
-
-    const visibleRows = rows.filter((row) => {
-        if (user.role !== 'admin' && !allowed.has(row.branch)) return false;
-        if (filterBranch && filterBranch !== 'ALL' && row.branch !== filterBranch) return false;
-        if (filterStatus && filterStatus !== 'ALL') {
-            if (effectiveStatus(row, nowIso) !== filterStatus) return false;
-        }
-        return true;
+    const page = Number(searchParams?.get('page') || 1);
+    if (!Number.isSafeInteger(page) || page < 1 || page > 100000) fail('Trang không hợp lệ.');
+    const limit = 25;
+    const clauses = [];
+    const args = [];
+    if (user.role !== 'admin') {
+        if (!allowed.size) return { catalogs: [], page, hasMore: false };
+        clauses.push(`branch IN (${Array.from(allowed, () => '?').join(',')})`);
+        args.push(...allowed);
+    }
+    if (filterBranch && filterBranch !== 'ALL') {
+        clauses.push('branch = ?');
+        args.push(filterBranch);
+    }
+    if (filterStatus && filterStatus !== 'ALL') {
+        if (filterStatus === 'revoked')
+            clauses.push("(status = 'revoked' OR revokedAt IS NOT NULL)");
+        else if (filterStatus === 'expired') {
+            clauses.push(
+                "status != 'revoked' AND revokedAt IS NULL AND expiresAt IS NOT NULL AND expiresAt <= ?"
+            );
+            args.push(nowIso);
+        } else if (filterStatus === 'active') {
+            clauses.push(
+                "status = 'active' AND revokedAt IS NULL AND (expiresAt IS NULL OR expiresAt > ?)"
+            );
+            args.push(nowIso);
+        } else fail('Trạng thái không hợp lệ.');
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = database
+        .prepare(
+            `SELECT *, (SELECT COUNT(*) FROM public_catalog_items i WHERE i.catalogId = c.id) AS itemCount FROM public_catalogs c ${where} ORDER BY createdAt DESC, id DESC LIMIT ? OFFSET ?`
+        )
+        .all(...args, limit + 1, (page - 1) * limit);
+    const hasMore = rows.length > limit;
+    const catalogs = rows.slice(0, limit).map((row) => {
+        const { items, ...summary } = formatCatalogRow(row, [], nowIso);
+        return { ...summary, itemCount: row.itemCount };
     });
-    const itemsMap = loadCatalogItemsMap(
-        database,
-        visibleRows.map((r) => r.id)
-    );
-    return visibleRows.map((row) => formatCatalogRow(row, itemsMap.get(row.id) || [], nowIso));
+    return { catalogs, page, hasMore };
 }
 
 function requireCatalogAccess(user, catalogId) {
@@ -443,7 +461,14 @@ function extendCatalog(user, catalogId, input = {}) {
     const { database, row } = requireCatalogAccess(user, catalogId);
     const now = new Date();
     const nowIso = now.toISOString();
-    const expiresAt = resolveExpiresAt(input, now.getTime());
+    let baseTime = now.getTime();
+    if (row.status === 'active' && row.expiresAt) {
+        const currentExpMs = Date.parse(row.expiresAt);
+        if (Number.isFinite(currentExpMs) && currentExpMs > baseTime) {
+            baseTime = currentExpMs;
+        }
+    }
+    const expiresAt = resolveExpiresAt(input, baseTime);
     database
         .prepare(
             "UPDATE public_catalogs SET status='active', expiresAt=?, revokedAt=NULL, updatedAt=? WHERE id=?"
@@ -690,7 +715,7 @@ function renderCatalogCardHtml(item, cleanPhone) {
             : '';
 
     const imgHtml = primaryImg
-        ? `<img src="${escapeHtml(primaryImg)}" alt="${escapeHtml(item.name)}" loading="lazy" class="catalog-main-img w-full h-full object-contain p-3 transition-transform duration-300 group-hover:scale-105 cursor-zoom-in" onclick="openCatalogLightbox(this.src, '${escapeHtml(item.name)}')">`
+        ? `<button type="button" class="w-full h-full flex items-center justify-center p-0 bg-transparent border-0 cursor-zoom-in" onclick="openCatalogLightbox(this.querySelector('img').src, this.querySelector('img').alt)" aria-label="Xem ảnh lớn: ${escapeHtml(item.name)}"><img src="${escapeHtml(primaryImg)}" alt="${escapeHtml(item.name)}" loading="lazy" class="catalog-main-img w-full h-full object-contain p-3 transition-transform duration-300 group-hover:scale-105"></button>`
         : `<div class="w-full h-full flex flex-col items-center justify-center p-6 text-center select-none bg-gradient-to-b from-slate-50 to-slate-100/80">
             <div class="w-14 h-14 rounded-2xl bg-white border border-slate-200/90 shadow-2xs flex items-center justify-center text-slate-300 mb-2">
                 <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
@@ -704,7 +729,7 @@ function renderCatalogCardHtml(item, cleanPhone) {
             ? `<div class="flex gap-1.5 px-3 py-2 bg-slate-50/70 border-b border-slate-100 overflow-x-auto no-scrollbar">${item.images
                   .map(
                       (u, idx) =>
-                          `<button type="button" onclick="selectCardThumb(this, '${escapeHtml(u)}')" data-src="${escapeHtml(u)}" class="catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 ${idx === 0 ? 'border-blue-600 ring-2 ring-blue-500/20' : 'border-slate-200 opacity-70 hover:opacity-100'} shrink-0 transition cursor-pointer bg-white"><img src="${escapeHtml(u)}" alt="" loading="lazy" class="w-full h-full object-cover"></button>`
+                          `<button type="button" onclick="selectCardThumb(this, this.dataset.src)" data-src="${escapeHtml(u)}" class="catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 ${idx === 0 ? 'border-blue-600 ring-2 ring-blue-500/20' : 'border-slate-200 opacity-70 hover:opacity-100'} shrink-0 transition cursor-pointer bg-white"><img src="${escapeHtml(u)}" alt="" loading="lazy" class="w-full h-full object-cover"></button>`
                   )
                   .join('')}</div>`
             : '';
@@ -713,6 +738,18 @@ function renderCatalogCardHtml(item, cleanPhone) {
         imgCount > 0
             ? `<button type="button" data-download-all-images data-images="${escapeHtml(JSON.stringify(item.images))}" data-item-name="${escapeHtml(item.name)}" onclick="downloadCatalogItemImages(this)" class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition cursor-pointer flex items-center gap-1" title="Tải tất cả ${imgCount} ảnh của sản phẩm này">⬇ Tải tất cả ảnh (${imgCount})</button>`
             : '';
+
+    const downloadLinks = imgCount
+        ? `<details class="px-3 pb-2 text-xs text-slate-600"><summary class="cursor-pointer font-semibold">Tải từng ảnh</summary><div class="flex flex-wrap gap-2 pt-2">${item.images
+              .map((u, idx) => {
+                  const local = u.startsWith('/catalog-media/');
+                  const href = local ? `${u}?download=1` : u;
+                  return `<a href="${escapeHtml(href)}" ${local ? 'download' : 'target="_blank" rel="noopener noreferrer"'} class="text-blue-700 underline">Ảnh ${idx + 1}</a>`;
+              })
+              .join(
+                  ''
+              )}</div><p>Ảnh từ nguồn bên ngoài sẽ mở ở tab mới; cách lưu tùy trình duyệt.</p></details>`
+        : '';
 
     const metaParts = [condText, item.conditionDetail].filter(Boolean);
     const metaHtml = metaParts.length
@@ -723,21 +760,22 @@ function renderCatalogCardHtml(item, cleanPhone) {
         ? `<a href="tel:${escapeHtml(cleanPhone)}" class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition shadow-xs">Liên hệ</a>`
         : '';
 
-    return `<article class="catalog-card group bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-xl hover:border-blue-400/60 transition-all duration-300 overflow-hidden flex flex-col h-full" data-item-id="${escapeHtml(item.id)}"><div class="relative w-full aspect-square bg-gradient-to-b from-slate-50/60 to-white flex items-center justify-center overflow-hidden border-b border-slate-100 flex-shrink-0">${imgHtml}<div class="absolute top-2.5 left-2.5 flex flex-wrap gap-1">${availBadge}${unitBadge}</div>${countBadge ? `<div class="absolute bottom-2.5 right-2.5">${countBadge}</div>` : ''}</div>${thumbRow}<div class="p-3.5 sm:p-4 flex-1 flex flex-col justify-between gap-3"><div>${item.category ? `<p class="text-[10.5px] font-bold text-blue-600 uppercase tracking-wider mb-1">${escapeHtml(item.category)}</p>` : ''}<h2 class="font-bold text-slate-900 text-[14.5px] sm:text-[15px] leading-snug line-clamp-2 min-h-[42px]">${escapeHtml(item.name)}</h2><div class="mt-2 space-y-1">${metaHtml}${item.description ? `<p class="text-xs text-slate-500 line-clamp-2 leading-relaxed mt-1">${escapeHtml(item.description)}</p>` : ''}</div></div><div class="pt-3 border-t border-slate-100/90 flex flex-wrap items-center justify-between gap-2 mt-auto"><div class="flex flex-col"><span class="text-[10.5px] text-slate-400 font-medium">Giá tư vấn</span><span class="text-[17px] sm:text-[18.5px] font-extrabold text-rose-600 tabular-nums">${escapeHtml(formatCurrencyVnd(item.displayPrice))}</span></div><div class="flex items-center gap-1.5">${downloadAllBtn}${ctaBtn}</div></div></div></article>`;
+    return `<article class="catalog-card group bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-xl hover:border-blue-400/60 transition-all duration-300 overflow-hidden flex flex-col h-full" data-item-id="${escapeHtml(item.id)}"><div class="relative w-full aspect-square bg-gradient-to-b from-slate-50/60 to-white flex items-center justify-center overflow-hidden border-b border-slate-100 flex-shrink-0">${imgHtml}<div class="absolute top-2.5 left-2.5 flex flex-wrap gap-1">${availBadge}${unitBadge}</div>${countBadge ? `<div class="absolute bottom-2.5 right-2.5">${countBadge}</div>` : ''}</div>${thumbRow}${downloadLinks}<div class="p-3.5 sm:p-4 flex-1 flex flex-col justify-between gap-3"><div>${item.category ? `<p class="text-[10.5px] font-bold text-blue-600 uppercase tracking-wider mb-1">${escapeHtml(item.category)}</p>` : ''}<h2 class="font-bold text-slate-900 text-[14.5px] sm:text-[15px] leading-snug line-clamp-2 min-h-[42px]">${escapeHtml(item.name)}</h2><div class="mt-2 space-y-1">${metaHtml}${item.description ? `<p class="text-xs text-slate-500 line-clamp-2 leading-relaxed mt-1">${escapeHtml(item.description)}</p>` : ''}</div></div><div class="pt-3 border-t border-slate-100/90 flex flex-wrap items-center justify-between gap-2 mt-auto"><div class="flex flex-col"><span class="text-[10.5px] text-slate-400 font-medium">Giá tư vấn</span><span class="text-[17px] sm:text-[18.5px] font-extrabold text-rose-600 tabular-nums">${escapeHtml(formatCurrencyVnd(item.displayPrice))}</span></div><div class="flex items-center gap-1.5">${downloadAllBtn}${ctaBtn}</div></div></div></article>`;
 }
 
 function getCatalogClientScripts() {
     return `<script>
+var lastLightboxTrigger=null;
 function selectCardThumb(btn,src){var card=btn.closest('article');if(!card)return;var main=card.querySelector('.catalog-main-img');if(main)main.src=src;card.querySelectorAll('.catalog-thumb-btn').forEach(function(b){b.className='catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 border-slate-200 opacity-70 hover:opacity-100 shrink-0 transition cursor-pointer bg-white';});btn.className='catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 border-blue-600 ring-2 ring-blue-500/20 shrink-0 transition cursor-pointer bg-white';}
-function openCatalogLightbox(src,title){var m=document.getElementById('catalog-lightbox-modal');if(!m)return;document.getElementById('catalog-lightbox-img').src=src;document.getElementById('catalog-lightbox-title').textContent=title||'';m.classList.remove('hidden');document.body.style.overflow='hidden';}
-function closeCatalogLightbox(){var m=document.getElementById('catalog-lightbox-modal');if(!m)return;m.classList.add('hidden');document.body.style.overflow='';}
-document.addEventListener('keydown',function(e){if(e.key==='Escape')closeCatalogLightbox();});
-function downloadCatalogItemImages(btn){try{var urls=JSON.parse(btn.getAttribute('data-images')||'[]');if(!urls.length)return;var rawName=btn.getAttribute('data-item-name')||'san-pham';var slug=rawName.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-|-$/g,'').toLowerCase()||'san-pham';var orig=btn.textContent;btn.disabled=true;urls.forEach(function(u,idx){setTimeout(function(){var sep=u.indexOf('?')===-1?'?':'&';var href=u+sep+'download=1&name='+encodeURIComponent(slug+'-'+(idx+1));var a=document.createElement('a');a.href=href;a.download=slug+'-'+(idx+1);document.body.appendChild(a);a.click();a.remove();if(idx===urls.length-1){btn.disabled=false;btn.textContent=orig;}},idx*280);});}catch(e){btn.disabled=false;}}
+function openCatalogLightbox(src,title){var m=document.getElementById('catalog-lightbox-modal');if(!m)return;lastLightboxTrigger=document.activeElement;document.getElementById('catalog-lightbox-img').src=src;document.getElementById('catalog-lightbox-title').textContent=title||'';m.classList.remove('hidden');document.body.style.overflow='hidden';var c=document.getElementById('catalog-lightbox-close');if(c)c.focus();}
+function closeCatalogLightbox(){var m=document.getElementById('catalog-lightbox-modal');if(!m)return;m.classList.add('hidden');document.body.style.overflow='';if(lastLightboxTrigger&&typeof lastLightboxTrigger.focus==='function'){lastLightboxTrigger.focus();lastLightboxTrigger=null;}}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeCatalogLightbox();var m=document.getElementById('catalog-lightbox-modal');if(m&&!m.classList.contains('hidden')&&e.key==='Tab'){var f=m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');if(f.length){var first=f[0];var last=f[f.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}}});
+function downloadCatalogItemImages(btn){try{var urls=JSON.parse(btn.getAttribute('data-images')||'[]');var local=urls.filter(function(u){return u.indexOf('/catalog-media/')===0;});var external=urls.length-local.length;if(!local.length){window.alert('Ảnh từ nguồn ngoài không hỗ trợ tải tự động. Vui lòng chọn “Tải từng ảnh”.');return;}var rawName=btn.getAttribute('data-item-name')||'san-pham';var slug=rawName.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-|-$/g,'').toLowerCase()||'san-pham';btn.disabled=true;local.forEach(function(u,idx){setTimeout(function(){var a=document.createElement('a');a.href=u+'?download=1&name='+encodeURIComponent(slug+'-'+(idx+1));a.download=slug+'-'+(idx+1);document.body.appendChild(a);a.click();a.remove();if(idx===local.length-1){btn.disabled=false;}},idx*280);});if(local.length>1||external)window.alert('Trình duyệt có thể chặn tải nhiều file. Nếu thiếu ảnh, hãy chọn “Tải từng ảnh”.'+(external?' Ảnh từ nguồn ngoài cần tải riêng.':''));}catch(e){btn.disabled=false;window.alert('Không thể tải ảnh. Vui lòng chọn “Tải từng ảnh”.');}}
 </script>`;
 }
 
 function getCatalogLightboxModal() {
-    return `<div id="catalog-lightbox-modal" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4" onclick="if(event.target===this)closeCatalogLightbox()"><div class="relative max-w-4xl w-full max-h-[92vh] flex flex-col items-center"><div class="w-full flex items-center justify-between text-white pb-3 px-1"><span id="catalog-lightbox-title" class="font-bold text-sm sm:text-base truncate"></span><button type="button" onclick="closeCatalogLightbox()" class="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center text-lg font-bold transition cursor-pointer">✕</button></div><div class="relative w-full max-h-[82vh] bg-black/40 rounded-2xl overflow-hidden flex items-center justify-center border border-white/10"><img id="catalog-lightbox-img" src="" alt="" class="max-w-full max-h-[80vh] object-contain select-none"></div></div></div>`;
+    return `<div id="catalog-lightbox-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-lightbox-title" class="hidden fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4" onclick="if(event.target===this)closeCatalogLightbox()"><div class="relative max-w-4xl w-full max-h-[92vh] flex flex-col items-center"><div class="w-full flex items-center justify-between text-white pb-3 px-1"><span id="catalog-lightbox-title" class="font-bold text-sm sm:text-base truncate"></span><button type="button" id="catalog-lightbox-close" onclick="closeCatalogLightbox()" class="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center text-lg font-bold transition cursor-pointer" aria-label="Đóng xem ảnh lớn">✕</button></div><div class="relative w-full max-h-[82vh] bg-black/40 rounded-2xl overflow-hidden flex items-center justify-center border border-white/10"><img id="catalog-lightbox-img" src="" alt="" class="max-w-full max-h-[80vh] object-contain select-none"></div></div></div>`;
 }
 
 function renderPublicCatalogHtml(lookup) {
@@ -787,7 +825,7 @@ function renderPublicCatalogHtml(lookup) {
            </div>`
         : '';
 
-    return `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>${escapeHtml(cat.title)} - ${storeName}</title><link rel="stylesheet" href="/assets/inter.css"><link rel="stylesheet" href="/assets/tailwind.css"></head><body class="min-h-screen bg-slate-50/90 text-slate-900 antialiased"><header class="bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 shadow-2xs"><div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><div class="flex items-center gap-2"><span class="text-xs font-black uppercase tracking-wider px-2.5 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200/60">${storeName}</span>${cat.branch ? `<span class="text-xs text-slate-500 font-medium">${escapeHtml(cat.branch)}</span>` : ''}</div><h1 class="text-lg sm:text-2xl font-black text-slate-900 mt-1 tracking-tight">${escapeHtml(cat.title)}</h1></div><div class="flex items-center gap-2.5 text-xs text-slate-600 justify-between sm:justify-end"><span class="px-2.5 py-1 rounded-lg bg-slate-100/90 border border-slate-200/60 text-slate-600">Hiệu lực đến: <strong>${escapeHtml(formatDateTimeVn(cat.expiresAt))}</strong></span>${headerCta}</div></div></header><main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">${msgHtml}<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">${cardsHtml}</div></main>${floatingMobileCta}${getCatalogLightboxModal()}${getCatalogClientScripts()}</body></html>`;
+    return `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>${escapeHtml(cat.title)} - ${storeName}</title><link rel="stylesheet" href="/assets/inter.css"><link rel="stylesheet" href="/assets/tailwind.css"></head><body class="min-h-screen bg-slate-50/90 text-slate-900 antialiased"><header class="bg-white/95 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 shadow-2xs"><div class="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><div class="flex items-center gap-2"><span class="text-xs font-black uppercase tracking-wider px-2.5 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200/60">${storeName}</span>${cat.branch ? `<span class="text-xs text-slate-500 font-medium">${escapeHtml(cat.branch)}</span>` : ''}</div><h1 class="text-lg sm:text-2xl font-black text-slate-900 mt-1 tracking-tight">${escapeHtml(cat.title)}</h1></div><div class="flex items-center gap-2.5 text-xs text-slate-600 justify-between sm:justify-end"><span class="px-2.5 py-1 rounded-lg bg-slate-100/90 border border-slate-200/60 text-slate-600">Hiệu lực đến: <strong>${escapeHtml(formatDateTimeVn(cat.expiresAt))}</strong></span>${headerCta}</div></div></header><main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8"><div class="mb-5 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-50/90 border border-amber-200/70 text-amber-800 text-[11.5px] font-medium shadow-2xs"><span>ℹ️</span><span>Thông tin và giá được ghi nhận tại thời điểm tạo catalog · Vui lòng liên hệ để xác nhận tồn kho thực tế.</span></div>${msgHtml}<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">${cardsHtml}</div></main>${floatingMobileCta}${getCatalogLightboxModal()}${getCatalogClientScripts()}</body></html>`;
 }
 
 module.exports = {

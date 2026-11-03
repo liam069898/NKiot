@@ -1,5 +1,12 @@
 module.exports = {
-    content: ['./index.html', './app.js', './app-*.js', './ui-safety.js', './client-store.js'],
+    content: [
+        './index.html',
+        './app.js',
+        './app-*.js',
+        './ui-safety.js',
+        './client-store.js',
+        './catalog-service.js'
+    ],
     theme: {
         extend: {
             borderRadius: {

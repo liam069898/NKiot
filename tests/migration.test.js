@@ -9,6 +9,35 @@ const { execFileSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { verifyPassword } = require('../security');
 
+test('migration 8 upgrades a v7 catalog without losing its rows', () => {
+    const { applyMigrations } = require('../migrations');
+    const d = new DatabaseSync(':memory:');
+    try {
+        d.exec(`
+            CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, appliedAt TEXT NOT NULL);
+            CREATE TABLE public_catalog_items (id TEXT PRIMARY KEY);
+            INSERT INTO public_catalog_items (id) VALUES ('keep');
+            INSERT INTO schema_migrations SELECT 1, 'v1', '' UNION ALL SELECT 2, 'v2', '' UNION ALL SELECT 3, 'v3', '' UNION ALL SELECT 4, 'v4', '' UNION ALL SELECT 5, 'v5', '' UNION ALL SELECT 6, 'v6', '' UNION ALL SELECT 7, 'v7', '';
+        `);
+        applyMigrations(d, { entityTables: [] });
+        assert.equal(
+            d.prepare("SELECT imei FROM public_catalog_items WHERE id='keep'").get().imei,
+            ''
+        );
+        assert.ok(
+            d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='api_tokens'").get()
+        );
+        applyMigrations(d, { entityTables: [] });
+        assert.equal(
+            d.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version,
+            9
+        );
+    } finally {
+        d.close();
+    }
+});
+
 test('legacy schema upgrade backs up original data and preserves empty catalog and login', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'minikiot-upgrade-'));
     const filename = path.join(dir, 'legacy.db');
@@ -75,7 +104,7 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
                 .prepare('SELECT version FROM schema_migrations ORDER BY version')
                 .all()
                 .map((row) => row.version),
-            [1, 2, 3, 4, 5, 6, 7]
+            [1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
         assert.equal(
             upgraded.prepare("SELECT total FROM invoices WHERE id='KEEP'").get().total,

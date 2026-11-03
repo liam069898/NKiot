@@ -6856,6 +6856,16 @@
                             <span> Tùy biến mẫu in hóa đơn</span>
                         </button>
                     </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-gray-100/80">
+                        <button
+                            type="button"
+                            onclick="openApiTokensModal()"
+                            class="text-[#0066cc] hover:underline font-semibold text-[12.5px] flex items-center space-x-1"
+                            title="Quản lý API Token cho CRM chat và Website ngoài"
+                        >
+                            <span>🔗 Kết nối API (CRM & Website ngoài)</span>
+                        </button>
+                    </div>
                     <div class="flex justify-end space-x-2.5 pt-3">
                         <button
                             type="button"
@@ -9631,9 +9641,18 @@
                     <div class="lg:col-span-6 flex flex-col border border-gray-200/80 rounded-xl p-3 bg-gray-50/50 min-h-[300px]">
                         <div class="text-[13px] font-bold text-gray-800 mb-2">1. Chọn sản phẩm đưa vào catalog</div>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-                            <input id="catalog-prod-search" type="text" oninput="renderCatalogProductPicker()" placeholder="Tìm tên, mã hàng..." class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
-                            <input id="catalog-price-min" type="number" min="0" step="100000" oninput="renderCatalogProductPicker()" placeholder="Giá từ (VD: 10000000)" class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
-                            <input id="catalog-price-max" type="number" min="0" step="100000" oninput="renderCatalogProductPicker()" placeholder="Giá đến (VD: 15000000)" class="bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            <div>
+                                <label for="catalog-prod-search" class="sr-only">Tìm sản phẩm</label>
+                                <input id="catalog-prod-search" type="text" oninput="renderCatalogProductPicker(true)" placeholder="Tìm tên, mã hàng..." class="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            </div>
+                            <div>
+                                <label for="catalog-price-min" class="sr-only">Giá tối thiểu (VNĐ)</label>
+                                <input id="catalog-price-min" type="number" min="0" step="100000" oninput="renderCatalogProductPicker(true)" placeholder="Giá từ (VD: 10000000)" class="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            </div>
+                            <div>
+                                <label for="catalog-price-max" class="sr-only">Giá tối đa (VNĐ)</label>
+                                <input id="catalog-price-max" type="number" min="0" step="100000" oninput="renderCatalogProductPicker(true)" placeholder="Giá đến (VD: 15000000)" class="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            </div>
                         </div>
                         <div class="flex items-center justify-between text-[11.5px] text-gray-500 mb-1.5">
                             <span id="catalog-picker-count">0 sản phẩm phù hợp</span>
@@ -9644,24 +9663,25 @@
                     <div class="lg:col-span-6 flex flex-col gap-2.5">
                         <div class="text-[13px] font-bold text-gray-800">2. Thông tin trang catalog & thời hạn link</div>
                         <div>
-                            <label class="block text-[12px] font-medium text-gray-700 mb-1">Tiêu đề catalog *</label>
-                            <input id="catalog-title-input" type="text" placeholder="VD: Mẫu đồng hồ tầm giá 10 - 15 triệu" class="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-[13px]" />
+                            <label for="catalog-title-input" class="block text-[12px] font-medium text-gray-700 mb-1">Tiêu đề catalog *</label>
+                            <input id="catalog-title-input" type="text" placeholder="VD: Mẫu đồng hồ tầm giá 10 - 15 triệu" class="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-[13px]" aria-describedby="catalog-title-error" oninput="clearCatalogFormErrors()" />
+                            <p id="catalog-title-error" class="hidden text-[11.5px] font-semibold text-rose-600 mt-1"></p>
                         </div>
                         <div>
-                            <label class="block text-[12px] font-medium text-gray-700 mb-1">Lời nhắn tư vấn gửi khách</label>
+                            <label for="catalog-message-input" class="block text-[12px] font-medium text-gray-700 mb-1">Lời nhắn tư vấn gửi khách</label>
                             <textarea id="catalog-message-input" rows="2" placeholder="VD: Em gửi anh/chị các mẫu đang sẵn hàng phù hợp ngân sách..." class="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-[12.5px]"></textarea>
                         </div>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <div>
-                                <label class="block text-[11.5px] font-medium text-gray-600 mb-1">Người liên hệ</label>
+                                <label for="catalog-contact-name" class="block text-[11.5px] font-medium text-gray-600 mb-1">Người liên hệ</label>
                                 <input id="catalog-contact-name" type="text" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
                             </div>
                             <div>
-                                <label class="block text-[11.5px] font-medium text-gray-600 mb-1">SĐT / Zalo liên hệ</label>
+                                <label for="catalog-contact-phone" class="block text-[11.5px] font-medium text-gray-600 mb-1">SĐT / Zalo liên hệ</label>
                                 <input id="catalog-contact-phone" type="text" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
                             </div>
                             <div>
-                                <label class="block text-[11.5px] font-medium text-gray-600 mb-1">Thời hạn hiệu lực</label>
+                                <label for="catalog-expiry-select" class="block text-[11.5px] font-medium text-gray-600 mb-1">Thời hạn hiệu lực</label>
                                 <select id="catalog-expiry-select" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white">
                                     <option value="24">24 giờ (1 ngày)</option>
                                     <option value="72" selected>3 ngày</option>
@@ -9673,21 +9693,24 @@
                         </div>
                         <div class="border border-gray-200/80 rounded-xl p-2.5 bg-gray-50/40 flex-1 flex flex-col min-h-[140px]">
                             <div class="flex items-center justify-between mb-1.5">
-                                <span class="text-[12px] font-bold text-gray-700">Sản phẩm trong catalog (<span id="catalog-selected-count">0</span>)</span>
+                                <span class="text-[12px] font-bold text-gray-700">Sản phẩm trong catalog (<span id="catalog-selected-count">0/50</span>)</span>
                                 <button type="button" onclick="clearSelectedCatalogProducts()" class="text-[11.5px] text-rose-600 hover:underline font-medium">Xóa hết</button>
                             </div>
                             <div id="catalog-selected-items-list" class="flex-1 overflow-y-auto space-y-1.5 max-h-[170px]"></div>
+                            <p id="catalog-items-error" class="hidden text-[11.5px] font-semibold text-rose-600 mt-1"></p>
                         </div>
                         <div id="catalog-created-banner" class="hidden p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-col gap-2">
                             <div class="text-[12.5px] font-bold text-emerald-800">Đã tạo link catalog thành công!</div>
-                            <div class="flex items-center gap-2">
-                                <input id="catalog-created-url" type="text" readonly class="flex-1 bg-white border border-emerald-300 rounded-lg px-2.5 py-1 text-[12.5px] font-mono text-gray-800" />
+                            <div class="flex flex-wrap items-center gap-2">
+                                <input id="catalog-created-url" type="text" readonly class="flex-1 min-w-[200px] bg-white border border-emerald-300 rounded-lg px-2.5 py-1 text-[12.5px] font-mono text-gray-800" />
                                 <button type="button" onclick="copyCreatedCatalogUrl()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-semibold">Sao chép</button>
                                 <a id="catalog-created-open-link" href="#" target="_blank" rel="noopener" class="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-700 text-[12px] font-semibold">Mở xem</a>
+                                <button type="button" onclick="resetCreateCatalogForm()" class="px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 text-[12px] font-semibold transition">+ Tạo catalog mới</button>
                             </div>
                         </div>
                         <div class="flex justify-end gap-2 pt-1">
-                            <button type="button" onclick="closePublicCatalogModal()" class="glass-btn-secondary px-4 py-2 rounded-xl text-[13px] font-medium text-gray-700">Đóng</button>
+                            <button type="button" onclick="closePublicCatalogModal()" class="glass-btn-secondary px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-700">Đóng</button>
+                            <button type="button" onclick="openCatalogDraftPreview()" class="glass-btn-secondary px-3.5 py-2 rounded-xl text-[13px] font-semibold text-gray-800">Xem trước</button>
                             <button type="button" id="catalog-submit-btn" onclick="submitCreatePublicCatalog()" class="glass-btn-primary px-4 py-2 rounded-xl text-[13px] font-bold text-white">🔗 Tạo link catalog</button>
                         </div>
                     </div>
@@ -9707,6 +9730,122 @@
                             <tbody id="public-catalogs-tbody"></tbody>
                         </table>
                     </div>
+                    <div class="flex justify-end gap-3 mt-3"><button type="button" id="catalog-page-prev" onclick="loadPublicCatalogsList(catalogPage - 1)" disabled>Trang trước</button><span id="catalog-page-label">Trang 1</span><button type="button" id="catalog-page-next" onclick="loadPublicCatalogsList(catalogPage + 1)" disabled>Trang sau</button></div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Modal Xem trước Catalog trước khi tạo link -->
+        <div id="catalog-draft-preview-modal" class="kv-modal hidden fixed inset-0 bg-black/60 backdrop-blur-md z-[160] flex items-center justify-center p-3 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="catalog-draft-preview-title">
+            <div class="bg-slate-50 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl border border-gray-200/90">
+                <div class="bg-white flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-200/90 flex-shrink-0">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="px-2 py-0.5 rounded-md bg-blue-50 text-[#0066cc] font-bold text-xs">Xem trước</span>
+                        <h3 id="catalog-draft-preview-title" class="font-bold text-[15.5px] text-gray-900 truncate">Bản xem trước catalog gửi khách</h3>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="submitCreatePublicCatalog(); closeCatalogDraftPreview();" class="glass-btn-primary px-3 py-1.5 rounded-xl text-white text-[12px] font-bold">🔗 Tạo link ngay</button>
+                        <button type="button" onclick="closeCatalogDraftPreview()" class="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-bold transition cursor-pointer" aria-label="Đóng xem trước">✕</button>
+                    </div>
+                </div>
+                <div id="catalog-draft-preview-body" class="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- Modal Quản lý API Token cho CRM & Website ngoài -->
+        <div id="api-tokens-modal" class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[150] flex items-center justify-center p-3 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="api-tokens-modal-title">
+            <div class="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl border border-gray-200/80">
+                <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100/90 flex-shrink-0">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <span class="text-lg">🔗</span>
+                        <h3 id="api-tokens-modal-title" class="font-bold text-[16px] text-gray-900 truncate">Kết nối API & CRM / Website ngoài</h3>
+                    </div>
+                    <button type="button" onclick="closeApiTokensModal()" class="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-bold transition cursor-pointer" aria-label="Đóng">✕</button>
+                </div>
+                <div class="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-blue-50/60 p-3.5 rounded-xl border border-blue-100">
+                        <div>
+                            <div class="font-bold text-[13px] text-blue-950">Mã API Token chia sẻ hàng hóa & hình ảnh</div>
+                            <div class="text-[11.5px] text-blue-800/80">Dùng token này để kết nối với app chat CRM, website riêng (WordPress, Shopify, Next.js) để lấy danh sách máy và hình ảnh thực tế.</div>
+                        </div>
+                        <button type="button" onclick="toggleCreateTokenForm(true)" class="glass-btn-primary px-3.5 py-1.5 rounded-xl text-white font-bold text-[12px] flex items-center gap-1.5 self-start sm:self-auto shrink-0">+ Tạo Token mới</button>
+                    </div>
+
+                    <div id="create-token-form-card" class="hidden p-4 rounded-xl border border-blue-200 bg-white shadow-xs space-y-3">
+                        <div class="flex items-center justify-between border-b border-gray-100 pb-2">
+                            <span class="font-bold text-[13px] text-gray-900">Thiết lập Token mới</span>
+                            <button type="button" onclick="toggleCreateTokenForm(false)" class="text-gray-400 hover:text-gray-600 text-xs">Đóng lại</button>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label for="new-token-name" class="block text-[11.5px] font-semibold text-gray-700 mb-1">Tên gợi nhớ *</label>
+                                <input id="new-token-name" type="text" placeholder="VD: App Chat CRM, Website riêng..." class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                            </div>
+                            <div>
+                                <label for="new-token-branch" class="block text-[11.5px] font-semibold text-gray-700 mb-1">Phạm vi chi nhánh</label>
+                                <select id="new-token-branch" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white"></select>
+                            </div>
+                            <div>
+                                <label for="new-token-expiry" class="block text-[11.5px] font-semibold text-gray-700 mb-1">Thời hạn hiệu lực</label>
+                                <select id="new-token-expiry" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px] bg-white">
+                                    <option value="0">Không giới hạn</option>
+                                    <option value="30">30 ngày</option>
+                                    <option value="90">90 ngày</option>
+                                    <option value="365">1 năm (365 ngày)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-2 pt-1">
+                            <button type="button" onclick="toggleCreateTokenForm(false)" class="glass-btn-secondary px-3 py-1.5 rounded-lg text-xs font-medium text-gray-700">Hủy</button>
+                            <button type="button" id="btn-submit-create-token" onclick="submitCreateApiToken()" class="glass-btn-primary px-4 py-1.5 rounded-lg text-xs font-bold text-white">Xác nhận tạo Token</button>
+                        </div>
+                    </div>
+
+                    <div id="new-token-banner" class="hidden p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 space-y-2">
+                        <div class="flex items-center gap-1.5 font-bold text-[13px] text-emerald-800">
+                            <span>✅</span>
+                            <span>Tạo API Token thành công! Hãy sao chép ngay bây giờ</span>
+                        </div>
+                        <div class="text-[11.5px] text-emerald-700">
+                            Vì lý do an toàn, mã bí mật này chỉ hiển thị <strong>một lần duy nhất</strong>. Nếu đánh mất, bạn sẽ phải tạo lại Token mới.
+                        </div>
+                        <div class="flex items-center gap-2 pt-1">
+                            <input id="new-token-raw-value" type="text" readonly class="flex-1 bg-white border border-emerald-300 rounded-lg px-2.5 py-1.5 text-[12.5px] font-mono text-gray-900 select-all" />
+                            <button type="button" onclick="copyRawTokenValue()" class="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[12px] transition shadow-xs">Sao chép Token</button>
+                        </div>
+                    </div>
+                    <!-- Token list table -->
+                    <div class="overflow-x-auto border border-gray-200/80 rounded-xl">
+                        <table class="w-full text-left border-collapse text-[12.5px]">
+                            <thead>
+                                <tr class="border-b border-gray-200/80 bg-gray-50/80 text-gray-600 font-semibold">
+                                    <th class="py-2.5 px-3">Tên Token</th>
+                                    <th class="py-2.5 px-3">Mã Token</th>
+                                    <th class="py-2.5 px-3">Chi nhánh</th>
+                                    <th class="py-2.5 px-3">Hạn dùng</th>
+                                    <th class="py-2.5 px-3">Lần dùng cuối</th>
+                                    <th class="py-2.5 px-3 text-center">Trạng thái</th>
+                                    <th class="py-2.5 px-3 text-right">Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="api-tokens-tbody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Integration Quick Guide -->
+                    <div class="p-3.5 bg-gray-50/80 border border-gray-200/70 rounded-xl text-[12px] text-gray-700 space-y-1.5">
+                        <div class="font-bold text-gray-900 flex items-center gap-1.5">
+                            <span>📖</span>
+                            <span>Hướng dẫn tích hợp nhanh cho dev CRM / Website</span>
+                        </div>
+                        <div class="font-mono text-[11px] bg-white border border-gray-200 rounded-lg p-2 text-slate-800 space-y-1">
+                            <div><strong>1. Lấy sản phẩm:</strong> <span class="text-blue-700">GET /api/v1/open/products?in_stock=true</span> (Header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>)</div>
+                            <div><strong>2. Lấy chi tiết & IMEI:</strong> <span class="text-blue-700">GET /api/v1/open/products/:code</span></div>
+                            <div><strong>3. Nhúng ảnh trực tiếp vào Chat/Web:</strong> <span class="text-blue-700">GET /api/v1/open/media/:id (Header Bearer; backend CRM tải ảnh)</span></div>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </div>
