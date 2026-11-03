@@ -2431,3 +2431,25 @@ test('API tokens management modal opens from settings, validates form, renders t
         w.close();
     }
 });
+
+test('webapp enables mouse text selection on body and content while keeping buttons unselectable', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const html = fs.readFileSync('index.html', 'utf8');
+        // Ensure body does not disable user-select globally
+        assert.doesNotMatch(
+            html,
+            /body\s*\{[^}]*user-select:\s*none/i,
+            'body must not have user-select: none'
+        );
+        assert.match(
+            html,
+            /user-select:\s*text/i,
+            'index.html should explicitly allow text selection'
+        );
+        assert.match(html, /::selection/i, 'index.html should have selection highlight styling');
+    } finally {
+        w.close();
+    }
+});
