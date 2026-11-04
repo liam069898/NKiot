@@ -18,7 +18,13 @@ function browser() {
     w.eval(fs.readFileSync('catalog-patch.js', 'utf8'));
     w.eval(fs.readFileSync('ui-safety.js', 'utf8'));
     w.eval(fs.readFileSync('client-store.js', 'utf8'));
-    for (const file of ['app-utils.js', 'app-reports.js', 'app-export.js', 'app.js']) {
+    for (const file of [
+        'app-utils.js',
+        'app-reports.js',
+        'app-export.js',
+        'app.js',
+        'app-deplao.js'
+    ]) {
         w.eval(
             fs
                 .readFileSync(file, 'utf8')
@@ -2297,7 +2303,7 @@ test('shared warehouse viewer shows per-IMEI photo sets for own and partner item
         w.close();
     }
 });
-test('public catalog builder supports product/IMEI selection, inline error states, draft preview, and form reset', () => {
+test('public catalog builder supports product/IMEI selection, inline error states, draft preview, and form reset', async () => {
     const dom = browser(),
         w = dom.window;
     try {
@@ -2342,12 +2348,55 @@ test('public catalog builder supports product/IMEI selection, inline error state
         w.closeCatalogDraftPreview();
         assert.equal(previewModal.classList.contains('hidden'), true);
 
-        // 7. Reset form xóa sạch dữ liệu
-        w.resetCreateCatalogForm();
+        // 7. Reset form có xác nhận khi đang có bản nháp
+        const resetPromise = w.resetCreateCatalogForm();
+        const dialog = doc.getElementById('action-dialog');
+        assert.equal(dialog.classList.contains('hidden'), false);
+        doc.getElementById('action-dialog-form').dispatchEvent(new w.Event('submit'));
+        const confirmedReset = await resetPromise;
+        assert.ok(confirmedReset, 'xác nhận xóa bản nháp');
         assert.equal(doc.getElementById('catalog-title-input').value, '');
         assert.equal(doc.getElementById('catalog-selected-count').textContent, '0/50');
         assert.equal(doc.getElementById('catalog-items-error').classList.contains('hidden'), true);
     } finally {
+        w.close();
+    }
+});
+
+test('catalog selection keeps sale-edited price when adding remaining IMEIs', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            getCurrentBranch = () => 'Chi nhánh trung tâm';
+            KVStore.data.products = [{
+                id: 'P_PRICE', code: 'SP_PRICE', name: 'Sản phẩm giữ giá',
+                price: 1000000, stock: 3, branch: 'Chi nhánh trung tâm', status: 'active',
+                hasImei: 1, imeis: ['I1', 'I2', 'I3'],
+                imeiDetails: {
+                    I1: { images: [], conditionDetail: '' },
+                    I2: { images: [], conditionDetail: '' },
+                    I3: { images: [], conditionDetail: '' }
+                }
+            }];
+            selectedCatalogItems.clear();
+        `);
+        w.openPublicCatalogModal();
+        assert.equal(
+            w.document.getElementById('catalog-draft-branch-label').textContent,
+            'Chi nhánh: Chi nhánh trung tâm'
+        );
+        w.toggleCatalogImeiSelection('SP_PRICE', 'I1');
+        w.updateSelectedCatalogItemPrice('SP_PRICE|I1', '900000');
+        assert.equal(w.eval("selectedCatalogItems.get('SP_PRICE|I1').displayPrice"), 900000);
+
+        // Chọn nốt các IMEI còn lại: giá đã chỉnh của I1 phải được giữ nguyên.
+        w.toggleCatalogProductSelection('SP_PRICE');
+        assert.equal(w.eval('selectedCatalogItems.size'), 3);
+        assert.equal(w.eval("selectedCatalogItems.get('SP_PRICE|I1').displayPrice"), 900000);
+        assert.equal(w.eval("selectedCatalogItems.get('SP_PRICE|I2').displayPrice"), 1000000);
+    } finally {
+        w.innerWidth = 1280;
         w.close();
     }
 });
@@ -2449,6 +2498,48 @@ test('webapp enables mouse text selection on body and content while keeping butt
             'index.html should explicitly allow text selection'
         );
         assert.match(html, /::selection/i, 'index.html should have selection highlight styling');
+    } finally {
+        w.close();
+    }
+});
+
+test('Deplao modal lists branch products, IMEI images and blocks a second send in the same job', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.data.branches = [{ name: 'Chi nhánh A' }];
+            KVStore.data.settings.branch = 'Chi nhánh A';
+            KVStore.data.products = [{
+                id: 'P1', code: 'DH1', name: 'Đồng hồ A', price: 1000000, stock: 2,
+                branch: 'Chi nhánh A', status: 'active', hasImei: 1, imeis: ['SN1'],
+                images: ['/uploads/common.jpg'],
+                imeiDetails: { SN1: { images: ['/uploads/a.jpg', '/uploads/b.jpg'] } }
+            }, {
+                id: 'P2', code: 'DH2', name: 'Đồng hồ B', price: 2000000, stock: 1,
+                branch: 'Chi nhánh A', status: 'active', images: ['javascript:alert(1)']
+            }];
+            openDeplao('P1');
+        `);
+        assert.equal(doc.getElementById('deplao-modal').classList.contains('hidden'), false);
+        assert.equal(doc.querySelectorAll('#deplao-product option').length, 3);
+        // Phải chọn rõ từng máy, không tự đoán IMEI.
+        assert.equal(doc.querySelectorAll('#deplao-images input').length, 0);
+        w.eval("depEl('imei').value='SN1'; deplaoImagesChanged();");
+        assert.equal(doc.querySelectorAll('#deplao-images input').length, 2);
+        assert.equal(doc.querySelector('#deplao-images img').getAttribute('src'), '/uploads/a.jpg');
+        assert.match(doc.getElementById('deplao-text').value, /Máy \*\*\*\*SN1|Máy \*\*\*SN1/);
+
+        // Sản phẩm không có ảnh upload nội bộ hợp lệ thì không hiện ảnh.
+        w.eval("depEl('product').value='P2'; deplaoProductChanged();");
+        assert.equal(doc.querySelectorAll('#deplao-images input').length, 0);
+
+        // Đang có lượt gửi thì không cho tạo lượt mới trùng.
+        w.eval("deplaoJobId='11111111-1111-4111-8111-111111111111';");
+        w.eval("depEl('fields').disabled=true;");
+        await w.deplaoConfirmSend();
+        assert.equal(doc.getElementById('deplao-fields').disabled, true);
     } finally {
         w.close();
     }

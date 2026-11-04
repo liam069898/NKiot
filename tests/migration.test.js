@@ -31,7 +31,14 @@ test('migration 8 upgrades a v7 catalog without losing its rows', () => {
         applyMigrations(d, { entityTables: [] });
         assert.equal(
             d.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version,
-            9
+            10
+        );
+        assert.ok(
+            d
+                .prepare(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='deplao_send_jobs'"
+                )
+                .get()
         );
     } finally {
         d.close();
@@ -104,7 +111,7 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
                 .prepare('SELECT version FROM schema_migrations ORDER BY version')
                 .all()
                 .map((row) => row.version),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9]
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         );
         assert.equal(
             upgraded.prepare("SELECT total FROM invoices WHERE id='KEEP'").get().total,

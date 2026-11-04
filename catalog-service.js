@@ -469,6 +469,8 @@ function extendCatalog(user, catalogId, input = {}) {
         }
     }
     const expiresAt = resolveExpiresAt(input, baseTime);
+    if (row.status === 'active' && !row.expiresAt && expiresAt && input.allowLimited !== true)
+        fail('Link đang không giới hạn; cần xác nhận rõ khi đặt thời hạn.', 400);
     database
         .prepare(
             "UPDATE public_catalogs SET status='active', expiresAt=?, revokedAt=NULL, updatedAt=? WHERE id=?"
@@ -729,7 +731,7 @@ function renderCatalogCardHtml(item, cleanPhone) {
             ? `<div class="flex gap-1.5 px-3 py-2 bg-slate-50/70 border-b border-slate-100 overflow-x-auto no-scrollbar">${item.images
                   .map(
                       (u, idx) =>
-                          `<button type="button" onclick="selectCardThumb(this, this.dataset.src)" data-src="${escapeHtml(u)}" class="catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 ${idx === 0 ? 'border-blue-600 ring-2 ring-blue-500/20' : 'border-slate-200 opacity-70 hover:opacity-100'} shrink-0 transition cursor-pointer bg-white"><img src="${escapeHtml(u)}" alt="" loading="lazy" class="w-full h-full object-cover"></button>`
+                          `<button type="button" aria-label="Xem ảnh ${idx + 1}/${imgCount}" aria-pressed="${idx === 0}" onclick="selectCardThumb(this, this.dataset.src)" data-src="${escapeHtml(u)}" class="catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 ${idx === 0 ? 'border-blue-600 ring-2 ring-blue-500/20' : 'border-slate-200 opacity-70 hover:opacity-100'} shrink-0 transition cursor-pointer bg-white"><img src="${escapeHtml(u)}" alt="" loading="lazy" class="w-full h-full object-cover"></button>`
                   )
                   .join('')}</div>`
             : '';
@@ -766,7 +768,7 @@ function renderCatalogCardHtml(item, cleanPhone) {
 function getCatalogClientScripts() {
     return `<script>
 var lastLightboxTrigger=null;
-function selectCardThumb(btn,src){var card=btn.closest('article');if(!card)return;var main=card.querySelector('.catalog-main-img');if(main)main.src=src;card.querySelectorAll('.catalog-thumb-btn').forEach(function(b){b.className='catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 border-slate-200 opacity-70 hover:opacity-100 shrink-0 transition cursor-pointer bg-white';});btn.className='catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 border-blue-600 ring-2 ring-blue-500/20 shrink-0 transition cursor-pointer bg-white';}
+function selectCardThumb(btn,src){var card=btn.closest('article');if(!card)return;var main=card.querySelector('.catalog-main-img');if(main)main.src=src;card.querySelectorAll('.catalog-thumb-btn').forEach(function(b){b.className='catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 border-slate-200 opacity-70 hover:opacity-100 shrink-0 transition cursor-pointer bg-white';b.setAttribute('aria-pressed','false');});btn.className='catalog-thumb-btn w-9 h-9 rounded-lg overflow-hidden border-2 border-blue-600 ring-2 ring-blue-500/20 shrink-0 transition cursor-pointer bg-white';btn.setAttribute('aria-pressed','true');}
 function openCatalogLightbox(src,title){var m=document.getElementById('catalog-lightbox-modal');if(!m)return;lastLightboxTrigger=document.activeElement;document.getElementById('catalog-lightbox-img').src=src;document.getElementById('catalog-lightbox-title').textContent=title||'';m.classList.remove('hidden');document.body.style.overflow='hidden';var c=document.getElementById('catalog-lightbox-close');if(c)c.focus();}
 function closeCatalogLightbox(){var m=document.getElementById('catalog-lightbox-modal');if(!m)return;m.classList.add('hidden');document.body.style.overflow='';if(lastLightboxTrigger&&typeof lastLightboxTrigger.focus==='function'){lastLightboxTrigger.focus();lastLightboxTrigger=null;}}
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeCatalogLightbox();var m=document.getElementById('catalog-lightbox-modal');if(m&&!m.classList.contains('hidden')&&e.key==='Tab'){var f=m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');if(f.length){var first=f[0];var last=f[f.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}}});

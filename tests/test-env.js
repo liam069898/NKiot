@@ -13,5 +13,8 @@ process.env.NKIOT_LOCAL_DATA_DIR = path.join(root, 'admin');
 delete process.env.NKIOT_HUB_URL;
 delete process.env.NKIOT_HUB_API_KEY;
 delete process.env.NKIOT_LOCAL_HUB_URL;
+delete process.env.NKIOT_DEPLAO_URL;
+delete process.env.NKIOT_DEPLAO_KEY;
+delete process.env.NKIOT_DEPLAO_ACCOUNTS;
 process.env.MINIKIOT_ADMIN_PASSWORD = 'Test-password-123';
 process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));

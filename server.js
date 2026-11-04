@@ -40,6 +40,7 @@ const ASSETS = {
     '/app-utils.js': 'app-utils.js',
     '/app-reports.js': 'app-reports.js',
     '/app-export.js': 'app-export.js',
+    '/app-deplao.js': 'app-deplao.js',
     '/constants.js': 'constants.js',
     '/catalog-patch.js': 'catalog-patch.js',
     '/data.js': 'client-store.js',
@@ -367,6 +368,35 @@ async function handler(req, res) {
                         success: false,
                         error: 'Mã bảo vệ phiên không hợp lệ. Hãy tải lại trang.'
                     });
+            }
+            if (url.pathname.startsWith('/api/deplao/')) {
+                const crm = require('./deplao-service');
+                const branch = url.searchParams.get('branch') || '';
+                if (url.pathname === '/api/deplao/connection' && req.method === 'GET')
+                    return json(res, 200, {
+                        success: true,
+                        ...(await crm.connection(user, branch))
+                    });
+                if (url.pathname === '/api/deplao/conversations' && req.method === 'GET')
+                    return json(res, 200, {
+                        success: true,
+                        ...(await crm.conversations(
+                            user,
+                            branch,
+                            url.searchParams.get('accountId'),
+                            url.searchParams.get('search'),
+                            Number(url.searchParams.get('offset') || 0)
+                        ))
+                    });
+                if (url.pathname === '/api/deplao/send' && req.method === 'POST') {
+                    const input = await body(req);
+                    const fresh = sessionUser(req);
+                    return json(res, 200, { success: true, job: await crm.send(fresh, input) });
+                }
+                const match = /^\/api\/deplao\/jobs\/([a-f0-9-]{36})$/i.exec(url.pathname);
+                if (match && req.method === 'GET')
+                    return json(res, 200, { success: true, job: crm.job(user, match[1]) });
+                return json(res, 404, { success: false, error: 'API Deplao không tồn tại.' });
             }
             if (url.pathname === '/api/invoices' && req.method === 'GET')
                 return json(

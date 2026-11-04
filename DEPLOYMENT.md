@@ -122,7 +122,27 @@ Bundle chứa `database.db`, thư mục `uploads/` và `manifest.json` với SHA
 
 Chỉ quản trị viên tạo token, mỗi token giới hạn một chi nhánh. Lưu token tại backend CRM; chỉ dùng header `Authorization: Bearer <TOKEN>`, không đưa token vào URL, frontend, log hoặc dịch vụ chat. `GET /api/v1/open/products` trả thông tin hàng hóa và đường dẫn media tương đối; backend CRM gọi đường dẫn đó với cùng header để tải ảnh được phép. Không nhúng URL media trực tiếp vào trình duyệt hay gửi token cho bên thứ ba. Không trả số tồn chính xác hoặc IMEI đầy đủ. Dùng HTTPS và cấu hình giới hạn request ở reverse proxy; chưa có rate limit phân tán. Sau thu hồi, không thể xóa ảnh đã được CRM tải về.
 
+### Gửi ảnh sản phẩm qua Deplao CRM
+
+Bản đầu chỉ mở cho quản trị viên. Cấu hình hoàn toàn ở môi trường server, **không lưu trong DB, không gửi xuống trình duyệt**:
+
+```bash
+NKIOT_DEPLAO_URL=https://crm.example.com/api/v1   # HTTPS; HTTP chỉ chấp nhận loopback
+NKIOT_DEPLAO_KEY=dpk_...                          # scope accounts:read, chat:read, media:write, chat:send
+NKIOT_DEPLAO_ACCOUNTS='{"Kalo Sport":["zalo-account-id"],"Chi nhánh phụ":["acc-2"]}'
+```
+
+- Mỗi chi nhánh chỉ được dùng tài khoản chat trong ánh xạ `NKIOT_DEPLAO_ACCOUNTS`. Tài khoản ngoài danh sách bị từ chối, kể cả khi key có quyền.
+- Luồng gửi: chọn sản phẩm → chọn đúng IMEI còn tồn → chọn 1–10 ảnh nội bộ `/uploads/` → tìm hội thoại → xác nhận người nhận → server đọc ảnh, upload sang Deplao, rồi gửi **một** request `messages` kèm `Idempotency-Key: nkiot-<jobId>`.
+- Ảnh chỉ được gửi nếu đúng sản phẩm/IMEI của chi nhánh. Ảnh ngoài `/uploads/` (URL bên ngoài, kho đối tác qua Hub) **chưa** được gửi tự động.
+- Giới hạn: 10 MB/ảnh, 30 MB/lượt, tối đa 2 lượt xử lý đồng thời trong một tiến trình.
+- Trạng thái lưu tại bảng `deplao_send_jobs`: `uploading`, `sending`, `sent`, `failed` (dừng trước khi gửi chat), `needs_review` (có thể đã gửi một phần hoặc chưa rõ). Cùng `jobId` + cùng nội dung sẽ trả lại kết quả cũ, **không tự gửi lại**; đổi nội dung với cùng `jobId` bị từ chối `409`.
+- Khi gặp `needs_review`, phải đối soát hội thoại trên Deplao rồi mới tạo lượt gửi mới. Không thể bảo đảm chống trùng tuyệt đối nếu Deplao khởi động lại hoặc mất kết nối giữa chừng.
+- Key Deplao nên có IP allowlist, hạn dùng và rate limit phù hợp. Xoay key bằng cách cập nhật biến môi trường và khởi động lại POS.
+
 ## Hub Media Proxy (ảnh theo từng IMEI cho hàng cũ)
+
+
 
 Trước đây ảnh của đối tác hiển thị vỡ vì `/uploads/...` chỉ tồn tại trong tenant sở hữu. Từ migration Hub v4, ảnh đi qua Hub:
 

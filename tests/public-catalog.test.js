@@ -340,6 +340,36 @@ test('public catalog expiration, revocation, extension, duplication, and branch 
     assert.equal(duplicated.body.catalog.itemCount, 1);
 });
 
+test('unlimited catalog requires explicit confirmation before setting an expiry', async () => {
+    const sale = await loginAs('sale_a', 'SaleA-pass-123');
+    const created = await apiRequest('/api/catalogs', {
+        method: 'POST',
+        cookie: sale.cookie,
+        csrf: sale.csrf,
+        body: { title: 'Catalog vô thời hạn', items: ['DH001'], expiresInHours: 0 }
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.catalog.expiresAt, null);
+    const id = created.body.catalog.id;
+
+    const withoutConfirm = await apiRequest(`/api/catalogs/${id}/extend`, {
+        method: 'POST',
+        cookie: sale.cookie,
+        csrf: sale.csrf,
+        body: { expiresInHours: 72 }
+    });
+    assert.equal(withoutConfirm.status, 400);
+
+    const withConfirm = await apiRequest(`/api/catalogs/${id}/extend`, {
+        method: 'POST',
+        cookie: sale.cookie,
+        csrf: sale.csrf,
+        body: { expiresInHours: 72, allowLimited: true }
+    });
+    assert.equal(withConfirm.status, 200);
+    assert.ok(withConfirm.body.catalog.expiresAt);
+});
+
 test('multi-IMEI product allows selecting individual IMEIs onto catalog with IMEI-specific photos and condition', async () => {
     const sale = await loginAs('sale_a', 'SaleA-pass-123');
 

@@ -784,6 +784,11 @@ async function selectActiveBranch(branchName) {
     }
     KVStore.data.settings.branch = branchName;
     sessionStorage.setItem('minikiot_branch', branchName);
+    if (selectedCatalogItems.size > 0) {
+        selectedCatalogItems.clear();
+        catalogDraftBranch = null;
+        showToast('Đã xóa bản nháp catalog đang chọn khi đổi chi nhánh.', 'info');
+    }
 
     const menu = document.getElementById('branch-dropdown-menu');
     if (menu) menu.classList.add('hidden');
@@ -4790,6 +4795,17 @@ function renderProducts() {
                 <button onclick="viewProductDetail('${p.code}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs">Chi tiết</button>
             </td>
         `;
+        if (KVStore.user?.role === 'admin') {
+            const send = document.createElement('button');
+            send.type = 'button';
+            send.className = 'px-2 py-1 rounded-lg text-blue-700 border border-blue-200 ml-2';
+            send.textContent = 'Gửi ảnh Deplao';
+            send.onclick = (event) => {
+                event.stopPropagation();
+                openDeplao(p.id);
+            };
+            tr.lastElementChild.appendChild(send);
+        }
         tr.onclick = () => viewProductDetail(p.code);
         tbody.appendChild(tr);
     });
@@ -11956,12 +11972,19 @@ function getAvailableCatalogProducts() {
 }
 
 function addProductOrImeisToCatalogSelection(prod) {
-    if (!prod) return;
+    if (!prod) return { added: 0, capped: false };
+    let added = 0;
+    let capped = false;
     const imeis = prod.hasImei && Array.isArray(prod.imeis) ? prod.imeis : [];
     if (imeis.length > 0) {
         for (const im of imeis) {
             const key = catalogSelectionKey(prod.code, im);
-            if (selectedCatalogItems.size >= 50 && !selectedCatalogItems.has(key)) break;
+            // Đã có trong catalog: giữ nguyên giá/tình trạng sale đã chỉnh.
+            if (selectedCatalogItems.has(key)) continue;
+            if (selectedCatalogItems.size >= 50) {
+                capped = true;
+                continue;
+            }
             const info = getProductImeiEntry(prod, im);
             selectedCatalogItems.set(key, {
                 key,
@@ -11972,26 +11995,25 @@ function addProductOrImeisToCatalogSelection(prod) {
                 thumb: info.thumb,
                 conditionDetail: info.conditionDetail
             });
+            added++;
         }
-    } else {
-        if (prod.hasImei) return;
-        if (
-            selectedCatalogItems.size >= 50 &&
-            !selectedCatalogItems.has(catalogSelectionKey(prod.code))
-        )
-            return;
-        const key = catalogSelectionKey(prod.code, '');
-        const prodImgs = Array.isArray(prod.images) ? prod.images.filter(Boolean) : [];
-        selectedCatalogItems.set(key, {
-            key,
-            code: prod.code,
-            imei: '',
-            name: prod.name,
-            displayPrice: Number(prod.price) || 0,
-            thumb: prodImgs[0] || '',
-            conditionDetail: prod.conditionDetail || ''
-        });
+        return { added, capped };
     }
+    if (prod.hasImei) return { added, capped };
+    const key = catalogSelectionKey(prod.code, '');
+    if (selectedCatalogItems.has(key)) return { added, capped };
+    if (selectedCatalogItems.size >= 50) return { added, capped: true };
+    const prodImgs = Array.isArray(prod.images) ? prod.images.filter(Boolean) : [];
+    selectedCatalogItems.set(key, {
+        key,
+        code: prod.code,
+        imei: '',
+        name: prod.name,
+        displayPrice: Number(prod.price) || 0,
+        thumb: prodImgs[0] || '',
+        conditionDetail: prod.conditionDetail || ''
+    });
+    return { added: 1, capped };
 }
 
 function openPublicCatalogModal(tab = 'create') {
@@ -12001,10 +12023,32 @@ function openPublicCatalogModal(tab = 'create') {
     }
     const modal = document.getElementById('public-catalog-modal');
     if (!modal) return;
-    if (getCurrentBranch() === ALL_BRANCHES) {
+    const currentBranch = getCurrentBranch();
+    if (currentBranch === ALL_BRANCHES) {
         showToast('Vui lòng chọn một chi nhánh cụ thể để tạo và quản lý catalog.', 'warning');
         return;
     }
+    if (catalogDraftBranch && catalogDraftBranch !== currentBranch) {
+        selectedCatalogItems.clear();
+        catalogPickerLimit = 40;
+        [
+            'catalog-title-input',
+            'catalog-message-input',
+            'catalog-prod-search',
+            'catalog-price-min',
+            'catalog-price-max'
+        ].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        showToast(
+            `Đã xóa lựa chọn catalog của chi nhánh ${catalogDraftBranch} để tránh nhầm dữ liệu sang ${currentBranch}.`,
+            'info'
+        );
+    }
+    catalogDraftBranch = currentBranch;
+    const draftBranchLabel = document.getElementById('catalog-draft-branch-label');
+    if (draftBranchLabel) draftBranchLabel.textContent = `Chi nhánh: ${currentBranch}`;
 
     // Tự động lấy các dòng đang được tích chọn trên bảng Hàng hóa (nếu có)
     const checkedRows = document.querySelectorAll('#products-tbody input.kv-checkbox:checked');
@@ -12110,6 +12154,7 @@ function renderCatalogImeiPickerRow(p, im) {
 }
 
 let catalogPickerLimit = 40;
+let catalogDraftBranch = null;
 
 function loadMoreCatalogPickerProducts() {
     catalogPickerLimit += 40;
@@ -12228,7 +12273,12 @@ function toggleCatalogProductSelection(code) {
         if (allSelected) {
             for (const im of imeis) selectedCatalogItems.delete(catalogSelectionKey(code, im));
         } else {
-            addProductOrImeisToCatalogSelection(prod);
+            const result = addProductOrImeisToCatalogSelection(prod);
+            if (result.capped)
+                showToast(
+                    `Đã đạt giới hạn 50 mục. Đã thêm ${result.added} máy còn lại của mã ${prod.code}.`,
+                    'warning'
+                );
         }
     } else {
         const key = catalogSelectionKey(code, '');
@@ -12248,57 +12298,18 @@ function removeSelectedCatalogItem(key) {
 function selectAllFilteredCatalogProducts() {
     const list = getFilteredCatalogProducts();
     let added = 0;
-    let hitCap = false;
+    let capped = false;
     for (const p of list) {
-        const imeis = p.hasImei && Array.isArray(p.imeis) ? p.imeis : [];
-        if (imeis.length > 0) {
-            for (const im of imeis) {
-                const key = catalogSelectionKey(p.code, im);
-                if (selectedCatalogItems.size >= 50) {
-                    if (!selectedCatalogItems.has(key)) hitCap = true;
-                    break;
-                }
-                if (!selectedCatalogItems.has(key)) {
-                    const info = getProductImeiEntry(p, im);
-                    selectedCatalogItems.set(key, {
-                        key,
-                        code: p.code,
-                        imei: im,
-                        name: p.name,
-                        displayPrice: Number(p.price) || 0,
-                        thumb: info.thumb,
-                        conditionDetail: info.conditionDetail
-                    });
-                    added++;
-                }
-            }
-        } else {
-            if (p.hasImei) continue;
-            const key = catalogSelectionKey(p.code, '');
-            if (selectedCatalogItems.size >= 50) {
-                if (!selectedCatalogItems.has(key)) hitCap = true;
-                break;
-            }
-            if (!selectedCatalogItems.has(key)) {
-                const prodImgs = Array.isArray(p.images) ? p.images.filter(Boolean) : [];
-                selectedCatalogItems.set(key, {
-                    key,
-                    code: p.code,
-                    imei: '',
-                    name: p.name,
-                    displayPrice: Number(p.price) || 0,
-                    thumb: prodImgs[0] || '',
-                    conditionDetail: p.conditionDetail || ''
-                });
-                added++;
-            }
-        }
+        const result = addProductOrImeisToCatalogSelection(p);
+        added += result.added;
+        capped = capped || result.capped;
+        if (capped) break;
     }
     renderCatalogProductPicker();
     renderSelectedCatalogItems();
-    if (hitCap) {
+    if (capped) {
         showToast(
-            'Đã đạt giới hạn tối đa 50 mục của catalog! Một số sản phẩm chưa được thêm.',
+            `Đã đạt giới hạn 50 mục. Đã thêm ${added} mục; một số sản phẩm/máy chưa được thêm.`,
             'warning'
         );
     } else if (added > 0) {
@@ -12368,12 +12379,25 @@ function clearCatalogFormErrors() {
         itemsErr.classList.add('hidden');
         itemsErr.textContent = '';
     }
-    document
-        .getElementById('catalog-title-input')
-        ?.classList.remove('border-rose-400', 'bg-rose-50/20');
+    const titleInput = document.getElementById('catalog-title-input');
+    titleInput?.classList.remove('border-rose-400', 'bg-rose-50/20');
+    titleInput?.removeAttribute('aria-invalid');
 }
 
-function resetCreateCatalogForm() {
+async function resetCreateCatalogForm() {
+    const hasDraft =
+        selectedCatalogItems.size > 0 ||
+        (document.getElementById('catalog-title-input')?.value || '').trim() ||
+        (document.getElementById('catalog-message-input')?.value || '').trim();
+    if (hasDraft) {
+        const confirmed = await askAction({
+            title: 'Tạo catalog mới',
+            message:
+                'Bản nháp hiện tại (sản phẩm đã chọn, tiêu đề và lời nhắn) sẽ bị xóa. Bạn có chắc chắn?',
+            confirmText: 'Xóa bản nháp'
+        });
+        if (!confirmed) return false;
+    }
     selectedCatalogItems.clear();
     const titleInput = document.getElementById('catalog-title-input');
     const msgInput = document.getElementById('catalog-message-input');
@@ -12388,8 +12412,13 @@ function resetCreateCatalogForm() {
     document.getElementById('catalog-created-banner')?.classList.add('hidden');
     clearCatalogFormErrors();
     catalogPickerLimit = 40;
+    catalogDraftBranch = getCurrentBranch();
+    const draftBranchLabel = document.getElementById('catalog-draft-branch-label');
+    if (draftBranchLabel) draftBranchLabel.textContent = `Chi nhánh: ${catalogDraftBranch}`;
     renderCatalogProductPicker(true);
     renderSelectedCatalogItems();
+    showToast('Đã làm mới biểu mẫu catalog.', 'info');
+    return true;
 }
 
 function openCatalogDraftPreview() {
@@ -12408,6 +12437,7 @@ function openCatalogDraftPreview() {
             itemsErr.textContent = 'Vui lòng chọn ít nhất 1 sản phẩm để xem trước!';
             itemsErr.classList.remove('hidden');
         }
+        document.getElementById('catalog-selected-items-list')?.focus();
         showToast('Vui lòng chọn ít nhất 1 sản phẩm để xem trước!', 'warning');
         return;
     }
@@ -12418,25 +12448,57 @@ function openCatalogDraftPreview() {
     const curBranch = getCurrentBranch();
     const items = Array.from(selectedCatalogItems.values());
 
+    const allProducts = getAvailableCatalogProducts();
     const cardsHtml = items
         .map((it) => {
-            const thumbHtml = it.thumb
-                ? `<img src="${escapeHTML(safeMediaUrl(it.thumb))}" alt="${escapeHTML(it.name)}" class="w-full h-full object-contain p-3" />`
-                : `<div class="w-full h-full flex flex-col items-center justify-center p-6 text-center select-none bg-slate-100 text-slate-400 text-xs font-semibold">Chưa có ảnh</div>`;
+            const prod = allProducts.find((p) => p.code === it.code);
+            const imgs = prod
+                ? it.imei
+                    ? getProductImeiEntry(prod, it.imei).images
+                    : Array.isArray(prod.images)
+                      ? prod.images.filter(Boolean)
+                      : []
+                : [];
+            const thumb = it.thumb || imgs[0] || '';
+            const available = prod
+                ? it.imei
+                    ? (prod.imeis || []).includes(it.imei)
+                    : Number(prod.stock) > 0
+                : null;
+            const availBadge =
+                available === null
+                    ? ''
+                    : available
+                      ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-500 text-white">Sẵn hàng</span>'
+                      : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-amber-500 text-white">Liên hệ xác nhận</span>';
+            const thumbHtml =
+                thumb && safeMediaUrl(thumb)
+                    ? `<img src="${escapeHTML(safeMediaUrl(thumb))}" alt="${escapeHTML(it.name)}" class="w-full h-full object-contain p-3" />`
+                    : `<div class="w-full h-full flex flex-col items-center justify-center p-6 text-center select-none bg-gradient-to-b from-slate-50 to-slate-100/80"><span class="text-[12px] font-semibold text-slate-500">Chưa có ảnh</span><span class="text-[10.5px] text-slate-400 mt-0.5">Liên hệ để nhận ảnh chụp thực tế</span></div>`;
+            const metaParts = [prod?.conditionDetail || it.conditionDetail].filter(Boolean);
             return `
             <div class="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col h-full">
-                <div class="relative w-full aspect-square bg-slate-50 flex items-center justify-center overflow-hidden border-b border-slate-100">
+                <div class="relative w-full aspect-square bg-gradient-to-b from-slate-50/60 to-white flex items-center justify-center overflow-hidden border-b border-slate-100">
                     ${thumbHtml}
-                    ${it.imei ? `<span class="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10.5px] font-mono font-bold bg-slate-900 text-white">Máy ***${escapeHTML(it.imei.slice(-6))}</span>` : ''}
+                    <div class="absolute top-2 left-2 flex flex-wrap gap-1">
+                        ${availBadge}
+                        ${it.imei ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-mono font-bold bg-slate-900/85 text-white">Máy ***${escapeHTML(it.imei.slice(-6))}</span>` : ''}
+                    </div>
+                    ${imgs.length > 1 ? `<div class="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/60 text-white text-[10.5px] font-medium">📷 ${imgs.length} ảnh</div>` : ''}
                 </div>
                 <div class="p-3.5 flex-1 flex flex-col justify-between gap-2">
                     <div>
+                        ${prod?.category ? `<p class="text-[10.5px] font-bold text-blue-600 uppercase tracking-wider mb-1">${escapeHTML(prod.category)}</p>` : ''}
                         <h4 class="font-bold text-slate-900 text-[14px] leading-snug line-clamp-2">${escapeHTML(it.name)}</h4>
-                        ${it.conditionDetail ? `<p class="text-[11.5px] text-slate-600 mt-1 line-clamp-1">${escapeHTML(it.conditionDetail)}</p>` : ''}
+                        ${metaParts.length ? `<p class="text-[11.5px] text-slate-600 mt-1 line-clamp-2">${escapeHTML(metaParts.join(' · '))}</p>` : ''}
+                        ${it.description || prod?.description ? `<p class="text-[11.5px] text-slate-500 mt-1 line-clamp-2">${escapeHTML(it.description || prod?.description || '')}</p>` : ''}
                     </div>
-                    <div class="pt-2 border-t border-slate-100 flex items-center justify-between">
-                        <span class="text-[16px] font-extrabold text-rose-600">${formatVND(it.displayPrice)}</span>
-                        <span class="px-2.5 py-1 rounded-xl bg-blue-50 text-blue-700 text-xs font-bold">Xem mẫu</span>
+                    <div class="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <div class="flex flex-col">
+                            <span class="text-[10.5px] text-slate-400 font-medium">Giá tư vấn</span>
+                            <span class="text-[16px] font-extrabold text-rose-600 tabular-nums">${formatVND(it.displayPrice)}</span>
+                        </div>
+                        <span class="px-2.5 py-1 rounded-xl bg-blue-600 text-white text-[11.5px] font-semibold">Liên hệ</span>
                     </div>
                 </div>
             </div>
@@ -12445,6 +12507,9 @@ function openCatalogDraftPreview() {
         .join('');
 
     body.innerHTML = `
+        <div class="p-3 rounded-xl bg-amber-50/90 border border-amber-200/70 text-[11.5px] text-amber-800 font-medium">
+            Bản xem trước từ dữ liệu đang chọn cho chi nhánh <strong>${escapeHTML(curBranch)}</strong>. Trang khách nhận sẽ dùng thông tin đã lưu tại thời điểm tạo link.
+        </div>
         <div class="bg-white rounded-2xl p-4 border border-gray-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
                 <div class="flex items-center gap-2">
@@ -12495,6 +12560,7 @@ async function submitCreatePublicCatalog() {
             titleErr.classList.remove('hidden');
         }
         titleInput?.classList.add('border-rose-400', 'bg-rose-50/20');
+        titleInput?.setAttribute('aria-invalid', 'true');
         titleInput?.focus();
         showToast('Vui lòng nhập tiêu đề catalog!', 'warning');
         return;
@@ -12505,6 +12571,7 @@ async function submitCreatePublicCatalog() {
             itemsErr.textContent = 'Vui lòng chọn ít nhất 1 sản phẩm đưa vào catalog!';
             itemsErr.classList.remove('hidden');
         }
+        document.getElementById('catalog-selected-items-list')?.focus();
         showToast('Vui lòng chọn ít nhất 1 sản phẩm đưa vào catalog!', 'warning');
         return;
     }
@@ -12601,6 +12668,11 @@ function renderPublicCatalogsTable() {
                     : cat.status === 'expired'
                       ? renderHTML`<span class="kv-badge kv-badge-warning">Đã hết hạn</span>`
                       : renderHTML`<span class="kv-badge kv-badge-danger">Đã thu hồi</span>`;
+            const isActive = cat.status === 'active';
+            const isUnlimited = isActive && !cat.expiresAt;
+            const extendBtn = isActive
+                ? renderHTML`<button type="button" onclick="${isUnlimited ? `setPublicCatalogExpiry('${cat.id}')` : `extendPublicCatalogItem('${cat.id}')`}" class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white font-medium text-[11.5px] transition">${isUnlimited ? 'Đặt thời hạn' : 'Gia hạn +3 ngày'}</button>`
+                : renderHTML`<button type="button" onclick="reactivatePublicCatalog('${cat.id}')" class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white font-medium text-[11.5px] transition">Kích hoạt lại</button>`;
             return renderHTML`
                 <tr class="border-b border-gray-100 hover:bg-gray-50/70" data-catalog-id="${cat.id}">
                     <td class="py-2.5 px-3">
@@ -12608,14 +12680,14 @@ function renderPublicCatalogsTable() {
                         <div class="text-[11px] text-gray-400 font-mono truncate max-w-[260px]">${fullUrl}</div>
                     </td>
                     <td class="py-2.5 px-3 text-center font-semibold">${cat.itemCount}</td>
-                    <td class="py-2.5 px-3 text-gray-600">${formatCatalogExpiryDisplay(cat.expiresAt)}</td>
+                    <td class="py-2.5 px-3 text-gray-600">${isUnlimited ? 'Không giới hạn' : formatCatalogExpiryDisplay(cat.expiresAt)}</td>
                     <td class="py-2.5 px-3 text-center">${trustedHTML(badge)}</td>
                     <td class="py-2.5 px-3 text-right space-x-1 whitespace-nowrap">
                         <button type="button" onclick="copyPublicCatalogLink('${cat.id}')" class="px-2 py-1 rounded-lg bg-blue-50 text-[#0066cc] hover:bg-[#0066cc] hover:text-white font-semibold text-[11.5px] transition">Copy link</button>
                         <a href="${cat.url}" target="_blank" rel="noopener" class="inline-block px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium text-[11.5px] transition">Xem</a>
-                        <button type="button" onclick="extendPublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white font-medium text-[11.5px] transition">+3 ngày</button>
+                        ${trustedHTML(extendBtn)}
                         <button type="button" onclick="duplicatePublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-600 hover:text-white font-medium text-[11.5px] transition">Nhân bản</button>
-                        ${trustedHTML(cat.status === 'active' ? renderHTML`<button type="button" onclick="revokePublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white font-medium text-[11.5px] transition">Thu hồi</button>` : '')}
+                        ${trustedHTML(isActive ? renderHTML`<button type="button" onclick="revokePublicCatalogItem('${cat.id}')" class="px-2 py-1 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white font-medium text-[11.5px] transition">Thu hồi</button>` : '')}
                     </td>
                 </tr>
             `;
@@ -12653,9 +12725,10 @@ async function revokePublicCatalogItem(catalogId) {
 async function extendPublicCatalogItem(catalogId) {
     const cat = loadedPublicCatalogs.find((c) => c.id === catalogId);
     const title = cat?.title ? `catalog "${cat.title}"` : 'link catalog';
+    const oldExpiry = formatCatalogExpiryDisplay(cat?.expiresAt);
     const confirmed = await askAction({
         title: 'Gia hạn catalog',
-        message: `Gia hạn thêm 3 ngày hiệu lực cho ${title}?`,
+        message: `Gia hạn thêm 3 ngày cho ${title}. Hạn hiện tại: ${oldExpiry} → hạn mới sẽ được cộng thêm 72 giờ.`,
         confirmText: 'Gia hạn +3 ngày'
     });
     if (!confirmed) return;
@@ -12664,11 +12737,78 @@ async function extendPublicCatalogItem(catalogId) {
             method: 'POST',
             body: JSON.stringify({ expiresInHours: 72 })
         });
-        const expStr = formatCatalogExpiryDisplay(res.catalog?.expiresAt);
-        showToast(`Đã gia hạn catalog (Hạn mới: ${expStr})!`, 'success');
+        const newExpiry = formatCatalogExpiryDisplay(res.catalog?.expiresAt);
+        showToast(`Đã gia hạn catalog: ${oldExpiry} → ${newExpiry}`, 'success');
         await loadPublicCatalogsList();
     } catch (error) {
         showToast(error.message || 'Không thể gia hạn catalog.', 'error');
+    }
+}
+
+async function setPublicCatalogExpiry(catalogId) {
+    const cat = loadedPublicCatalogs.find((c) => c.id === catalogId);
+    const title = cat?.title ? `catalog "${cat.title}"` : 'link catalog';
+    const result = await askAction({
+        title: 'Đặt thời hạn cho catalog',
+        message: `${title} đang KHÔNG GIỚI HẠN. Sau thao tác này link sẽ hết hạn theo số ngày bạn nhập.`,
+        inputLabel: 'Số ngày hiệu lực (1-365)',
+        value: '30',
+        confirmText: 'Đặt thời hạn',
+        validate: (text) => {
+            const days = Number(text);
+            if (!Number.isInteger(days) || days < 1 || days > 365)
+                return 'Vui lòng nhập số ngày nguyên từ 1 đến 365.';
+            return '';
+        }
+    });
+    if (!result) return;
+    try {
+        const res = await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/extend`, {
+            method: 'POST',
+            body: JSON.stringify({
+                expiresInHours: Number(result.value) * 24,
+                allowLimited: true
+            })
+        });
+        showToast(
+            `Đã đặt thời hạn catalog đến ${formatCatalogExpiryDisplay(res.catalog?.expiresAt)}.`,
+            'success'
+        );
+        await loadPublicCatalogsList();
+    } catch (error) {
+        showToast(error.message || 'Không thể đặt thời hạn catalog.', 'error');
+    }
+}
+
+async function reactivatePublicCatalog(catalogId) {
+    const cat = loadedPublicCatalogs.find((c) => c.id === catalogId);
+    const title = cat?.title ? `catalog "${cat.title}"` : 'link catalog';
+    const result = await askAction({
+        title: 'Kích hoạt lại catalog',
+        message: `Link ${title} đang bị thu hồi hoặc hết hạn. Link sẽ hoạt động lại với thời hạn bạn chọn.`,
+        inputLabel: 'Số ngày hiệu lực (1-365)',
+        value: '7',
+        confirmText: 'Kích hoạt lại',
+        validate: (text) => {
+            const days = Number(text);
+            if (!Number.isInteger(days) || days < 1 || days > 365)
+                return 'Vui lòng nhập số ngày nguyên từ 1 đến 365.';
+            return '';
+        }
+    });
+    if (!result) return;
+    try {
+        const res = await KVStore.request(`/api/catalogs/${encodeURIComponent(catalogId)}/extend`, {
+            method: 'POST',
+            body: JSON.stringify({ expiresInHours: Number(result.value) * 24 })
+        });
+        showToast(
+            `Đã kích hoạt lại catalog đến ${formatCatalogExpiryDisplay(res.catalog?.expiresAt)}.`,
+            'success'
+        );
+        await loadPublicCatalogsList();
+    } catch (error) {
+        showToast(error.message || 'Không thể kích hoạt lại catalog.', 'error');
     }
 }
 
@@ -12789,15 +12929,36 @@ async function submitCreateApiToken() {
     const branch = document.getElementById('new-token-branch')?.value || '';
     const expiresInDays = Number(document.getElementById('new-token-expiry')?.value || 0);
 
+    const errorEl = document.getElementById('new-token-error');
+    const showTokenError = (message, target) => {
+        if (errorEl) {
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+        target?.setAttribute('aria-invalid', 'true');
+        target?.focus();
+        showToast(message, 'warning');
+    };
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+    }
+    document.getElementById('new-token-name')?.removeAttribute('aria-invalid');
+    document.getElementById('new-token-branch')?.removeAttribute('aria-invalid');
+
     if (!name) {
-        showToast('Vui lòng nhập tên gợi nhớ cho Token!', 'warning');
-        document.getElementById('new-token-name')?.focus();
+        showTokenError(
+            'Vui lòng nhập tên gợi nhớ cho Token!',
+            document.getElementById('new-token-name')
+        );
         return;
     }
 
     if (!branch) {
-        showToast('Vui lòng chọn chi nhánh cho token.', 'warning');
-        document.getElementById('new-token-branch')?.focus();
+        showTokenError(
+            'Vui lòng chọn chi nhánh cho token.',
+            document.getElementById('new-token-branch')
+        );
         return;
     }
     const btn = document.getElementById('btn-submit-create-token');

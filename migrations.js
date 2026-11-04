@@ -183,6 +183,27 @@ const MIGRATIONS = [
                 CREATE INDEX IF NOT EXISTS api_tokens_hash_status ON api_tokens(tokenHash, status, expiresAt);
             `);
         }
+    },
+    {
+        version: 10,
+        name: 'deplao_send_jobs',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS deplao_send_jobs (
+                    id TEXT PRIMARY KEY,
+                    userId TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    digest TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    uploaded INTEGER NOT NULL DEFAULT 0,
+                    total INTEGER NOT NULL,
+                    result TEXT NOT NULL DEFAULT '{}',
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS deplao_send_jobs_user ON deplao_send_jobs(userId, createdAt);
+            `);
+        }
     }
 ];
 

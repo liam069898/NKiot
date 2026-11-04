@@ -6885,6 +6885,7 @@
                             <span>🔗 Kết nối API (CRM & Website ngoài)</span>
                         </button>
                     </div>
+                    <button type="button" onclick="openDeplao()" class="glass-btn-secondary min-h-11 px-3 rounded-lg">Kết nối / gửi ảnh qua Deplao</button>
                     <div class="flex justify-end space-x-2.5 pt-3">
                         <button
                             type="button"
@@ -9658,7 +9659,7 @@
                 </div>
                 <div id="catalog-tab-create" class="flex-1 min-h-0 overflow-y-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
                     <div class="lg:col-span-6 flex flex-col border border-gray-200/80 rounded-xl p-3 bg-gray-50/50 min-h-[300px]">
-                        <div class="text-[13px] font-bold text-gray-800 mb-2">1. Chọn sản phẩm đưa vào catalog</div>
+                        <div class="flex flex-wrap items-center justify-between gap-2 mb-2"><div class="text-[13px] font-bold text-gray-800">1. Chọn sản phẩm đưa vào catalog</div><span id="catalog-draft-branch-label" class="text-[11.5px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/70 rounded-lg px-2 py-0.5"></span></div>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
                             <div>
                                 <label for="catalog-prod-search" class="sr-only">Tìm sản phẩm</label>
@@ -9684,7 +9685,7 @@
                         <div>
                             <label for="catalog-title-input" class="block text-[12px] font-medium text-gray-700 mb-1">Tiêu đề catalog *</label>
                             <input id="catalog-title-input" type="text" placeholder="VD: Mẫu đồng hồ tầm giá 10 - 15 triệu" class="w-full border border-gray-200 rounded-xl px-3 py-1.5 text-[13px]" aria-describedby="catalog-title-error" oninput="clearCatalogFormErrors()" />
-                            <p id="catalog-title-error" class="hidden text-[11.5px] font-semibold text-rose-600 mt-1"></p>
+                            <p id="catalog-title-error" role="alert" aria-live="polite" class="hidden text-[11.5px] font-semibold text-rose-600 mt-1"></p>
                         </div>
                         <div>
                             <label for="catalog-message-input" class="block text-[12px] font-medium text-gray-700 mb-1">Lời nhắn tư vấn gửi khách</label>
@@ -9715,8 +9716,8 @@
                                 <span class="text-[12px] font-bold text-gray-700">Sản phẩm trong catalog (<span id="catalog-selected-count">0/50</span>)</span>
                                 <button type="button" onclick="clearSelectedCatalogProducts()" class="text-[11.5px] text-rose-600 hover:underline font-medium">Xóa hết</button>
                             </div>
-                            <div id="catalog-selected-items-list" class="flex-1 overflow-y-auto space-y-1.5 max-h-[170px]"></div>
-                            <p id="catalog-items-error" class="hidden text-[11.5px] font-semibold text-rose-600 mt-1"></p>
+                            <div id="catalog-selected-items-list" tabindex="-1" aria-label="Sản phẩm đã chọn trong catalog" class="flex-1 overflow-y-auto space-y-1.5 max-h-[170px] focus:outline-none focus:ring-2 focus:ring-blue-500/30 rounded-lg"></div>
+                            <p id="catalog-items-error" role="alert" aria-live="polite" class="hidden text-[11.5px] font-semibold text-rose-600 mt-1"></p>
                         </div>
                         <div id="catalog-created-banner" class="hidden p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex flex-col gap-2">
                             <div class="text-[12.5px] font-bold text-emerald-800">Đã tạo link catalog thành công!</div>
@@ -9796,6 +9797,9 @@
                             <span class="font-bold text-[13px] text-gray-900">Thiết lập Token mới</span>
                             <button type="button" onclick="toggleCreateTokenForm(false)" class="text-gray-400 hover:text-gray-600 text-xs">Đóng lại</button>
                         </div>
+                        <p class="text-[11.5px] leading-relaxed text-slate-600 bg-slate-50 border border-slate-200/80 rounded-lg px-2.5 py-2">
+                            Token chỉ cho phép <strong>đọc hàng hóa và ảnh</strong> của <strong>một chi nhánh</strong> đã chọn. Chỉ lưu token trong backend CRM/website; không đưa vào trình duyệt, URL hoặc tin nhắn gửi khách. Thu hồi token sẽ chặn mọi truy cập mới ngay lập tức.
+                        </p>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                                 <label for="new-token-name" class="block text-[11.5px] font-semibold text-gray-700 mb-1">Tên gợi nhớ *</label>
@@ -9815,6 +9819,7 @@
                                 </select>
                             </div>
                         </div>
+                        <p id="new-token-error" role="alert" aria-live="polite" class="hidden text-[11.5px] font-semibold text-rose-600"></p>
                         <div class="flex justify-end gap-2 pt-1">
                             <button type="button" onclick="toggleCreateTokenForm(false)" class="glass-btn-secondary px-3 py-1.5 rounded-lg text-xs font-medium text-gray-700">Hủy</button>
                             <button type="button" id="btn-submit-create-token" onclick="submitCreateApiToken()" class="glass-btn-primary px-4 py-1.5 rounded-lg text-xs font-bold text-white">Xác nhận tạo Token</button>
@@ -9860,15 +9865,37 @@
                         </div>
                         <div class="font-mono text-[11px] bg-white border border-gray-200 rounded-lg p-2 text-slate-800 space-y-1">
                             <div><strong>1. Lấy sản phẩm:</strong> <span class="text-blue-700">GET /api/v1/open/products?in_stock=true</span> (Header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>)</div>
-                            <div><strong>2. Lấy chi tiết & IMEI:</strong> <span class="text-blue-700">GET /api/v1/open/products/:code</span></div>
-                            <div><strong>3. Nhúng ảnh trực tiếp vào Chat/Web:</strong> <span class="text-blue-700">GET /api/v1/open/media/:id (Header Bearer; backend CRM tải ảnh)</span></div>
+                            <div><strong>2. Lấy chi tiết &amp; máy:</strong> <span class="text-blue-700">GET /api/v1/open/products/:code</span></div>
+                            <div><strong>3. Tải ảnh:</strong> <span class="text-blue-700">GET /api/v1/open/media/:id</span> — backend CRM gọi kèm Bearer token rồi mới gửi/lưu ảnh.</div>
                         </div>
+                        <p class="text-[11px] text-amber-800 bg-amber-50/80 border border-amber-200/70 rounded-lg px-2.5 py-1.5">Không nhúng trực tiếp link ảnh NKiot vào trình duyệt khách và không đưa token vào frontend, URL hoặc tin nhắn. Xem hướng dẫn đầy đủ trong <code>DEPLOYMENT.md</code>.</p>
                     </div>
 
                 </div>
             </div>
         </div>
 
+        <div id="deplao-modal" class="kv-modal hidden fixed inset-0 bg-black/40 z-[160] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="deplao-title">
+            <div class="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-5 space-y-3">
+                <div class="flex justify-between items-center"><h3 id="deplao-title" class="font-bold text-lg">Gửi ảnh qua Deplao</h3><button type="button" class="min-h-11 px-3" onclick="document.getElementById('deplao-modal').classList.add('hidden')" aria-label="Đóng Deplao">Đóng</button></div>
+                <p class="text-sm text-gray-600">Bản đầu dành cho quản trị viên. Cấu hình trên server: NKIOT_DEPLAO_URL, NKIOT_DEPLAO_KEY và NKIOT_DEPLAO_ACCOUNTS (ánh xạ chi nhánh → tài khoản chat). Không nhập key vào chat hoặc trình duyệt.</p>
+                <p id="deplao-status" role="status" aria-live="polite" class="text-sm whitespace-pre-wrap"></p>
+                <fieldset id="deplao-fields" class="space-y-3">
+                    <button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoConnect()">Kiểm tra kết nối / tải tài khoản</button>
+                    <label class="block" for="deplao-product">Sản phẩm tại chi nhánh đang chọn</label><select id="deplao-product" class="w-full border rounded-lg p-2" onchange="deplaoProductChanged()"></select>
+                    <label class="block" for="deplao-imei">Máy / IMEI</label><select id="deplao-imei" class="w-full border rounded-lg p-2" onchange="deplaoImagesChanged()"></select>
+                    <div id="deplao-images" class="flex flex-wrap gap-3"></div>
+                    <label class="block" for="deplao-account">Tài khoản gửi</label><select id="deplao-account" class="w-full border rounded-lg p-2" onchange="deplaoClearThreads()"></select>
+                    <label class="block" for="deplao-search">Tìm hội thoại theo tên / số điện thoại</label><input id="deplao-search" class="w-full border rounded-lg p-2" maxlength="200" />
+                    <div class="flex gap-2"><button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoSearch(0)">Tìm hội thoại</button><button id="deplao-more" type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoSearch(deplaoOffset + 20)" disabled>Trang tiếp</button></div>
+                    <label class="block" for="deplao-thread">Hội thoại nhận ảnh</label><select id="deplao-thread" class="w-full border rounded-lg p-2"></select>
+                    <label class="block" for="deplao-text">Lời tư vấn gửi kèm (ảnh được gửi trước văn bản)</label><textarea id="deplao-text" maxlength="10000" rows="3" class="w-full border rounded-lg p-2"></textarea>
+                    <button type="button" id="deplao-send" class="glass-btn-primary min-h-11 px-4 text-white rounded-lg" onclick="deplaoConfirmSend()">Xác nhận người nhận và gửi ảnh</button>
+                </fieldset>
+                <div class="flex gap-2"><button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoCheckJob()">Kiểm tra lượt gửi gần nhất</button><button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoNewSend()">Chuẩn bị lượt gửi mới</button></div>
+                <p class="text-xs text-gray-600">Tối đa 10 ảnh, 10 MB/ảnh, 30 MB/lượt. Nếu kết quả chưa rõ, kiểm tra hội thoại Deplao trước khi tạo lượt gửi mới. Không tự gửi lại sau lỗi mạng.</p>
+            </div>
+        </div>
         <!-- Load App Scripts -->
         <script src="constants.js"></script>
         <script src="catalog-patch.js"></script>
@@ -9878,5 +9905,6 @@
         <script src="app-reports.js"></script>
         <script src="app-export.js"></script>
         <script src="app.js"></script>
+        <script src="app-deplao.js"></script>
     </body>
 </html>
