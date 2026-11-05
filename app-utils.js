@@ -7,6 +7,63 @@ function parseVND(str) {
     if (/^-/.test(String(str).trim())) return -parseInt(String(str).replace(/[^0-9]/g, ''), 10);
     return parseInt((str || '0').replace(/[^0-9]/g, ''), 10) || 0;
 }
+function readMoneyInVietnamese(n) {
+    if (!n || isNaN(n) || n === 0) return 'Không đồng';
+    n = Math.round(Math.abs(n));
+    const digits = ['không', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín'];
+    const units = ['', 'nghìn', 'triệu', 'tỷ', 'nghìn tỷ', 'triệu tỷ'];
+
+    function readGroup(g, isFirst) {
+        const h = Math.floor(g / 100);
+        const t = Math.floor((g % 100) / 10);
+        const u = g % 10;
+        const res = [];
+        if (h > 0 || !isFirst) {
+            res.push(digits[h] + ' trăm');
+        }
+        if (t > 1) {
+            res.push(digits[t] + ' mươi');
+            if (u === 1) res.push('mốt');
+            else if (u === 4) res.push('tư');
+            else if (u === 5) res.push('lăm');
+            else if (u > 0) res.push(digits[u]);
+        } else if (t === 1) {
+            res.push('mười');
+            if (u === 5) res.push('lăm');
+            else if (u > 0) res.push(digits[u]);
+        } else {
+            if ((h > 0 || !isFirst) && u > 0) {
+                res.push('lẻ');
+                res.push(digits[u]);
+            } else if (u > 0 && isFirst && h === 0) {
+                res.push(digits[u]);
+            }
+        }
+        return res.join(' ');
+    }
+
+    const groups = [];
+    let temp = n;
+    while (temp > 0) {
+        groups.push(temp % 1000);
+        temp = Math.floor(temp / 1000);
+    }
+
+    const words = [];
+    for (let i = groups.length - 1; i >= 0; i--) {
+        const g = groups[i];
+        if (g > 0) {
+            const s = readGroup(g, i === groups.length - 1);
+            if (s) {
+                words.push(s);
+                if (units[i]) words.push(units[i]);
+            }
+        }
+    }
+
+    const result = words.join(' ').trim() + ' đồng';
+    return result.charAt(0).toUpperCase() + result.slice(1);
+}
 function getCurrentDateTimeString() {
     const d = new Date();
     const pad = (n) => String(n).padStart(2, '0');

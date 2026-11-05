@@ -1,0 +1,24 @@
+{
+  "id": "vn.nkiot.catalog",
+  "name": "Kho hàng NKiot",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "runtime": "local",
+  "description": "Tra cứu tên, mô tả, giá và ảnh từng máy từ NKiot ngay trong Deplao. Không tự gửi tin nhắn.",
+  "permissions": ["network", "ui:pages", "ui:chat-panel", "ui:composer"],
+  "backend": { "entry": "backend/index.js" },
+  "ui": { "entry": "ui/index.html" },
+  "contributes": {
+    "pages": [{ "id": "products", "title": "Kho hàng NKiot", "path": "/" }],
+    "chatPanels": [{ "id": "products", "title": "Kho hàng NKiot", "path": "/", "width": 420 }],
+    "settings": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "baseUrl": { "type": "string", "title": "Địa chỉ NKiot", "description": "Hiển thị để tham khảo. Backend đọc baseUrl và token từ file nkiot-connection.json (quyền 0600) trong dataDir plugin; không nhập token vào đây. SDK có thể chặn mạng nội bộ.", "maxLength": 500 }
+        },
+        "required": ["baseUrl"]
+      }
+    }
+  }
+}

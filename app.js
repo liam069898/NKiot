@@ -3673,7 +3673,7 @@ async function checkoutPos() {
 // ==========================================
 
 const DEFAULT_BILL_CONFIG = {
-    paperSize: 'k80', // 'k80' | 'k58' | 'a4'
+    paperSize: 'k80', // 'k80' | 'k58' | 'a5' | 'a4'
     fontSize: 'standard', // 'compact' | 'standard' | 'large'
     fontFamily: 'monospace', // 'monospace' | 'sans'
     title: 'HÓA ĐƠN BÁN HÀNG',
@@ -3750,41 +3750,64 @@ function getBillConfig() {
 
 function applyReceiptPaperSize(size, fontSize = 'standard', fontFamily = 'monospace') {
     const isK58 = size === 'k58';
+    const isA5 = size === 'a5';
     const isA4 = size === 'a4';
     const btnK80 = document.getElementById('receipt-btn-k80');
     const btnK58 = document.getElementById('receipt-btn-k58');
+    const btnA5 = document.getElementById('receipt-btn-a5');
+    const btnA4 = document.getElementById('receipt-btn-a4');
     const printable = document.getElementById('printable-receipt');
+    const dialog =
+        document.getElementById('receipt-modal-dialog') ||
+        document.querySelector('#receipt-modal > div');
 
-    if (btnK80 && btnK58) {
-        if (isK58) {
-            btnK58.className =
-                'px-2 py-0.5 rounded font-bold transition bg-white text-[#0066cc] shadow-2xs';
-            btnK80.className =
-                'px-2 py-0.5 rounded font-medium text-gray-600 transition hover:text-gray-900';
+    if (dialog) {
+        dialog.classList.remove('max-w-sm', 'max-w-2xl', 'max-w-4xl');
+        if (isA4) {
+            dialog.classList.add('max-w-4xl');
+        } else if (isA5) {
+            dialog.classList.add('max-w-2xl');
         } else {
-            btnK80.className =
-                'px-2 py-0.5 rounded font-bold transition bg-white text-[#0066cc] shadow-2xs';
-            btnK58.className =
-                'px-2 py-0.5 rounded font-medium text-gray-600 transition hover:text-gray-900';
+            dialog.classList.add('max-w-sm');
         }
     }
+
+    const buttons = [
+        { el: btnK80, key: 'k80' },
+        { el: btnK58, key: 'k58' },
+        { el: btnA5, key: 'a5' },
+        { el: btnA4, key: 'a4' }
+    ];
+    buttons.forEach(({ el, key }) => {
+        if (!el) return;
+        if (key === size) {
+            el.className =
+                'px-2 py-0.5 rounded font-bold transition bg-white text-[#0066cc] shadow-2xs';
+        } else {
+            el.className =
+                'px-2 py-0.5 rounded font-medium text-gray-600 transition hover:text-gray-900';
+        }
+    });
+
     if (printable) {
-        printable.dataset.paper = isK58 ? 'k58' : isA4 ? 'a4' : 'k80';
+        printable.dataset.paper = isK58 ? 'k58' : isA5 ? 'a5' : isA4 ? 'a4' : 'k80';
         if (isK58) {
             printable.style.maxWidth = '270px';
+        } else if (isA5) {
+            printable.style.maxWidth = '560px';
         } else if (isA4) {
-            printable.style.maxWidth = '600px';
+            printable.style.maxWidth = '780px';
         } else {
             printable.style.maxWidth = '360px';
         }
         printable.style.margin = '0 auto';
 
         if (fontSize === 'compact') {
-            printable.style.fontSize = '11px';
+            printable.style.fontSize = isA4 ? '11.5px' : isA5 ? '10.5px' : '11px';
         } else if (fontSize === 'large') {
-            printable.style.fontSize = '13.5px';
+            printable.style.fontSize = isA4 ? '14px' : isA5 ? '12.5px' : '13.5px';
         } else {
-            printable.style.fontSize = '12px';
+            printable.style.fontSize = isA4 ? '12.5px' : isA5 ? '11px' : '12px';
         }
 
         if (fontFamily === 'sans') {
@@ -3828,6 +3851,172 @@ function switchBillCustomTab(tabName) {
     }
 }
 
+let isBillPreviewExpanded = false;
+
+function toggleBillPreviewExpand() {
+    isBillPreviewExpanded = !isBillPreviewExpanded;
+    const ctrlCol = document.getElementById('bill-custom-controls-col');
+    const prevCol = document.getElementById('bill-custom-preview-col');
+    const labelEl = document.getElementById('bill-preview-expand-label');
+
+    if (!ctrlCol || !prevCol) return;
+
+    if (isBillPreviewExpanded) {
+        ctrlCol.classList.remove('lg:col-span-7');
+        ctrlCol.classList.add('lg:col-span-4');
+        prevCol.classList.remove('lg:col-span-5');
+        prevCol.classList.add('lg:col-span-8');
+        if (labelEl) labelEl.textContent = 'Thu nhỏ';
+    } else {
+        ctrlCol.classList.remove('lg:col-span-4');
+        ctrlCol.classList.add('lg:col-span-7');
+        prevCol.classList.remove('lg:col-span-8');
+        prevCol.classList.add('lg:col-span-5');
+        if (labelEl) labelEl.textContent = 'Phóng to';
+    }
+}
+
+function applyBillPreset(type) {
+    let preset = null;
+    let label = '';
+    if (type === 'minimal') {
+        label = 'Tối giản (Tiết kiệm giấy)';
+        preset = {
+            paperSize: 'k80',
+            fontSize: 'compact',
+            fontFamily: 'monospace',
+            title: 'HÓA ĐƠN BÁN HÀNG',
+            slogan: '',
+            showLogo: false,
+            showStore: true,
+            showCustomer: true,
+            showCustomerAddress: false,
+            showCustomerPoints: false,
+            showCustomerDebt: false,
+            showCashier: false,
+            showStt: false,
+            showItemCode: false,
+            showItemUnit: false,
+            showImei: false,
+            showNote: false,
+            showDiscount: true,
+            showPaymentDetails: false,
+            showChange: false,
+            showQr: false,
+            qrSize: 'medium',
+            policy: '',
+            footer: 'Cảm ơn Quý khách & Hẹn gặp lại!',
+            showSignatures: false
+        };
+    } else if (type === 'tech') {
+        label = 'Công nghệ (Serial/IMEI & BH)';
+        preset = {
+            paperSize: 'k80',
+            fontSize: 'standard',
+            fontFamily: 'monospace',
+            title: 'HÓA ĐƠN BÁN HÀNG',
+            slogan: 'Chuyên thiết bị công nghệ & phụ kiện chính hãng',
+            showLogo: true,
+            showStore: true,
+            showCustomer: true,
+            showCustomerAddress: false,
+            showCustomerPoints: true,
+            showCustomerDebt: false,
+            showCashier: true,
+            showStt: true,
+            showItemCode: true,
+            showItemUnit: false,
+            showImei: true,
+            showNote: true,
+            showDiscount: true,
+            showPaymentDetails: true,
+            showChange: true,
+            showQr: true,
+            qrSize: 'medium',
+            policy: '• Bảo hành theo IMEI/Serial trên hệ thống điện tử.\n• Đổi mới trong 7 ngày đầu nếu có lỗi phần cứng từ NSX.',
+            footer: 'Cảm ơn Quý khách & Hẹn gặp lại!\nHotline hỗ trợ kỹ thuật: 1900 xxxx',
+            showSignatures: false
+        };
+    } else if (type === 'wholesale') {
+        label = 'Bán buôn & Kho (Khổ A4/A5)';
+        preset = {
+            paperSize: 'a4',
+            fontSize: 'standard',
+            fontFamily: 'sans',
+            title: 'HÓA ĐƠN BÁN HÀNG\n(KIÊM PHIẾU XUẤT KHO)',
+            slogan: 'Phân phối sỉ & lẻ toàn quốc',
+            showLogo: true,
+            showStore: true,
+            showCustomer: true,
+            showCustomerAddress: true,
+            showCustomerPoints: false,
+            showCustomerDebt: true,
+            showCashier: true,
+            showStt: true,
+            showItemCode: true,
+            showItemUnit: true,
+            showImei: false,
+            showNote: true,
+            showDiscount: true,
+            showPaymentDetails: true,
+            showChange: false,
+            showQr: true,
+            qrSize: 'medium',
+            policy: '• Hàng hóa xuất kho đúng chủng loại và tiêu chuẩn chất lượng.\n• Quý khách vui lòng kiểm đếm kỹ trước khi ký nhận biên bản.',
+            footer: 'Cảm ơn Quý khách đã tin tưởng hợp tác cùng chúng tôi!',
+            showSignatures: true
+        };
+    }
+    if (!preset) return;
+
+    const radK80 = document.getElementById('bill-opt-paper-k80');
+    const radK58 = document.getElementById('bill-opt-paper-k58');
+    const radA5 = document.getElementById('bill-opt-paper-a5');
+    const radA4 = document.getElementById('bill-opt-paper-a4');
+    if (radK80) radK80.checked = preset.paperSize === 'k80';
+    if (radK58) radK58.checked = preset.paperSize === 'k58';
+    if (radA5) radA5.checked = preset.paperSize === 'a5';
+    if (radA4) radA4.checked = preset.paperSize === 'a4';
+
+    const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.value = val ?? '';
+    };
+    setVal('bill-custom-title', preset.title);
+    setVal('bill-custom-slogan', preset.slogan);
+    setVal('bill-custom-footer', preset.footer);
+    setVal('bill-custom-policy', preset.policy);
+    setVal('bill-custom-font-size', preset.fontSize);
+    setVal('bill-custom-font-family', preset.fontFamily);
+    setVal('bill-custom-qr-size', preset.qrSize);
+
+    const setCb = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = Boolean(val);
+    };
+    setCb('bill-custom-show-logo', preset.showLogo);
+    setCb('bill-custom-show-store', preset.showStore);
+    setCb('bill-custom-show-customer', preset.showCustomer);
+    setCb('bill-custom-show-cust-addr', preset.showCustomerAddress);
+    setCb('bill-custom-show-cust-points', preset.showCustomerPoints);
+    setCb('bill-custom-show-cust-debt', preset.showCustomerDebt);
+    setCb('bill-custom-show-cashier', preset.showCashier);
+    setCb('bill-custom-show-stt', preset.showStt);
+    setCb('bill-custom-show-item-code', preset.showItemCode);
+    setCb('bill-custom-show-item-unit', preset.showItemUnit);
+    setCb('bill-custom-show-note', preset.showNote);
+    setCb('bill-custom-show-imei', preset.showImei);
+    setCb('bill-custom-show-discount', preset.showDiscount);
+    setCb('bill-custom-show-payment-details', preset.showPaymentDetails);
+    setCb('bill-custom-show-change', preset.showChange);
+    setCb('bill-custom-show-qr', preset.showQr);
+    setCb('bill-custom-show-signatures', preset.showSignatures);
+
+    updateBillPaperCardsUI(preset.paperSize);
+    onBillConfigChange();
+    showToast(`Đã áp dụng mẫu in: ${label}`, 'success');
+}
+
 function openBillCustomModal() {
     const modal = document.getElementById('bill-custom-modal');
     if (!modal) return;
@@ -3835,12 +4024,13 @@ function openBillCustomModal() {
 
     const radK80 = document.getElementById('bill-opt-paper-k80');
     const radK58 = document.getElementById('bill-opt-paper-k58');
+    const radA5 = document.getElementById('bill-opt-paper-a5');
     const radA4 = document.getElementById('bill-opt-paper-a4');
-    if (radK80 && radK58) {
-        radK80.checked = cfg.paperSize === 'k80' || (!radK58.checked && !radA4?.checked);
-        radK58.checked = cfg.paperSize === 'k58';
-        if (radA4) radA4.checked = cfg.paperSize === 'a4';
-    }
+    const curPaper = cfg.paperSize || 'k80';
+    if (radK80) radK80.checked = curPaper === 'k80';
+    if (radK58) radK58.checked = curPaper === 'k58';
+    if (radA5) radA5.checked = curPaper === 'a5';
+    if (radA4) radA4.checked = curPaper === 'a4';
 
     const setVal = (id, val) => {
         const el = document.getElementById(id);
@@ -3880,6 +4070,32 @@ function openBillCustomModal() {
     setCb('bill-custom-show-qr', cfg.showQr !== false);
     setCb('bill-custom-show-signatures', Boolean(cfg.showSignatures));
 
+    // Update logo preview thumbnail
+    const logoPrev = document.getElementById('bill-custom-logo-preview');
+    if (logoPrev) {
+        const s = KVStore.data?.settings || {};
+        if (s.logoUrl) {
+            logoPrev.innerHTML = `<img src="${escapeHTML(s.logoUrl)}" class="w-full h-full object-contain p-0.5" alt="Logo" />`;
+        } else {
+            logoPrev.innerHTML = `<span class="text-[10px] text-gray-400">Chưa có logo</span>`;
+        }
+    }
+
+    // Reset preview expand state to default compact layout
+    isBillPreviewExpanded = false;
+    const ctrlCol = document.getElementById('bill-custom-controls-col');
+    const prevCol = document.getElementById('bill-custom-preview-col');
+    const labelEl = document.getElementById('bill-preview-expand-label');
+    if (ctrlCol) {
+        ctrlCol.classList.remove('lg:col-span-4');
+        ctrlCol.classList.add('lg:col-span-7');
+    }
+    if (prevCol) {
+        prevCol.classList.remove('lg:col-span-8');
+        prevCol.classList.add('lg:col-span-5');
+    }
+    if (labelEl) labelEl.textContent = 'Phóng to';
+
     updateBillPaperCardsUI(cfg.paperSize || 'k80');
     switchBillCustomTab('format');
     renderBillLivePreview(cfg);
@@ -3891,27 +4107,35 @@ function closeBillCustomModal() {
 }
 
 function updateBillPaperCardsUI(size) {
-    const k80Card = document.getElementById('bill-opt-paper-k80-card');
-    const k58Card = document.getElementById('bill-opt-paper-k58-card');
-    const a4Card = document.getElementById('bill-opt-paper-a4-card');
-    [k80Card, k58Card, a4Card].forEach((card) => {
-        card?.classList.remove('border-[#0066cc]', 'bg-blue-50/50', 'ring-1', 'ring-[#0066cc]/30');
+    const cards = {
+        k80: document.getElementById('bill-opt-paper-k80-card'),
+        k58: document.getElementById('bill-opt-paper-k58-card'),
+        a5: document.getElementById('bill-opt-paper-a5-card'),
+        a4: document.getElementById('bill-opt-paper-a4-card')
+    };
+    Object.entries(cards).forEach(([key, card]) => {
+        if (!card) return;
+        if (key === size) {
+            card.classList.add('border-[#0066cc]', 'bg-blue-50/50', 'ring-1', 'ring-[#0066cc]/30');
+            card.classList.remove('border-gray-200');
+        } else {
+            card.classList.remove(
+                'border-[#0066cc]',
+                'bg-blue-50/50',
+                'ring-1',
+                'ring-[#0066cc]/30'
+            );
+            card.classList.add('border-gray-200');
+        }
     });
-    if (size === 'k58') {
-        k58Card?.classList.add('border-[#0066cc]', 'bg-blue-50/50', 'ring-1', 'ring-[#0066cc]/30');
-    } else if (size === 'a4') {
-        a4Card?.classList.add('border-[#0066cc]', 'bg-blue-50/50', 'ring-1', 'ring-[#0066cc]/30');
-    } else {
-        k80Card?.classList.add('border-[#0066cc]', 'bg-blue-50/50', 'ring-1', 'ring-[#0066cc]/30');
-    }
 }
 
 function readBillCustomModalValues() {
-    const isK58 = document.getElementById('bill-opt-paper-k58')?.checked;
-    const isA4 = document.getElementById('bill-opt-paper-a4')?.checked;
     let paperSize = 'k80';
-    if (isK58) paperSize = 'k58';
-    else if (isA4) paperSize = 'a4';
+    if (document.getElementById('bill-opt-paper-k58')?.checked) paperSize = 'k58';
+    else if (document.getElementById('bill-opt-paper-a5')?.checked) paperSize = 'a5';
+    else if (document.getElementById('bill-opt-paper-a4')?.checked) paperSize = 'a4';
+    else if (document.getElementById('bill-opt-paper-k80')?.checked) paperSize = 'k80';
 
     return {
         paperSize,
@@ -3957,9 +4181,10 @@ function readBillCustomModalValues() {
 }
 
 function onBillConfigChange() {
-    const isK58 = document.getElementById('bill-opt-paper-k58')?.checked;
-    const isA4 = document.getElementById('bill-opt-paper-a4')?.checked;
-    const paperSize = isK58 ? 'k58' : isA4 ? 'a4' : 'k80';
+    let paperSize = 'k80';
+    if (document.getElementById('bill-opt-paper-k58')?.checked) paperSize = 'k58';
+    else if (document.getElementById('bill-opt-paper-a5')?.checked) paperSize = 'a5';
+    else if (document.getElementById('bill-opt-paper-a4')?.checked) paperSize = 'a4';
     updateBillPaperCardsUI(paperSize);
 
     const liveCfg = readBillCustomModalValues();
@@ -3989,9 +4214,11 @@ function resetBillCustomConfig() {
     const def = { ...DEFAULT_BILL_CONFIG };
     const radK80 = document.getElementById('bill-opt-paper-k80');
     const radK58 = document.getElementById('bill-opt-paper-k58');
+    const radA5 = document.getElementById('bill-opt-paper-a5');
     const radA4 = document.getElementById('bill-opt-paper-a4');
     if (radK80) radK80.checked = true;
     if (radK58) radK58.checked = false;
+    if (radA5) radA5.checked = false;
     if (radA4) radA4.checked = false;
 
     const setVal = (id, val) => {
@@ -4037,16 +4264,388 @@ function resetBillCustomConfig() {
     showToast('Đã khôi phục thiết lập mẫu in mặc định', 'info');
 }
 
+function buildReceiptHTML(inv, cfg, isPreview = false) {
+    if (!inv) return '';
+    const s = KVStore.data?.settings || {};
+    const isSheet = cfg.paperSize === 'a4' || cfg.paperSize === 'a5';
+    const isA4 = cfg.paperSize === 'a4';
+
+    const storeName = cfg.customStoreName || s.storeName || 'Kalo HCM';
+    const storeAddr = cfg.customAddress || s.address || '103 Võ Văn Tần, Q.3, TP.HCM';
+    const storePhone = cfg.customPhone
+        ? `Hotline: ${cfg.customPhone}`
+        : s.phone
+          ? `Hotline: ${s.phone}`
+          : s.hotline
+            ? `Hotline: ${s.hotline}`
+            : 'Hotline: 1900 6522';
+    const storeTax = cfg.customTaxCode ? `MST: ${cfg.customTaxCode}` : '';
+    const billTitle = inv._isDraft ? 'PHIẾU TẠM TÍNH (DRAFT)' : cfg.title || 'HÓA ĐƠN BÁN HÀNG';
+
+    const custName =
+        (typeof inv.customer === 'string' ? inv.customer : inv.customer?.name) || 'Khách lẻ';
+    const custPhone = inv.customerPhone || (inv.customer && inv.customer.phone) || '';
+    const custAddr = inv.customerAddress || (inv.customer && inv.customer.address) || '';
+    const custPoints =
+        inv.customerPoints != null ? inv.customerPoints : inv.customer && inv.customer.points;
+    const custDebt =
+        inv.customerOldDebt != null ? inv.customerOldDebt : inv.customer && inv.customer.debt;
+
+    const cashier = inv.cashier || s.cashier || 'Thu ngân';
+
+    const total = inv.total || 0;
+    const discount = inv.discount || 0;
+    const paid = inv.paid || 0;
+    const remainingDebt = Math.max(0, total - (inv.returnedTotal || 0) - paid);
+    const totalDebtAfter = (custDebt || 0) + remainingDebt;
+    const change = paid - total;
+    const inWords = typeof readMoneyInVietnamese === 'function' ? readMoneyInVietnamese(total) : '';
+
+    // Payments breakdown
+    const payments = Array.isArray(inv.payments) ? inv.payments.filter((p) => p.amount > 0) : [];
+    const showBreakdown =
+        cfg.showPaymentDetails !== false && (payments.length > 1 || inv.paymentMethod === 'multi');
+    const breakdownContent = showBreakdown
+        ? `
+            <div class="font-bold text-gray-700 mb-0.5">Chi tiết thanh toán:</div>
+            ${payments
+                .map((p) => {
+                    const methodNames = {
+                        transfer: 'Chuyển khoản',
+                        cash: 'Tiền mặt',
+                        card: 'Quẹt thẻ'
+                    };
+                    const label = methodNames[p.method] || p.method;
+                    return `<div class="flex justify-between"><span>• ${escapeHTML(label)}:</span><span class="font-bold">${formatVND(p.amount)} đ</span></div>`;
+                })
+                .join('')}
+        `
+        : '';
+
+    // VietQR Code
+    const transferAmount = Array.isArray(inv.payments)
+        ? inv.payments.find((p) => p.method === 'transfer')?.amount ||
+          (inv.paymentMethod === 'transfer' ? paid : 0)
+        : inv.paymentMethod === 'transfer'
+          ? paid
+          : 0;
+
+    let qrSrc = '';
+    const qrSizeMap = {
+        small: isSheet ? 'w-24 h-24' : 'w-20 h-20',
+        medium: isSheet ? 'w-28 h-28' : 'w-24 h-24',
+        large: isSheet ? 'w-36 h-36' : 'w-32 h-32'
+    };
+    const qrSizeClass = qrSizeMap[cfg.qrSize] || (isSheet ? 'w-28 h-28' : 'w-24 h-24');
+
+    if (cfg.showQr) {
+        if (s.bankCode && s.bankAccount && (transferAmount > 0 || isPreview)) {
+            const amt = transferAmount > 0 ? transferAmount : total;
+            const bankOwner = s.bankOwner || s.storeName || 'NKIOT';
+            qrSrc = `https://api.vietqr.io/image/${s.bankCode}-${s.bankAccount}-compact.jpg?amount=${amt}&addInfo=${encodeURIComponent(inv.code || 'HD')}&accountName=${encodeURIComponent(bankOwner)}`;
+        }
+    }
+
+    if (isSheet) {
+        // Table headers for A4 / A5
+        let theadCols = '';
+        if (cfg.showStt)
+            theadCols += '<th class="border border-slate-300 py-1.5 px-2 text-center w-8">#</th>';
+        if (cfg.showItemCode)
+            theadCols +=
+                '<th class="border border-slate-300 py-1.5 px-2 text-left w-24">Mã hàng</th>';
+        theadCols +=
+            '<th class="border border-slate-300 py-1.5 px-2 text-left">Tên hàng hóa, dịch vụ</th>';
+        if (cfg.showItemUnit)
+            theadCols +=
+                '<th class="border border-slate-300 py-1.5 px-2 text-center w-14">ĐVT</th>';
+        theadCols += '<th class="border border-slate-300 py-1.5 px-2 text-center w-14">SL</th>';
+        theadCols += '<th class="border border-slate-300 py-1.5 px-2 text-right w-24">Đơn giá</th>';
+        theadCols +=
+            '<th class="border border-slate-300 py-1.5 px-2 text-right w-28">Thành tiền</th>';
+
+        // Table body rows for A4 / A5
+        const tbodyRows = (inv.items || [])
+            .map((item, idx) => {
+                const skuHtml =
+                    cfg.showItemCode && item.code
+                        ? `<div class="text-[10px] text-gray-500 font-mono mt-0.5">Mã: ${escapeHTML(item.code)}</div>`
+                        : '';
+                const imeiHtml =
+                    cfg.showImei && Array.isArray(item.imeis) && item.imeis.length
+                        ? `<div class="text-[10px] text-gray-500 font-mono mt-0.5">IMEI: ${escapeHTML(item.imeis.join(', '))}</div>`
+                        : '';
+                const noteHtml =
+                    cfg.showNote && item.note
+                        ? `<div class="text-[10px] text-gray-500 italic mt-0.5">Ghi chú: ${escapeHTML(item.note)}</div>`
+                        : '';
+
+                let r = '<tr class="border-b border-slate-200">';
+                if (cfg.showStt)
+                    r += `<td class="border border-slate-300 py-1.5 px-2 text-center text-slate-600">${idx + 1}</td>`;
+                if (cfg.showItemCode)
+                    r += `<td class="border border-slate-300 py-1.5 px-2 font-mono text-[11px] text-slate-700">${escapeHTML(item.code || '-')}</td>`;
+                r += `<td class="border border-slate-300 py-1.5 px-2 text-slate-800">
+                    <div class="font-medium">${escapeHTML(item.name || item.code)}</div>
+                    ${skuHtml}${imeiHtml}${noteHtml}
+                </td>`;
+                if (cfg.showItemUnit)
+                    r += `<td class="border border-slate-300 py-1.5 px-2 text-center text-slate-600">${escapeHTML(item.unit || '-')}</td>`;
+                r += `<td class="border border-slate-300 py-1.5 px-2 text-center font-bold text-slate-800">${item.qty}</td>`;
+                r += `<td class="border border-slate-300 py-1.5 px-2 text-right text-slate-700">${formatVND(item.price)} đ</td>`;
+                r += `<td class="border border-slate-300 py-1.5 px-2 text-right font-bold text-slate-900">${formatVND(item.qty * item.price)} đ</td>`;
+                r += '</tr>';
+                return r;
+            })
+            .join('');
+
+        const logoHtml =
+            cfg.showLogo && s.logoUrl
+                ? `<div id="receipt-logo-wrap" class="mb-2 flex"><img id="receipt-logo-img" src="${escapeHTML(s.logoUrl)}" class="max-h-12 max-w-[180px] object-contain" alt="Logo" /></div>`
+                : `<div id="receipt-logo-wrap" class="hidden"><img id="receipt-logo-img" class="max-h-12 max-w-[180px] object-contain" alt="Logo" /></div>`;
+
+        const qrBlock = cfg.showQr
+            ? `<div id="receipt-qr-wrap" class="mt-2 pt-2 border-t border-dashed border-gray-300 flex flex-col items-center sm:items-start">
+                <div class="text-[10.5px] text-gray-500 font-sans mb-1">Mã VietQR thanh toán 24/7:</div>
+                ${
+                    qrSrc
+                        ? `<img id="receipt-qr-img" src="${escapeHTML(qrSrc)}" class="${qrSizeClass} object-contain rounded border border-gray-200" alt="VietQR" />`
+                        : `<div id="receipt-qr-img" class="${qrSizeClass} bg-gray-50 border border-gray-300 rounded p-1 flex items-center justify-center font-mono text-[9px] text-gray-400">[ QR VietQR ]</div>`
+                }
+               </div>`
+            : `<div id="receipt-qr-wrap" class="hidden"><img id="receipt-qr-img" /></div>`;
+
+        return `
+            <div class="receipt-sheet p-2 text-left">
+                <!-- 2-Column Commercial Header -->
+                <div class="flex justify-between items-start pb-3 border-b-2 border-slate-800 mb-3">
+                    <div class="w-7/12 pr-4 space-y-1">
+                        ${logoHtml}
+                        <div id="receipt-store-name" class="${cfg.showStore ? '' : 'hidden '}font-bold ${isA4 ? 'text-[17px]' : 'text-[15px]'} text-slate-900 uppercase tracking-wide leading-tight whitespace-pre-line">${escapeHTML(storeName)}</div>
+                        <div id="receipt-slogan" class="${cfg.showStore && cfg.slogan ? '' : 'hidden '}text-[11px] text-slate-500 italic whitespace-pre-line">${escapeHTML(cfg.slogan || '')}</div>
+                        <div id="receipt-address" class="${cfg.showStore ? '' : 'hidden '}text-[11.5px] text-slate-600 whitespace-pre-line">${escapeHTML(storeAddr)}</div>
+                        <div id="receipt-phone" class="${cfg.showStore ? '' : 'hidden '}text-[11.5px] text-slate-600 font-medium whitespace-pre-line">${escapeHTML(storePhone)}</div>
+                        <div id="receipt-tax-code" class="${cfg.showStore && storeTax ? '' : 'hidden '}text-[11px] text-slate-600 whitespace-pre-line">${escapeHTML(storeTax)}</div>
+                    </div>
+                    <div class="w-5/12 text-right space-y-1">
+                        <div id="receipt-title" class="font-bold ${isA4 ? 'text-[19px]' : 'text-[16px]'} text-[#0066cc] uppercase tracking-wide leading-tight whitespace-pre-line">${escapeHTML(billTitle)}</div>
+                        <div id="receipt-row-code" class="text-[12px] text-slate-700">Số HĐ: <span id="receipt-code" class="font-bold font-mono text-slate-900">${escapeHTML(inv.code || '')}</span></div>
+                        <div id="receipt-row-time" class="text-[11.5px] text-slate-600">Ngày lập: <span id="receipt-time">${escapeHTML(inv.time || '')}</span></div>
+                        <div id="receipt-row-cashier" class="${cfg.showCashier ? '' : 'hidden '}text-[11.5px] text-slate-600">Thu ngân: <span id="receipt-cashier" class="font-medium text-slate-800">${escapeHTML(cashier)}</span></div>
+                    </div>
+                </div>
+
+                <!-- Customer Details Box -->
+                <div class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-3 text-[12px] space-y-1 text-slate-700">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div id="receipt-row-customer" class="${cfg.showCustomer ? '' : 'hidden'}">
+                            <span class="font-semibold text-slate-800">Khách hàng:</span> <span id="receipt-customer" class="font-bold text-slate-900">${escapeHTML(custName)}</span>
+                        </div>
+                        ${custPhone ? `<div><span class="font-semibold text-slate-800">Điện thoại:</span> <span class="font-medium text-slate-900">${escapeHTML(custPhone)}</span></div>` : '<div></div>'}
+                    </div>
+                    <div id="receipt-row-cust-addr" class="${cfg.showCustomer && cfg.showCustomerAddress && custAddr ? '' : 'hidden'}">
+                        <span class="font-semibold text-slate-800">Địa chỉ giao hàng:</span> <span id="receipt-cust-addr">${escapeHTML(custAddr)}</span>
+                    </div>
+                    <div class="flex space-x-6 pt-0.5">
+                        <div id="receipt-row-cust-points" class="${cfg.showCustomer && cfg.showCustomerPoints && custPoints != null ? '' : 'hidden'}">
+                            <span class="font-semibold text-slate-800">Điểm tích lũy:</span> <span id="receipt-cust-points" class="font-bold text-[#0066cc]">${custPoints || 0} điểm</span>
+                        </div>
+                        <div id="receipt-row-cust-debt" class="${cfg.showCustomer && cfg.showCustomerDebt && custDebt && custDebt > 0 ? '' : 'hidden'}">
+                            <span class="font-semibold text-slate-800">Nợ cũ:</span> <span id="receipt-cust-debt" class="font-bold text-red-600">${formatVND(custDebt || 0)} đ</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Items Table -->
+                <table class="w-full border-collapse border border-slate-300 text-left text-[12px] mb-3" id="receipt-items-table">
+                    <thead class="bg-slate-100 font-bold text-slate-800">
+                        <tr id="receipt-items-thead-tr">${theadCols}</tr>
+                    </thead>
+                    <tbody id="receipt-items-tbody">${tbodyRows}</tbody>
+                </table>
+
+                <!-- Summary & Totals -->
+                <div class="flex justify-between items-start pt-1 pb-2 border-b border-slate-200 mb-3">
+                    <div class="w-6/12 pr-4 space-y-2">
+                        <div id="receipt-words-total" class="text-[12px] text-slate-700 italic">
+                            Số tiền viết bằng chữ: <span class="font-bold text-slate-900">${escapeHTML(inWords)}</span>
+                        </div>
+                        <div id="receipt-payments-breakdown" class="${showBreakdown ? '' : 'hidden '}text-left text-[11px] text-gray-600 pt-1 border-t border-dashed border-gray-200">
+                            ${breakdownContent}
+                        </div>
+                        ${qrBlock}
+                    </div>
+                    <div class="w-6/12 space-y-1 text-right text-[12.5px]">
+                        <div class="flex justify-between text-slate-700">
+                            <span>Tổng tiền hàng:</span>
+                            <span id="receipt-total" class="font-bold text-slate-900">${formatVND(total)} đ</span>
+                        </div>
+                        <div id="receipt-row-discount" class="${cfg.showDiscount !== false && discount > 0 ? '' : 'hidden '}flex justify-between text-slate-700">
+                            <span>Chiết khấu / Giảm giá:</span>
+                            <span id="receipt-discount" class="text-slate-900 font-medium">${formatVND(discount)} đ</span>
+                        </div>
+                        <div class="flex justify-between text-[13.5px] font-bold text-slate-900 pt-1 border-t border-slate-200">
+                            <span>Tổng cộng thanh toán:</span>
+                            <span class="text-[#0066cc]">${formatVND(total)} đ</span>
+                        </div>
+                        <div class="flex justify-between text-slate-700">
+                            <span>Khách đã trả:</span>
+                            <span id="receipt-paid" class="font-bold text-emerald-600">${formatVND(paid)} đ</span>
+                        </div>
+                        <div id="receipt-row-debt" class="${remainingDebt > 0 ? '' : 'hidden '}flex justify-between text-red-600 font-bold">
+                            <span>Còn nợ hóa đơn:</span>
+                            <span id="receipt-debt">${formatVND(remainingDebt)} đ</span>
+                        </div>
+                        <div id="receipt-row-total-debt" class="${cfg.showCustomerDebt && totalDebtAfter > 0 ? '' : 'hidden '}flex justify-between text-red-600 font-bold">
+                            <span>Tổng nợ sau mua:</span>
+                            <span id="receipt-total-debt">${formatVND(totalDebtAfter)} đ</span>
+                        </div>
+                        <div id="receipt-row-change" class="${cfg.showChange !== false && change > 0 ? '' : 'hidden '}flex justify-between text-slate-600">
+                            <span>Tiền thừa trả khách:</span>
+                            <span id="receipt-change">${formatVND(change)} đ</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3-Column Signatures -->
+                <div id="receipt-signatures" class="${cfg.showSignatures ? '' : 'hidden '}pt-2 pb-2 grid grid-cols-3 text-center text-[12px] text-slate-800">
+                    <div>
+                        <div class="font-bold">Người mua hàng</div>
+                        <div class="text-[11px] text-slate-500 italic">(Ký, ghi rõ họ tên)</div>
+                        <div class="h-14"></div>
+                    </div>
+                    <div>
+                        <div class="font-bold">Người giao hàng</div>
+                        <div class="text-[11px] text-slate-500 italic">(Ký, ghi rõ họ tên)</div>
+                        <div class="h-14"></div>
+                    </div>
+                    <div>
+                        <div class="font-bold">Người lập hóa đơn / Thủ kho</div>
+                        <div class="text-[11px] text-slate-500 italic">(Ký, đóng dấu nếu có)</div>
+                        <div class="h-14"></div>
+                    </div>
+                </div>
+
+                <!-- Footer & Policy -->
+                <div class="border-t border-dashed border-slate-300 pt-2 text-center space-y-1">
+                    <div id="receipt-footer" class="text-[11.5px] text-slate-600 italic whitespace-pre-line">${escapeHTML(cfg.footer || 'Cảm ơn Quý khách & Hẹn gặp lại!')}</div>
+                    <div id="receipt-policy" class="${cfg.policy ? '' : 'hidden '}text-[10.5px] text-slate-500 italic whitespace-pre-line">${escapeHTML(cfg.policy || '')}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Thermal layout (K80 / K58)
+    let theadCols = '<tr class="border-b border-gray-300 font-bold" id="receipt-items-thead-tr">';
+    if (cfg.showStt) theadCols += '<th class="py-1 w-6">#</th>';
+    theadCols += '<th class="py-1">Mặt hàng</th>';
+    if (cfg.showItemUnit) theadCols += '<th class="py-1 text-center w-10">ĐVT</th>';
+    theadCols += '<th class="py-1 text-center">SL</th>';
+    theadCols += '<th class="py-1 text-right">Đơn giá</th>';
+    theadCols += '<th class="py-1 text-right">T.Tiền</th></tr>';
+
+    const tbodyRows = (inv.items || [])
+        .map((item, idx) => {
+            const skuHtml =
+                cfg.showItemCode && item.code
+                    ? `<div class="text-[10px] text-gray-500 font-mono mt-0.5 leading-tight text-left">Mã: ${escapeHTML(item.code)}</div>`
+                    : '';
+            const imeiHtml =
+                cfg.showImei && Array.isArray(item.imeis) && item.imeis.length
+                    ? `<div class="text-[10px] text-gray-500 font-mono mt-0.5 leading-tight text-left">IMEI: ${escapeHTML(item.imeis.join(', '))}</div>`
+                    : '';
+            const noteHtml =
+                cfg.showNote && item.note
+                    ? `<div class="text-[10px] text-gray-500 italic mt-0.5 leading-tight text-left">Ghi chú: ${escapeHTML(item.note)}</div>`
+                    : '';
+
+            let r = '<tr class="border-b border-gray-100 text-[11.5px]">';
+            if (cfg.showStt) r += `<td class="py-1.5 text-center text-gray-500">${idx + 1}</td>`;
+            r += `<td class="py-1.5 pr-1 text-left">
+                <div>${escapeHTML(item.name || item.code)}</div>
+                ${skuHtml}${imeiHtml}${noteHtml}
+            </td>`;
+            if (cfg.showItemUnit)
+                r += `<td class="py-1.5 px-1 text-center text-gray-600">${escapeHTML(item.unit || '-')}</td>`;
+            r += `<td class="py-1.5 px-1 text-center font-bold">${item.qty}</td>`;
+            r += `<td class="py-1.5 px-1 text-right">${formatVND(item.price)}</td>`;
+            r += `<td class="py-1.5 pl-1 text-right font-bold">${formatVND(item.qty * item.price)}</td></tr>`;
+            return r;
+        })
+        .join('');
+
+    const logoHtml =
+        cfg.showLogo && s.logoUrl
+            ? `<div id="receipt-logo-wrap" class="mb-2 flex justify-center"><img id="receipt-logo-img" src="${escapeHTML(s.logoUrl)}" class="max-h-12 max-w-[180px] object-contain mx-auto" alt="Logo" /></div>`
+            : `<div id="receipt-logo-wrap" class="hidden mb-2 justify-center"><img id="receipt-logo-img" class="max-h-12 max-w-[180px] object-contain mx-auto" alt="Logo" /></div>`;
+
+    const qrBlock = cfg.showQr
+        ? `<div id="receipt-qr-wrap" class="mt-2 pt-2 border-t border-dashed border-gray-300 flex flex-col items-center">
+            <div class="text-[10px] text-gray-500 font-sans mb-1">Mã VietQR thanh toán 24/7:</div>
+            ${
+                qrSrc
+                    ? `<img id="receipt-qr-img" src="${escapeHTML(qrSrc)}" class="${qrSizeClass} object-contain mx-auto" alt="VietQR" />`
+                    : `<div id="receipt-qr-img" class="${qrSizeClass} bg-gray-50 border border-gray-300 rounded p-1 mx-auto flex items-center justify-center font-mono text-[9px] text-gray-400">[ QR VietQR ]</div>`
+            }
+           </div>`
+        : `<div id="receipt-qr-wrap" class="hidden"><img id="receipt-qr-img" /></div>`;
+
+    return `
+        ${logoHtml}
+        <div id="receipt-store-name" class="${cfg.showStore ? '' : 'hidden '}font-bold text-[14.5px] uppercase whitespace-pre-line">${escapeHTML(storeName)}</div>
+        <div id="receipt-slogan" class="${cfg.showStore && cfg.slogan ? '' : 'hidden '}text-[10.5px] text-gray-500 italic mb-0.5 whitespace-pre-line">${escapeHTML(cfg.slogan || '')}</div>
+        <div id="receipt-address" class="${cfg.showStore ? '' : 'hidden '}text-[11px] text-gray-600 whitespace-pre-line">${escapeHTML(storeAddr)}</div>
+        <div id="receipt-phone" class="${cfg.showStore ? '' : 'hidden '}text-[11px] text-gray-600 whitespace-pre-line mb-1">${escapeHTML(storePhone)}</div>
+        <div id="receipt-tax-code" class="${cfg.showStore && storeTax ? '' : 'hidden '}text-[10.5px] text-gray-600 whitespace-pre-line mb-1">${escapeHTML(storeTax)}</div>
+        <div class="border-b border-dashed border-gray-400 my-2"></div>
+        <div id="receipt-title" class="font-bold text-[13.5px] uppercase mb-1 whitespace-pre-line">${escapeHTML(billTitle)}</div>
+        <div class="text-[11px] text-left space-y-0.5">
+            <div id="receipt-row-code">Số HĐ: <span id="receipt-code" class="font-bold">${escapeHTML(inv.code || '')}</span></div>
+            <div id="receipt-row-time">Ngày: <span id="receipt-time">${escapeHTML(inv.time || '')}</span></div>
+            <div id="receipt-row-customer" class="${cfg.showCustomer ? '' : 'hidden'}">Khách hàng: <span id="receipt-customer">${escapeHTML(custName)}</span></div>
+            <div id="receipt-row-cust-addr" class="${cfg.showCustomer && cfg.showCustomerAddress && custAddr ? '' : 'hidden'}">Địa chỉ: <span id="receipt-cust-addr">${escapeHTML(custAddr)}</span></div>
+            <div id="receipt-row-cust-points" class="${cfg.showCustomer && cfg.showCustomerPoints && custPoints != null ? '' : 'hidden'}">Điểm tích lũy: <span id="receipt-cust-points" class="font-bold text-[#0066cc]">${custPoints || 0} điểm</span></div>
+            <div id="receipt-row-cust-debt" class="${cfg.showCustomer && cfg.showCustomerDebt && custDebt && custDebt > 0 ? '' : 'hidden'}">Nợ cũ: <span id="receipt-cust-debt" class="font-bold text-red-600">${formatVND(custDebt || 0)} đ</span></div>
+            <div id="receipt-row-cashier" class="${cfg.showCashier ? '' : 'hidden'}">Thu ngân: <span id="receipt-cashier">${escapeHTML(cashier)}</span></div>
+        </div>
+        <div class="border-b border-dashed border-gray-400 my-2"></div>
+        <table class="w-full text-left" id="receipt-items-table">
+            <thead>${theadCols}</thead>
+            <tbody id="receipt-items-tbody">${tbodyRows}</tbody>
+        </table>
+        <div class="border-b border-dashed border-gray-400 my-2"></div>
+        <div class="space-y-1 text-right font-medium">
+            <div class="flex justify-between"><span>Tổng tiền:</span><span id="receipt-total" class="font-bold">${formatVND(total)} đ</span></div>
+            <div id="receipt-row-discount" class="${cfg.showDiscount !== false && discount > 0 ? '' : 'hidden '}flex justify-between"><span>Giảm giá:</span><span id="receipt-discount">${formatVND(discount)} đ</span></div>
+            <div class="flex justify-between text-[12.5px] font-bold"><span>Khách đã trả:</span><span id="receipt-paid" class="text-[#0066cc]">${formatVND(paid)} đ</span></div>
+            <div id="receipt-row-debt" class="${remainingDebt > 0 ? '' : 'hidden '}flex justify-between text-[11.5px] text-red-600 font-bold"><span>Còn nợ đơn:</span><span id="receipt-debt">${formatVND(remainingDebt)} đ</span></div>
+            <div id="receipt-row-total-debt" class="${cfg.showCustomerDebt && totalDebtAfter > 0 ? '' : 'hidden '}flex justify-between text-[11.5px] text-red-600 font-bold"><span>Tổng nợ sau mua:</span><span id="receipt-total-debt">${formatVND(totalDebtAfter)} đ</span></div>
+            <div id="receipt-row-change" class="${cfg.showChange !== false && change > 0 ? '' : 'hidden '}flex justify-between text-[11.5px] text-gray-600"><span>Tiền thừa:</span><span id="receipt-change">${formatVND(change)} đ</span></div>
+            <div id="receipt-payments-breakdown" class="${showBreakdown ? '' : 'hidden '}text-left text-[11px] text-gray-600 pt-1 border-t border-dashed border-gray-200">${breakdownContent}</div>
+        </div>
+        <div id="receipt-words-total" class="text-[10.5px] text-gray-500 italic text-left pt-1">Bằng chữ: <span class="font-semibold text-gray-700">${escapeHTML(inWords)}</span></div>
+        ${qrBlock}
+        <div class="border-b border-dashed border-gray-400 my-2.5"></div>
+        <div id="receipt-footer" class="text-[11px] text-gray-600 italic whitespace-pre-line">${escapeHTML(cfg.footer || 'Cảm ơn Quý khách & Hẹn gặp lại!')}</div>
+        <div id="receipt-policy" class="${cfg.policy ? '' : 'hidden '}text-[10px] text-gray-500 mt-1 italic whitespace-pre-line">${escapeHTML(cfg.policy || '')}</div>
+        <div id="receipt-signatures" class="${cfg.showSignatures ? '' : 'hidden '}pt-3 mt-2 border-t border-dashed border-gray-300 grid grid-cols-2 text-center text-[10.5px]">
+            <div><div class="font-bold">Người mua hàng</div><div class="text-[9px] text-gray-400 italic">(Ký, ghi rõ họ tên)</div><div class="h-8"></div></div>
+            <div><div class="font-bold">Người bán hàng</div><div class="text-[9px] text-gray-400 italic">(Ký, ghi rõ họ tên)</div><div class="h-8"></div></div>
+        </div>
+    `;
+}
+
 function renderBillLivePreview(cfg) {
     const previewEl = document.getElementById('bill-preview-paper');
     if (!previewEl) return;
-    const s = KVStore.data?.settings || {};
-    const inv = SAMPLE_MOCK_INVOICE;
-
     const isK58 = cfg.paperSize === 'k58';
+    const isA5 = cfg.paperSize === 'a5';
     const isA4 = cfg.paperSize === 'a4';
+
     if (isK58) {
         previewEl.style.maxWidth = '250px';
+    } else if (isA5) {
+        previewEl.style.maxWidth = '500px';
     } else if (isA4) {
         previewEl.style.maxWidth = '100%';
     } else {
@@ -4055,11 +4654,11 @@ function renderBillLivePreview(cfg) {
     previewEl.style.margin = '0 auto';
 
     if (cfg.fontSize === 'compact') {
-        previewEl.style.fontSize = '11px';
+        previewEl.style.fontSize = isA4 ? '11.5px' : isA5 ? '10.5px' : '11px';
     } else if (cfg.fontSize === 'large') {
-        previewEl.style.fontSize = '13.5px';
+        previewEl.style.fontSize = isA4 ? '14px' : isA5 ? '12.5px' : '13.5px';
     } else {
-        previewEl.style.fontSize = '12px';
+        previewEl.style.fontSize = isA4 ? '12.5px' : isA5 ? '11px' : '12px';
     }
 
     if (cfg.fontFamily === 'sans') {
@@ -4070,492 +4669,43 @@ function renderBillLivePreview(cfg) {
             'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
     }
 
-    const storeName = cfg.customStoreName || s.storeName || 'Kalo HCM';
-    const storeAddr = cfg.customAddress || s.address || '103 Võ Văn Tần, Q.3, TP.HCM';
-    const storePhone = cfg.customPhone
-        ? `Hotline: ${cfg.customPhone}`
-        : s.phone
-          ? `Hotline: ${s.phone}`
-          : 'Hotline: 1900 6522';
-    const storeTax = cfg.customTaxCode ? `MST: ${cfg.customTaxCode}` : '';
-
-    const logoHtml =
-        cfg.showLogo && s.logoUrl
-            ? `<div class="mb-2 flex justify-center"><img src="${escapeHTML(s.logoUrl)}" class="max-h-10 max-w-[160px] object-contain mx-auto" alt="Logo" /></div>`
-            : '';
-
-    const storeInfoHtml = cfg.showStore
-        ? `<div class="font-bold text-[14px] uppercase whitespace-pre-line">${escapeHTML(storeName)}</div>
-           ${cfg.slogan ? `<div class="text-[10.5px] text-gray-500 italic mb-0.5 whitespace-pre-line">${escapeHTML(cfg.slogan)}</div>` : ''}
-           <div class="text-[11px] text-gray-600 whitespace-pre-line">${escapeHTML(storeAddr)}</div>
-           <div class="text-[11px] text-gray-600 whitespace-pre-line">${escapeHTML(storePhone)}</div>
-           ${storeTax ? `<div class="text-[10.5px] text-gray-600 whitespace-pre-line">${escapeHTML(storeTax)}</div>` : ''}`
-        : '';
-
-    const custInfoHtml = cfg.showCustomer
-        ? `<div>Khách hàng: <span>${escapeHTML(inv.customer)}</span></div>
-           ${cfg.showCustomerAddress && inv.customerAddress ? `<div>Địa chỉ: <span>${escapeHTML(inv.customerAddress)}</span></div>` : ''}
-           ${cfg.showCustomerPoints && inv.customerPoints ? `<div>Điểm tích lũy: <span class="font-bold text-[#0066cc]">${inv.customerPoints}</span></div>` : ''}
-           ${cfg.showCustomerDebt && inv.customerOldDebt ? `<div>Nợ cũ: <span class="font-bold text-red-600">${formatVND(inv.customerOldDebt)} đ</span></div>` : ''}`
-        : '';
-
-    const cashierHtml = cfg.showCashier
-        ? `<div>Thu ngân: <span>${escapeHTML(inv.cashier)}</span></div>`
-        : '';
-
-    let tableHeadHtml = '<tr class="border-b border-gray-300 font-bold">';
-    if (cfg.showStt) tableHeadHtml += '<th class="py-1 w-6">#</th>';
-    tableHeadHtml += '<th class="py-1">Mặt hàng</th>';
-    if (cfg.showItemUnit) tableHeadHtml += '<th class="py-1 text-center w-10">ĐVT</th>';
-    tableHeadHtml += '<th class="py-1 text-center">SL</th>';
-    tableHeadHtml += '<th class="py-1 text-right">Đơn giá</th>';
-    tableHeadHtml += '<th class="py-1 text-right">T.Tiền</th></tr>';
-
-    const itemsRowsHtml = inv.items
-        .map((item, idx) => {
-            const skuHtml =
-                cfg.showItemCode && item.code
-                    ? `<div class="text-[10px] text-gray-500 font-mono">Mã: ${escapeHTML(item.code)}</div>`
-                    : '';
-            const imeiHtml =
-                cfg.showImei && item.imeis?.length
-                    ? `<div class="text-[10px] text-gray-500 font-mono">IMEI: ${escapeHTML(item.imeis.join(', '))}</div>`
-                    : '';
-            const noteHtml =
-                cfg.showNote && item.note
-                    ? `<div class="text-[10px] text-gray-500 italic">Ghi chú: ${escapeHTML(item.note)}</div>`
-                    : '';
-
-            let row = '<tr class="border-b border-gray-100 text-[11.5px]">';
-            if (cfg.showStt) row += `<td class="py-1.5 text-center text-gray-500">${idx + 1}</td>`;
-            row += `<td class="py-1.5 pr-1 text-left"><div>${escapeHTML(item.name)}</div>${skuHtml}${imeiHtml}${noteHtml}</td>`;
-            if (cfg.showItemUnit)
-                row += `<td class="py-1.5 px-1 text-center text-gray-600">${escapeHTML(item.unit || '-')}</td>`;
-            row += `<td class="py-1.5 px-1 text-center font-bold">${item.qty}</td>`;
-            row += `<td class="py-1.5 px-1 text-right">${formatVND(item.price)}</td>`;
-            row += `<td class="py-1.5 pl-1 text-right font-bold">${formatVND(item.qty * item.price)}</td></tr>`;
-            return row;
-        })
-        .join('');
-
-    const discountHtml =
-        cfg.showDiscount && inv.discount > 0
-            ? `<div class="flex justify-between"><span>Giảm giá:</span><span>${formatVND(inv.discount)} đ</span></div>`
-            : '';
-
-    const remainingDebt = Math.max(0, inv.total - inv.paid);
-    const debtHtml =
-        remainingDebt > 0
-            ? `<div class="flex justify-between text-[11.5px] text-red-600 font-bold"><span>Còn nợ đơn:</span><span>${formatVND(remainingDebt)} đ</span></div>`
-            : '';
-
-    const totalDebtAfter = (inv.customerOldDebt || 0) + remainingDebt;
-    const totalDebtHtml =
-        cfg.showCustomerDebt && totalDebtAfter > 0
-            ? `<div class="flex justify-between text-[11.5px] text-red-600 font-bold"><span>Tổng nợ sau mua:</span><span>${formatVND(totalDebtAfter)} đ</span></div>`
-            : '';
-
-    let paymentsBreakdownHtml = '';
-    if (cfg.showPaymentDetails && inv.payments?.length) {
-        paymentsBreakdownHtml = `<div class="text-left text-[11px] text-gray-600 pt-1 border-t border-dashed border-gray-200">
-            <div class="font-bold text-gray-700 mb-0.5">Chi tiết thanh toán:</div>
-            ${inv.payments
-                .map((p) => {
-                    const label =
-                        p.method === 'transfer'
-                            ? 'Chuyển khoản'
-                            : p.method === 'cash'
-                              ? 'Tiền mặt'
-                              : 'Quẹt thẻ';
-                    return `<div class="flex justify-between"><span>• ${label}:</span><span class="font-bold">${formatVND(p.amount)} đ</span></div>`;
-                })
-                .join('')}
-        </div>`;
+    const badgeEl = document.getElementById('bill-preview-paper-badge');
+    if (badgeEl) {
+        const paperMap = {
+            k80: 'K80 (80mm)',
+            k58: 'K58 (58mm)',
+            a5: 'Khổ A5',
+            a4: 'Khổ A4'
+        };
+        const sizeMap = {
+            compact: 'Cỡ nhỏ',
+            standard: 'Tiêu chuẩn',
+            large: 'Cỡ lớn'
+        };
+        const pLabel = paperMap[cfg.paperSize] || 'K80';
+        const sLabel = sizeMap[cfg.fontSize] || 'Tiêu chuẩn';
+        const fLabel = cfg.fontFamily === 'sans' ? 'Sans' : 'Mono';
+        badgeEl.textContent = `${pLabel} • ${sLabel} • ${fLabel}`;
     }
 
-    const qrSizeMap = { small: 'w-20 h-20', medium: 'w-24 h-24', large: 'w-32 h-32' };
-    const qrSizeClass = qrSizeMap[cfg.qrSize] || 'w-24 h-24';
-    const qrHtml = cfg.showQr
-        ? `<div class="mt-2 pt-2 border-t border-dashed border-gray-300 flex flex-col items-center">
-            <div class="text-[10px] text-gray-500 font-sans mb-1">Mã VietQR thanh toán 24/7:</div>
-            <div class="${qrSizeClass} bg-gray-50 border border-gray-300 rounded p-1 mx-auto flex items-center justify-center font-mono text-[9px] text-gray-400">
-                [ QR VietQR ]
-            </div>
-           </div>`
-        : '';
-
-    const policyHtml = cfg.policy
-        ? `<div class="text-[10px] text-gray-500 mt-1 italic leading-tight whitespace-pre-line">${escapeHTML(cfg.policy)}</div>`
-        : '';
-
-    const signaturesHtml = cfg.showSignatures
-        ? `<div class="pt-3 mt-2 border-t border-dashed border-gray-300 grid grid-cols-2 text-center text-[10.5px]">
-            <div><div class="font-bold">Người mua hàng</div><div class="text-[9px] text-gray-400 italic">(Ký, ghi rõ họ tên)</div><div class="h-8"></div></div>
-            <div><div class="font-bold">Người bán hàng</div><div class="text-[9px] text-gray-400 italic">(Ký, ghi rõ họ tên)</div><div class="h-8"></div></div>
-           </div>`
-        : '';
-
-    previewEl.innerHTML = `
-        ${logoHtml}
-        ${storeInfoHtml}
-        <div class="border-b border-dashed border-gray-400 my-2"></div>
-        <div class="font-bold text-[13.5px] uppercase mb-1 whitespace-pre-line">${escapeHTML(cfg.title || 'HÓA ĐƠN BÁN HÀNG')}</div>
-        <div class="text-[11px] text-left space-y-0.5">
-            <div>Số HĐ: <span class="font-bold">${inv.code}</span></div>
-            <div>Ngày: <span>${inv.time}</span></div>
-            ${custInfoHtml}
-            ${cashierHtml}
-        </div>
-        <div class="border-b border-dashed border-gray-400 my-2"></div>
-        <table class="w-full text-left">
-            <thead>${tableHeadHtml}</thead>
-            <tbody>${itemsRowsHtml}</tbody>
-        </table>
-        <div class="border-b border-dashed border-gray-400 my-2"></div>
-        <div class="space-y-1 text-right font-medium">
-            <div class="flex justify-between"><span>Tổng tiền:</span><span class="font-bold">${formatVND(inv.total)} đ</span></div>
-            ${discountHtml}
-            <div class="flex justify-between text-[12.5px] font-bold"><span>Khách đã trả:</span><span class="text-[#0066cc]">${formatVND(inv.paid)} đ</span></div>
-            ${debtHtml}
-            ${totalDebtHtml}
-            ${paymentsBreakdownHtml}
-        </div>
-        ${qrHtml}
-        <div class="border-b border-dashed border-gray-400 my-2.5"></div>
-        <div class="text-[11px] text-gray-600 italic whitespace-pre-line">${escapeHTML(cfg.footer || 'Cảm ơn Quý khách & Hẹn gặp lại!')}</div>
-        ${policyHtml}
-        ${signaturesHtml}
-    `;
+    previewEl.innerHTML = buildReceiptHTML(SAMPLE_MOCK_INVOICE, cfg, true);
 }
 
 function printTestBillTemplate() {
     const liveCfg = readBillCustomModalValues();
     applyReceiptPaperSize(liveCfg.paperSize, liveCfg.fontSize, liveCfg.fontFamily);
     renderReceiptContent(SAMPLE_MOCK_INVOICE, liveCfg);
-    printRegion('printable-receipt', true, liveCfg.paperSize || 'k80');
+    const isThermal = liveCfg.paperSize === 'k80' || liveCfg.paperSize === 'k58';
+    printRegion('printable-receipt', isThermal, liveCfg.paperSize || 'k80');
 }
 
 function renderReceiptContent(inv, config = null) {
     if (!inv) return;
     const cfg = config || getBillConfig();
-    const s = KVStore.data?.settings || {};
-
-    // 1. Logo
-    const logoWrap = document.getElementById('receipt-logo-wrap');
-    const logoImg = document.getElementById('receipt-logo-img');
-    if (logoWrap && logoImg) {
-        if (cfg.showLogo && s.logoUrl) {
-            logoImg.src = s.logoUrl;
-            logoWrap.classList.remove('hidden');
-        } else {
-            logoWrap.classList.add('hidden');
-        }
+    const printable = document.getElementById('printable-receipt');
+    if (printable) {
+        printable.innerHTML = buildReceiptHTML(inv, cfg, false);
     }
-
-    // 2. Store info
-    const storeNameEl = document.getElementById('receipt-store-name');
-    const sloganEl = document.getElementById('receipt-slogan');
-    const storeAddrEl = document.getElementById('receipt-address');
-    const storePhoneEl = document.getElementById('receipt-phone');
-    const storeTaxEl = document.getElementById('receipt-tax-code');
-
-    if (storeNameEl) {
-        storeNameEl.textContent = cfg.customStoreName || s.storeName || '';
-        storeNameEl.style.display = cfg.showStore ? '' : 'none';
-    }
-    if (sloganEl) {
-        if (cfg.showStore && cfg.slogan) {
-            sloganEl.textContent = cfg.slogan;
-            sloganEl.classList.remove('hidden');
-        } else {
-            sloganEl.classList.add('hidden');
-        }
-    }
-    if (storeAddrEl) {
-        storeAddrEl.textContent = cfg.customAddress || s.address || '';
-        storeAddrEl.style.display = cfg.showStore ? '' : 'none';
-    }
-    if (storePhoneEl) {
-        storePhoneEl.textContent = cfg.customPhone
-            ? `Hotline: ${cfg.customPhone}`
-            : `Hotline: ${s.hotline || ''} - ĐT: ${s.phone || ''}`;
-        storePhoneEl.style.display = cfg.showStore ? '' : 'none';
-    }
-    if (storeTaxEl) {
-        if (cfg.showStore && cfg.customTaxCode) {
-            storeTaxEl.textContent = `MST: ${cfg.customTaxCode}`;
-            storeTaxEl.classList.remove('hidden');
-        } else {
-            storeTaxEl.classList.add('hidden');
-        }
-    }
-
-    // 3. Bill Title
-    const titleEl = document.getElementById('receipt-title');
-    if (titleEl) {
-        if (inv._isDraft) {
-            titleEl.textContent = 'PHIẾU TẠM TÍNH (DRAFT)';
-        } else {
-            titleEl.textContent = cfg.title || 'HÓA ĐƠN BÁN HÀNG';
-        }
-    }
-
-    // 4. Invoice metadata
-    const codeEl = document.getElementById('receipt-code');
-    if (codeEl) codeEl.textContent = inv.code || '';
-    const timeEl = document.getElementById('receipt-time');
-    if (timeEl) timeEl.textContent = inv.time || '';
-
-    const custRow = document.getElementById('receipt-row-customer');
-    if (custRow) {
-        custRow.style.display = cfg.showCustomer ? '' : 'none';
-        const custVal = document.getElementById('receipt-customer');
-        if (custVal) custVal.textContent = inv.customer || 'Khách lẻ';
-    }
-
-    const custAddrRow = document.getElementById('receipt-row-cust-addr');
-    const custAddrVal = document.getElementById('receipt-cust-addr');
-    if (custAddrRow && custAddrVal) {
-        const addr = inv.customerAddress || (inv.customer && inv.customer.address);
-        if (cfg.showCustomer && cfg.showCustomerAddress && addr) {
-            custAddrVal.textContent = addr;
-            custAddrRow.classList.remove('hidden');
-        } else {
-            custAddrRow.classList.add('hidden');
-        }
-    }
-
-    const custPointsRow = document.getElementById('receipt-row-cust-points');
-    const custPointsVal = document.getElementById('receipt-cust-points');
-    if (custPointsRow && custPointsVal) {
-        const pts =
-            inv.customerPoints != null ? inv.customerPoints : inv.customer && inv.customer.points;
-        if (cfg.showCustomer && cfg.showCustomerPoints && pts != null) {
-            custPointsVal.textContent = `${pts} điểm`;
-            custPointsRow.classList.remove('hidden');
-        } else {
-            custPointsRow.classList.add('hidden');
-        }
-    }
-
-    const custDebtRow = document.getElementById('receipt-row-cust-debt');
-    const custDebtVal = document.getElementById('receipt-cust-debt');
-    if (custDebtRow && custDebtVal) {
-        const debt =
-            inv.customerOldDebt != null ? inv.customerOldDebt : inv.customer && inv.customer.debt;
-        if (cfg.showCustomer && cfg.showCustomerDebt && debt != null && debt > 0) {
-            custDebtVal.textContent = `${formatVND(debt)} đ`;
-            custDebtRow.classList.remove('hidden');
-        } else {
-            custDebtRow.classList.add('hidden');
-        }
-    }
-
-    const cashierRow = document.getElementById('receipt-row-cashier');
-    if (cashierRow) {
-        cashierRow.style.display = cfg.showCashier ? '' : 'none';
-        const cashierVal = document.getElementById('receipt-cashier');
-        if (cashierVal) cashierVal.textContent = inv.cashier || s.cashier || 'Thu ngân';
-    }
-
-    // 5. Items
-    const theadTr = document.getElementById('receipt-items-thead-tr');
-    if (theadTr) {
-        let ths = '';
-        if (cfg.showStt) ths += '<th class="py-1 w-6">#</th>';
-        ths += '<th class="py-1">Mặt hàng</th>';
-        if (cfg.showItemUnit) ths += '<th class="py-1 text-center w-10">ĐVT</th>';
-        ths += '<th class="py-1 text-center">SL</th>';
-        ths += '<th class="py-1 text-right">Đơn giá</th>';
-        ths += '<th class="py-1 text-right">T.Tiền</th>';
-        theadTr.innerHTML = ths;
-    }
-
-    const tbody = document.getElementById('receipt-items-tbody');
-    if (tbody) {
-        tbody.innerHTML = '';
-        (inv.items || []).forEach((item, idx) => {
-            const tr = document.createElement('tr');
-            tr.className = 'border-b border-gray-100 text-[12px]';
-            const skuHtml =
-                cfg.showItemCode && item.code
-                    ? renderHTML`<div class="text-[10px] text-gray-500 font-mono mt-0.5 leading-tight text-left">Mã: ${item.code}</div>`
-                    : trustedHTML('');
-            const imeisHtml =
-                cfg.showImei && Array.isArray(item.imeis) && item.imeis.length
-                    ? renderHTML`<div class="text-[10px] text-gray-500 font-mono mt-0.5 leading-tight text-left">IMEI: ${item.imeis.join(', ')}</div>`
-                    : trustedHTML('');
-            const noteHtml =
-                cfg.showNote && item.note && typeof item.note === 'string'
-                    ? renderHTML`<div class="text-[10px] text-gray-500 italic mt-0.5 leading-tight text-left">Ghi chú: ${item.note}</div>`
-                    : trustedHTML('');
-
-            let cells = '';
-            if (cfg.showStt) {
-                cells += `<td class="py-1.5 text-center text-gray-500">${idx + 1}</td>`;
-            }
-            cells += `<td class="py-1.5 pr-1 text-left">
-                <div>${escapeHTML(item.name || item.code)}</div>
-                ${skuHtml}
-                ${imeisHtml}
-                ${noteHtml}
-            </td>`;
-            if (cfg.showItemUnit) {
-                cells += `<td class="py-1.5 px-1 text-center text-gray-600">${escapeHTML(item.unit || '-')}</td>`;
-            }
-            cells += `<td class="py-1.5 px-1 text-center font-bold">${item.qty}</td>
-                      <td class="py-1.5 px-1 text-right">${formatVND(item.price)}</td>
-                      <td class="py-1.5 pl-1 text-right font-bold">${formatVND(item.qty * item.price)}</td>`;
-            tr.innerHTML = cells;
-            tbody.appendChild(tr);
-        });
-    }
-
-    // 6. Totals
-    const totalEl = document.getElementById('receipt-total');
-    if (totalEl) totalEl.textContent = `${formatVND(inv.total)} đ`;
-    const discountRow = document.getElementById('receipt-row-discount');
-    if (discountRow) {
-        discountRow.style.display = cfg.showDiscount !== false && inv.discount > 0 ? '' : 'none';
-        const discountVal = document.getElementById('receipt-discount');
-        if (discountVal) discountVal.textContent = `${formatVND(inv.discount || 0)} đ`;
-    }
-    const paidEl = document.getElementById('receipt-paid');
-    if (paidEl) paidEl.textContent = `${formatVND(inv.paid)} đ`;
-
-    const remainingDebt = Math.max(
-        0,
-        (inv.total || 0) - (inv.returnedTotal || 0) - (inv.paid || 0)
-    );
-    const debtRow = document.getElementById('receipt-row-debt');
-    const debtVal = document.getElementById('receipt-debt');
-    if (debtRow && debtVal) {
-        if (remainingDebt > 0) {
-            debtVal.textContent = `${formatVND(remainingDebt)} đ`;
-            debtRow.classList.remove('hidden');
-        } else {
-            debtRow.classList.add('hidden');
-        }
-    }
-
-    const totalDebtRow = document.getElementById('receipt-row-total-debt');
-    const totalDebtVal = document.getElementById('receipt-total-debt');
-    if (totalDebtRow && totalDebtVal) {
-        const oldDebt =
-            inv.customerOldDebt != null
-                ? inv.customerOldDebt
-                : (inv.customer && inv.customer.debt) || 0;
-        const totalDebtAfter = oldDebt + remainingDebt;
-        if (cfg.showCustomerDebt && totalDebtAfter > 0) {
-            totalDebtVal.textContent = `${formatVND(totalDebtAfter)} đ`;
-            totalDebtRow.classList.remove('hidden');
-        } else {
-            totalDebtRow.classList.add('hidden');
-        }
-    }
-
-    const changeRow = document.getElementById('receipt-row-change');
-    const changeVal = document.getElementById('receipt-change');
-    if (changeRow && changeVal) {
-        const change = (inv.paid || 0) - (inv.total || 0);
-        if (cfg.showChange !== false && change > 0) {
-            changeVal.textContent = `${formatVND(change)} đ`;
-            changeRow.classList.remove('hidden');
-        } else {
-            changeRow.classList.add('hidden');
-        }
-    }
-
-    const breakdownEl = document.getElementById('receipt-payments-breakdown');
-    if (breakdownEl) {
-        const payments = Array.isArray(inv.payments)
-            ? inv.payments.filter((p) => p.amount > 0)
-            : [];
-        if (
-            cfg.showPaymentDetails !== false &&
-            (payments.length > 1 || inv.paymentMethod === 'multi')
-        ) {
-            breakdownEl.innerHTML = renderHTML`
-                <div class="font-bold text-gray-700 mb-0.5">Chi tiết thanh toán:</div>
-                ${trustedHTML(
-                    payments
-                        .map((p) => {
-                            const methodNames = {
-                                transfer: 'Chuyển khoản',
-                                cash: 'Tiền mặt',
-                                card: 'Quẹt thẻ'
-                            };
-                            const label = methodNames[p.method] || p.method;
-                            return `<div class="flex justify-between"><span>• ${escapeHTML(label)}:</span><span class="font-bold">${formatVND(p.amount)} đ</span></div>`;
-                        })
-                        .join('')
-                )}
-            `;
-            breakdownEl.classList.remove('hidden');
-        } else {
-            breakdownEl.classList.add('hidden');
-        }
-    }
-
-    // 7. VietQR
-    const qrWrap = document.getElementById('receipt-qr-wrap');
-    const qrImg = document.getElementById('receipt-qr-img');
-    if (qrWrap && qrImg) {
-        const transferAmount = Array.isArray(inv.payments)
-            ? inv.payments.find((p) => p.method === 'transfer')?.amount ||
-              (inv.paymentMethod === 'transfer' ? inv.paid : 0)
-            : inv.paymentMethod === 'transfer'
-              ? inv.paid
-              : 0;
-        if (cfg.showQr && s.bankCode && s.bankAccount && transferAmount > 0) {
-            const bankCode = s.bankCode;
-            const bankAccount = s.bankAccount;
-            const bankOwner = s.bankOwner || s.storeName || 'NKIOT';
-            const addInfo = inv.code || 'HD';
-            const qrUrl = `https://api.vietqr.io/image/${bankCode}-${bankAccount}-compact.jpg?amount=${transferAmount}&addInfo=${encodeURIComponent(addInfo)}&accountName=${encodeURIComponent(bankOwner)}`;
-            qrImg.src = qrUrl;
-
-            // QR size
-            if (cfg.qrSize === 'small') {
-                qrImg.className = 'w-20 h-20 object-contain mx-auto';
-            } else if (cfg.qrSize === 'large') {
-                qrImg.className = 'w-36 h-36 object-contain mx-auto';
-            } else {
-                qrImg.className = 'w-28 h-28 object-contain mx-auto';
-            }
-            qrWrap.classList.remove('hidden');
-        } else {
-            qrWrap.classList.add('hidden');
-        }
-    }
-
-    // 8. Footer note & policy
-    const footerEl = document.getElementById('receipt-footer');
-    if (footerEl) {
-        footerEl.textContent = cfg.footer || 'Cảm ơn Quý khách & Hẹn gặp lại!';
-    }
-
-    const policyEl = document.getElementById('receipt-policy');
-    if (policyEl) {
-        if (cfg.policy) {
-            policyEl.textContent = cfg.policy;
-            policyEl.classList.remove('hidden');
-        } else {
-            policyEl.classList.add('hidden');
-        }
-    }
-
-    // 9. Signatures
-    const sigsEl = document.getElementById('receipt-signatures');
-    if (sigsEl) {
-        if (cfg.showSignatures) {
-            sigsEl.classList.remove('hidden');
-        } else {
-            sigsEl.classList.add('hidden');
-        }
-    }
-
-    // 10. Paper size visual styling
     applyReceiptPaperSize(
         cfg.paperSize || 'k80',
         cfg.fontSize || 'standard',
@@ -4577,7 +4727,8 @@ function closeReceiptModal() {
 
 function printReceipt() {
     const cfg = getBillConfig();
-    printRegion('printable-receipt', true, cfg.paperSize || 'k80');
+    const isThermal = cfg.paperSize === 'k80' || cfg.paperSize === 'k58';
+    printRegion('printable-receipt', isThermal, cfg.paperSize || 'k80');
 }
 
 // Helper: Render standardized empty state row for data tables

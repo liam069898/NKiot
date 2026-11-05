@@ -426,6 +426,289 @@ test('Custom bill in configuration saves and updates receipt preview and print l
     dom.window.close();
 });
 
+test('Invoice printing supports A4 and A5 formats with in-words currency, responsive dialog and sheet layout', async () => {
+    const dom = browser(),
+        w = dom.window;
+    w.eval('KVStore.save = async () => {}');
+
+    const testInv = {
+        code: 'HD-A5-TEST',
+        time: '25/10/2026 14:30',
+        customer: 'Công ty TNHH Giải Pháp Công Nghệ',
+        customerPhone: '0909.888.999',
+        customerAddress: 'Số 88 đường Nam Kỳ Khởi Nghĩa, Q.1, TP.HCM',
+        customerPoints: 200,
+        customerOldDebt: 1000000,
+        cashier: 'Nguyễn Văn Thu Ngân',
+        items: [
+            {
+                code: 'MACBOOK-M3',
+                name: 'MacBook Pro 14 M3 18GB/512GB',
+                unit: 'Máy',
+                qty: 1,
+                price: 45000000,
+                imeis: ['C02XYZ123456'],
+                note: 'Bảo hành chính hãng 12 tháng tại Apple Care'
+            }
+        ],
+        total: 45000000,
+        paid: 40000000
+    };
+
+    // Open receipt modal with test invoice
+    w.openReceiptModal(testInv);
+    const modal = w.document.getElementById('receipt-modal');
+    assert.ok(!modal.classList.contains('hidden'));
+
+    // 1. Switch to A5 format
+    w.setReceiptPaperPreview('a5');
+    const printable = w.document.getElementById('printable-receipt');
+    assert.equal(printable.dataset.paper, 'a5');
+
+    const dialog = w.document.getElementById('receipt-modal-dialog');
+    assert.ok(dialog.classList.contains('max-w-2xl'));
+    assert.ok(!dialog.classList.contains('max-w-sm'));
+    assert.ok(!dialog.classList.contains('max-w-4xl'));
+
+    const btnA5 = w.document.getElementById('receipt-btn-a5');
+    assert.ok(btnA5.className.includes('text-[#0066cc]'));
+
+    // Check Vietnamese in-words amount
+    const inWordsEl = w.document.getElementById('receipt-words-total');
+    assert.ok(inWordsEl);
+    assert.ok(inWordsEl.textContent.includes('Bốn mươi lăm triệu đồng'));
+
+    // Check 3-column signatures in A5
+    const sigsEl = w.document.getElementById('receipt-signatures');
+    assert.ok(sigsEl.textContent.includes('Người mua hàng'));
+    assert.ok(sigsEl.textContent.includes('Người giao hàng'));
+    assert.ok(sigsEl.textContent.includes('Người lập hóa đơn / Thủ kho'));
+
+    // Check printReceipt for A5
+    w.printReceipt();
+    const printRootA5 = w.document.getElementById('print-root');
+    assert.ok(printRootA5);
+    assert.equal(printRootA5.dataset.paper, 'a5');
+    assert.equal(printRootA5.dataset.thermal, 'false');
+
+    // 2. Switch to A4 format
+    w.setReceiptPaperPreview('a4');
+    assert.equal(printable.dataset.paper, 'a4');
+    assert.ok(dialog.classList.contains('max-w-4xl'));
+    assert.ok(!dialog.classList.contains('max-w-2xl'));
+
+    const btnA4 = w.document.getElementById('receipt-btn-a4');
+    assert.ok(btnA4.className.includes('text-[#0066cc]'));
+
+    // Check printReceipt for A4
+    w.printReceipt();
+    const printRootA4 = w.document.getElementById('print-root');
+    assert.ok(printRootA4);
+    assert.equal(printRootA4.dataset.paper, 'a4');
+    assert.equal(printRootA4.dataset.thermal, 'false');
+
+    // 3. Test bill custom configuration with A4 and A5
+    w.openBillCustomModal();
+    const radA5 = w.document.getElementById('bill-opt-paper-a5');
+    assert.ok(radA5);
+    radA5.checked = true;
+    w.onBillConfigChange();
+
+    const previewPaper = w.document.getElementById('bill-preview-paper');
+    assert.ok(previewPaper.textContent.includes('Người giao hàng'));
+    assert.ok(previewPaper.textContent.includes('Số tiền viết bằng chữ:'));
+
+    // Test print test bill template for A5
+    w.printTestBillTemplate();
+    const printRootTestA5 = w.document.getElementById('print-root');
+    assert.ok(printRootTestA5);
+    assert.equal(printRootTestA5.dataset.paper, 'a5');
+    assert.equal(printRootTestA5.dataset.thermal, 'false');
+
+    // Switch to A4 in custom modal and save
+    const radA4 = w.document.getElementById('bill-opt-paper-a4');
+    radA4.checked = true;
+    w.onBillConfigChange();
+    await w.saveBillCustomConfig();
+
+    const savedCfg = w.getBillConfig();
+    assert.equal(savedCfg.paperSize, 'a4');
+
+    dom.window.close();
+});
+
+test('Bill customization UX/UI: One-click presets, Live preview badge, and preview expand toggle', async () => {
+    const dom = browser(),
+        w = dom.window;
+    w.eval('KVStore.save = async () => {}');
+
+    // 1. Setup logo in settings, open modal and check initial states
+    w.eval(
+        'if (!KVStore.data.settings) KVStore.data.settings = {}; KVStore.data.settings.logoUrl = "https://example.com/logo-test.png";'
+    );
+    w.openBillCustomModal();
+    const modal = w.document.getElementById('bill-custom-modal');
+    assert.ok(!modal.classList.contains('hidden'));
+
+    const paperBadge = w.document.getElementById('bill-preview-paper-badge');
+    assert.ok(paperBadge);
+    assert.ok(paperBadge.textContent.includes('K80'));
+
+    const logoPreview = w.document.getElementById('bill-custom-logo-preview');
+    assert.ok(logoPreview);
+    assert.ok(logoPreview.innerHTML.includes('https://example.com/logo-test.png'));
+
+    // 2. Test expand/collapse toggle
+    const ctrlCol = w.document.getElementById('bill-custom-controls-col');
+    const prevCol = w.document.getElementById('bill-custom-preview-col');
+    const expandLabel = w.document.getElementById('bill-preview-expand-label');
+    assert.ok(ctrlCol);
+    assert.ok(prevCol);
+    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
+    assert.ok(prevCol.classList.contains('lg:col-span-5'));
+
+    w.toggleBillPreviewExpand();
+    assert.ok(ctrlCol.classList.contains('lg:col-span-4'));
+    assert.ok(prevCol.classList.contains('lg:col-span-8'));
+    assert.equal(expandLabel.textContent, 'Thu nhỏ');
+
+    w.toggleBillPreviewExpand();
+    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
+    assert.ok(prevCol.classList.contains('lg:col-span-5'));
+    assert.equal(expandLabel.textContent, 'Phóng to');
+
+    // 3. Test Minimal Preset ('minimal')
+    w.applyBillPreset('minimal');
+    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
+    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'compact');
+    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'monospace');
+    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, false);
+    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, false);
+    assert.ok(paperBadge.textContent.includes('K80'));
+    assert.ok(paperBadge.textContent.includes('Cỡ nhỏ'));
+
+    // 4. Test Tech Preset ('tech')
+    w.applyBillPreset('tech');
+    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
+    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'standard');
+    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-item-code').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, true);
+    assert.ok(w.document.getElementById('bill-custom-policy').value.includes('Bảo hành'));
+    assert.ok(paperBadge.textContent.includes('K80'));
+    assert.ok(paperBadge.textContent.includes('Tiêu chuẩn'));
+
+    // 5. Test Wholesale Preset ('wholesale')
+    w.applyBillPreset('wholesale');
+    assert.ok(w.document.getElementById('bill-opt-paper-a4').checked);
+    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'sans');
+    assert.equal(w.document.getElementById('bill-custom-show-item-unit').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-cust-debt').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-signatures').checked, true);
+    assert.ok(paperBadge.textContent.includes('Khổ A4'));
+    assert.ok(paperBadge.textContent.includes('Sans'));
+
+    // Wholesale on A4 preview renders 3 signature columns
+    const previewPaper = w.document.getElementById('bill-preview-paper');
+    assert.ok(previewPaper.textContent.includes('Người lập hóa đơn'));
+    assert.ok(previewPaper.textContent.includes('Người giao hàng'));
+
+    // 6. Save custom configuration after preset
+    await w.saveBillCustomConfig();
+    const finalCfg = w.getBillConfig();
+    assert.equal(finalCfg.paperSize, 'a4');
+    assert.equal(finalCfg.fontFamily, 'sans');
+    assert.equal(finalCfg.showSignatures, true);
+
+    dom.window.close();
+});
+
+test('Bill customization UX/UI: One-click presets, Live preview badge, and preview expand toggle', async () => {
+    const dom = browser(),
+        w = dom.window;
+    w.eval('KVStore.save = async () => {}');
+
+    // 1. Setup logo in settings, open modal and check initial states
+    w.eval(
+        'if (!KVStore.data.settings) KVStore.data.settings = {}; KVStore.data.settings.logoUrl = "https://example.com/logo-test.png";'
+    );
+    w.openBillCustomModal();
+    const modal = w.document.getElementById('bill-custom-modal');
+    assert.ok(!modal.classList.contains('hidden'));
+
+    const paperBadge = w.document.getElementById('bill-preview-paper-badge');
+    assert.ok(paperBadge);
+    assert.ok(paperBadge.textContent.includes('K80'));
+
+    const logoPreview = w.document.getElementById('bill-custom-logo-preview');
+    assert.ok(logoPreview);
+    assert.ok(logoPreview.innerHTML.includes('https://example.com/logo-test.png'));
+
+    // 2. Test expand/collapse toggle
+    const ctrlCol = w.document.getElementById('bill-custom-controls-col');
+    const prevCol = w.document.getElementById('bill-custom-preview-col');
+    const expandLabel = w.document.getElementById('bill-preview-expand-label');
+    assert.ok(ctrlCol);
+    assert.ok(prevCol);
+    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
+    assert.ok(prevCol.classList.contains('lg:col-span-5'));
+
+    w.toggleBillPreviewExpand();
+    assert.ok(ctrlCol.classList.contains('lg:col-span-4'));
+    assert.ok(prevCol.classList.contains('lg:col-span-8'));
+    assert.equal(expandLabel.textContent, 'Thu nhỏ');
+
+    w.toggleBillPreviewExpand();
+    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
+    assert.ok(prevCol.classList.contains('lg:col-span-5'));
+    assert.equal(expandLabel.textContent, 'Phóng to');
+
+    // 3. Test Minimal Preset ('minimal')
+    w.applyBillPreset('minimal');
+    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
+    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'compact');
+    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'monospace');
+    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, false);
+    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, false);
+    assert.ok(paperBadge.textContent.includes('K80'));
+    assert.ok(paperBadge.textContent.includes('Cỡ nhỏ'));
+
+    // 4. Test Tech Preset ('tech')
+    w.applyBillPreset('tech');
+    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
+    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'standard');
+    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-item-code').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, true);
+    assert.ok(w.document.getElementById('bill-custom-policy').value.includes('Bảo hành'));
+    assert.ok(paperBadge.textContent.includes('K80'));
+    assert.ok(paperBadge.textContent.includes('Tiêu chuẩn'));
+
+    // 5. Test Wholesale Preset ('wholesale')
+    w.applyBillPreset('wholesale');
+    assert.ok(w.document.getElementById('bill-opt-paper-a4').checked);
+    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'sans');
+    assert.equal(w.document.getElementById('bill-custom-show-item-unit').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-cust-debt').checked, true);
+    assert.equal(w.document.getElementById('bill-custom-show-signatures').checked, true);
+    assert.ok(paperBadge.textContent.includes('Khổ A4'));
+    assert.ok(paperBadge.textContent.includes('Sans'));
+
+    // Wholesale on A4 preview renders 3 signature columns
+    const previewPaper = w.document.getElementById('bill-preview-paper');
+    assert.ok(previewPaper.textContent.includes('Người lập hóa đơn'));
+    assert.ok(previewPaper.textContent.includes('Người giao hàng'));
+
+    // 6. Save custom configuration after preset
+    await w.saveBillCustomConfig();
+    const finalCfg = w.getBillConfig();
+    assert.equal(finalCfg.paperSize, 'a4');
+    assert.equal(finalCfg.fontFamily, 'sans');
+    assert.equal(finalCfg.showSignatures, true);
+
+    dom.window.close();
+});
+
 test('SQL badge removed and toast popup slides down from top', async () => {
     const dom = browser(),
         w = dom.window;
