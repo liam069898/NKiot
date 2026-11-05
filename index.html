@@ -4912,6 +4912,15 @@
                                     <label class="flex items-center space-x-2 cursor-pointer text-[12px]">
                                         <input
                                             type="checkbox"
+                                            id="bill-custom-show-cust-phone"
+                                            onchange="onBillConfigChange()"
+                                            class="rounded text-[#0066cc] focus:ring-0"
+                                        />
+                                        <span>Số điện thoại khách</span>
+                                    </label>
+                                    <label class="flex items-center space-x-2 cursor-pointer text-[12px]">
+                                        <input
+                                            type="checkbox"
                                             id="bill-custom-show-cust-addr"
                                             onchange="onBillConfigChange()"
                                             class="rounded text-[#0066cc] focus:ring-0"
@@ -5061,8 +5070,40 @@
                                         class="text-[11px] text-[#0066cc] hover:underline font-medium flex items-center space-x-1"
                                     >
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-                                        <span>Cài đặt STK</span>
+                                        <span>Cài đặt STK chung</span>
                                     </button>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                                    <div>
+                                        <label class="block text-[11px] font-semibold text-gray-700 mb-1">Mã ngân hàng (Bin/Code)</label>
+                                        <input
+                                            type="text"
+                                            id="bill-custom-bank-code"
+                                            oninput="onBillConfigChange()"
+                                            placeholder="VD: VCB, MB, TCB..."
+                                            class="w-full border border-gray-200/85 rounded-xl px-2.5 py-1.5 focus:border-[#0066cc] focus:outline-none text-[12px] uppercase font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] font-semibold text-gray-700 mb-1">Số tài khoản nhận tiền</label>
+                                        <input
+                                            type="text"
+                                            id="bill-custom-bank-account"
+                                            oninput="onBillConfigChange()"
+                                            placeholder="Số tài khoản ngân hàng"
+                                            class="w-full border border-gray-200/85 rounded-xl px-2.5 py-1.5 focus:border-[#0066cc] focus:outline-none text-[12px] font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] font-semibold text-gray-700 mb-1">Chủ tài khoản (Không dấu)</label>
+                                        <input
+                                            type="text"
+                                            id="bill-custom-bank-owner"
+                                            oninput="onBillConfigChange()"
+                                            placeholder="Tên chủ tài khoản"
+                                            class="w-full border border-gray-200/85 rounded-xl px-2.5 py-1.5 focus:border-[#0066cc] focus:outline-none text-[12px] uppercase"
+                                        />
+                                    </div>
                                 </div>
                                 <div class="flex items-center space-x-3 pt-0.5">
                                     <div class="w-1/2">
@@ -5078,7 +5119,7 @@
                                         </select>
                                     </div>
                                     <div class="w-1/2 text-[11px] text-gray-500 leading-tight">
-                                        Tự động chèn số tiền đơn hàng & nội dung chuyển khoản để khách quét trả tức thì.
+                                        Mã VietQR tự động chèn số tiền đơn hàng & nội dung chuyển khoản để khách quét trả tức thì.
                                     </div>
                                 </div>
                             </div>

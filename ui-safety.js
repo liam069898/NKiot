@@ -95,6 +95,38 @@ function printRegion(id, thermal = false, paperSize = 'k80') {
     });
     root.appendChild(clone);
     document.body.appendChild(root);
-    window.print();
+
+    // In real browsers, wait for external images (e.g. VietQR, store logo) to finish loading
+    const isJSDOM =
+        typeof navigator !== 'undefined' &&
+        navigator.userAgent &&
+        navigator.userAgent.includes('jsdom');
+    const images = Array.from(root.querySelectorAll('img')).filter(
+        (img) => img.src && !img.complete
+    );
+
+    if (!isJSDOM && images.length > 0) {
+        let printed = false;
+        const doPrint = () => {
+            if (printed) return;
+            printed = true;
+            window.print();
+        };
+        const timer = setTimeout(doPrint, 800);
+        let pending = images.length;
+        images.forEach((img) => {
+            const onDone = () => {
+                pending--;
+                if (pending <= 0) {
+                    clearTimeout(timer);
+                    doPrint();
+                }
+            };
+            img.addEventListener('load', onDone, { once: true });
+            img.addEventListener('error', onDone, { once: true });
+        });
+    } else {
+        window.print();
+    }
 }
 window.addEventListener('afterprint', () => document.getElementById('print-root')?.remove());

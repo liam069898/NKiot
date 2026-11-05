@@ -2712,9 +2712,13 @@ function printCurrentPosDraft() {
     const draftInv = {
         code: 'DRAFT-' + Date.now().toString().slice(-4),
         time: getCurrentDateTimeString(),
-        customer: curTab.customer
-            ? `${curTab.customer.name} - ${curTab.customer.phone}`
-            : 'Khách lẻ',
+        customer: curTab.customer ? curTab.customer.name : 'Khách lẻ',
+        phone: curTab.customer ? curTab.customer.phone : '',
+        customerPhone: curTab.customer ? curTab.customer.phone : '',
+        customerId: curTab.customer ? curTab.customer.id : null,
+        customerAddress: curTab.customer ? curTab.customer.address : '',
+        customerPoints: curTab.customer ? curTab.customer.points : 0,
+        customerOldDebt: curTab.customer ? curTab.customer.debt : 0,
         cashier: KVStore.user?.name || s.cashier || 'Thu ngân',
         items: curTab.cart.map((i) => ({
             name: i.name,
@@ -3682,11 +3686,15 @@ const DEFAULT_BILL_CONFIG = {
     customAddress: '',
     customPhone: '',
     customTaxCode: '',
+    customBankCode: '',
+    customBankAccount: '',
+    customBankOwner: '',
     footer: 'Cảm ơn Quý khách & Hẹn gặp lại!',
     policy: 'Quý khách vui lòng kiểm tra hàng trước khi rời quầy.',
     showLogo: true,
     showStore: true,
     showCustomer: true,
+    showCustomerPhone: true,
     showCustomerAddress: true,
     showCustomerPoints: true,
     showCustomerDebt: true,
@@ -3708,6 +3716,7 @@ const SAMPLE_MOCK_INVOICE = {
     code: 'HD261022-0001',
     time: '22/10/2026 11:30',
     customer: 'Anh Hoàng Long',
+    phone: '0988.123.456',
     customerPhone: '0988.123.456',
     customerAddress: '45 Lê Duẩn, P. Bến Nghé, Q.1, TP.HCM',
     customerPoints: 150,
@@ -4049,6 +4058,10 @@ function openBillCustomModal() {
     setVal('bill-custom-address', cfg.customAddress || '');
     setVal('bill-custom-phone', cfg.customPhone || '');
     setVal('bill-custom-tax-code', cfg.customTaxCode || '');
+    const s = KVStore.data?.settings || {};
+    setVal('bill-custom-bank-code', cfg.customBankCode || s.bankCode || 'VCB');
+    setVal('bill-custom-bank-account', cfg.customBankAccount || s.bankAccount || '');
+    setVal('bill-custom-bank-owner', cfg.customBankOwner || s.bankOwner || s.storeName || '');
     setVal('bill-custom-footer', cfg.footer || 'Cảm ơn Quý khách & Hẹn gặp lại!');
     setVal('bill-custom-policy', cfg.policy || '');
     setVal('bill-custom-font-size', cfg.fontSize || 'standard');
@@ -4062,6 +4075,7 @@ function openBillCustomModal() {
     setCb('bill-custom-show-logo', cfg.showLogo !== false);
     setCb('bill-custom-show-store', cfg.showStore !== false);
     setCb('bill-custom-show-customer', cfg.showCustomer !== false);
+    setCb('bill-custom-show-cust-phone', cfg.showCustomerPhone !== false);
     setCb('bill-custom-show-cust-addr', cfg.showCustomerAddress !== false);
     setCb('bill-custom-show-cust-points', cfg.showCustomerPoints !== false);
     setCb('bill-custom-show-cust-debt', cfg.showCustomerDebt !== false);
@@ -4156,6 +4170,13 @@ function readBillCustomModalValues() {
         customAddress: (document.getElementById('bill-custom-address')?.value || '').trim(),
         customPhone: (document.getElementById('bill-custom-phone')?.value || '').trim(),
         customTaxCode: (document.getElementById('bill-custom-tax-code')?.value || '').trim(),
+        customBankCode: (document.getElementById('bill-custom-bank-code')?.value || '')
+            .trim()
+            .toUpperCase(),
+        customBankAccount: (
+            document.getElementById('bill-custom-bank-account')?.value || ''
+        ).trim(),
+        customBankOwner: (document.getElementById('bill-custom-bank-owner')?.value || '').trim(),
         footer:
             (document.getElementById('bill-custom-footer')?.value || '').trim() ||
             'Cảm ơn Quý khách & Hẹn gặp lại!',
@@ -4163,6 +4184,7 @@ function readBillCustomModalValues() {
         showLogo: Boolean(document.getElementById('bill-custom-show-logo')?.checked),
         showStore: Boolean(document.getElementById('bill-custom-show-store')?.checked),
         showCustomer: Boolean(document.getElementById('bill-custom-show-customer')?.checked),
+        showCustomerPhone: Boolean(document.getElementById('bill-custom-show-cust-phone')?.checked),
         showCustomerAddress: Boolean(
             document.getElementById('bill-custom-show-cust-addr')?.checked
         ),
@@ -4209,6 +4231,15 @@ async function saveBillCustomConfig() {
     const cfg = readBillCustomModalValues();
     if (!KVStore.data.settings) KVStore.data.settings = {};
     KVStore.data.settings.billConfig = JSON.stringify(cfg);
+    if (cfg.customBankAccount) {
+        KVStore.data.settings.bankAccount = cfg.customBankAccount;
+    }
+    if (cfg.customBankCode) {
+        KVStore.data.settings.bankCode = cfg.customBankCode;
+    }
+    if (cfg.customBankOwner) {
+        KVStore.data.settings.bankOwner = cfg.customBankOwner;
+    }
     await KVStore.save();
     closeBillCustomModal();
     if (state.currentReceiptInvoice) {
@@ -4238,6 +4269,10 @@ function resetBillCustomConfig() {
     setVal('bill-custom-address', def.customAddress);
     setVal('bill-custom-phone', def.customPhone);
     setVal('bill-custom-tax-code', def.customTaxCode);
+    const s = KVStore.data?.settings || {};
+    setVal('bill-custom-bank-code', def.customBankCode || s.bankCode || 'VCB');
+    setVal('bill-custom-bank-account', def.customBankAccount || s.bankAccount || '');
+    setVal('bill-custom-bank-owner', def.customBankOwner || s.bankOwner || '');
     setVal('bill-custom-footer', def.footer);
     setVal('bill-custom-policy', def.policy);
     setVal('bill-custom-font-size', def.fontSize);
@@ -4251,6 +4286,7 @@ function resetBillCustomConfig() {
     setCb('bill-custom-show-logo', def.showLogo);
     setCb('bill-custom-show-store', def.showStore);
     setCb('bill-custom-show-customer', def.showCustomer);
+    setCb('bill-custom-show-cust-phone', def.showCustomerPhone);
     setCb('bill-custom-show-cust-addr', def.showCustomerAddress);
     setCb('bill-custom-show-cust-points', def.showCustomerPoints);
     setCb('bill-custom-show-cust-debt', def.showCustomerDebt);
@@ -4291,12 +4327,49 @@ function buildReceiptHTML(inv, cfg, isPreview = false) {
 
     const custName =
         (typeof inv.customer === 'string' ? inv.customer : inv.customer?.name) || 'Khách lẻ';
-    const custPhone = inv.customerPhone || (inv.customer && inv.customer.phone) || '';
-    const custAddr = inv.customerAddress || (inv.customer && inv.customer.address) || '';
+
+    let foundCust = null;
+    if (typeof KVStore !== 'undefined' && Array.isArray(KVStore.data?.customers)) {
+        if (inv.customerId) {
+            foundCust = KVStore.data.customers.find(
+                (c) => c.id === inv.customerId || c.code === inv.customerId
+            );
+        }
+        if (!foundCust && inv.phone && inv.phone !== 'Tại quầy') {
+            foundCust = KVStore.data.customers.find((c) => c.phone === inv.phone);
+        }
+        if (!foundCust && custName && custName !== 'Khách lẻ') {
+            foundCust = KVStore.data.customers.find(
+                (c) => c.name === custName || c.code === custName
+            );
+        }
+    }
+
+    const rawPhone =
+        inv.customerPhone ||
+        (inv.phone && inv.phone !== 'Tại quầy' ? inv.phone : '') ||
+        (inv.customer && typeof inv.customer === 'object' ? inv.customer.phone : '') ||
+        foundCust?.phone ||
+        '';
+    const custPhone = rawPhone === 'Tại quầy' ? '' : rawPhone;
+
+    const custAddr =
+        inv.customerAddress ||
+        (inv.customer && typeof inv.customer === 'object' ? inv.customer.address : '') ||
+        foundCust?.address ||
+        '';
     const custPoints =
-        inv.customerPoints != null ? inv.customerPoints : inv.customer && inv.customer.points;
+        inv.customerPoints != null
+            ? inv.customerPoints
+            : inv.customer && typeof inv.customer === 'object' && inv.customer.points != null
+              ? inv.customer.points
+              : foundCust?.points;
     const custDebt =
-        inv.customerOldDebt != null ? inv.customerOldDebt : inv.customer && inv.customer.debt;
+        inv.customerOldDebt != null
+            ? inv.customerOldDebt
+            : inv.customer && typeof inv.customer === 'object' && inv.customer.debt != null
+              ? inv.customer.debt
+              : foundCust?.debt;
 
     const cashier = inv.cashier || s.cashier || 'Thu ngân';
 
@@ -4345,12 +4418,21 @@ function buildReceiptHTML(inv, cfg, isPreview = false) {
     };
     const qrSizeClass = qrSizeMap[cfg.qrSize] || (isSheet ? 'w-28 h-28' : 'w-24 h-24');
 
-    if (cfg.showQr) {
-        if (s.bankCode && s.bankAccount && (transferAmount > 0 || isPreview)) {
-            const amt = transferAmount > 0 ? transferAmount : total;
-            const bankOwner = s.bankOwner || s.storeName || 'NKIOT';
-            qrSrc = `https://api.vietqr.io/image/${s.bankCode}-${s.bankAccount}-compact.jpg?amount=${amt}&addInfo=${encodeURIComponent(inv.code || 'HD')}&accountName=${encodeURIComponent(bankOwner)}`;
-        }
+    const bankCode = (cfg.customBankCode || s.bankCode || 'VCB').trim();
+    const bankAccount = (cfg.customBankAccount || s.bankAccount || '').trim();
+    const bankOwner = (cfg.customBankOwner || s.bankOwner || storeName || 'NKIOT').trim();
+
+    if (cfg.showQr && bankAccount) {
+        const amt =
+            transferAmount > 0
+                ? transferAmount
+                : remainingDebt > 0
+                  ? remainingDebt
+                  : total > 0
+                    ? total
+                    : 0;
+        const amountParam = amt > 0 ? `amount=${Math.round(amt)}&` : '';
+        qrSrc = `https://api.vietqr.io/image/${bankCode}-${bankAccount}-compact.jpg?${amountParam}addInfo=${encodeURIComponent(inv.code || 'HD')}&accountName=${encodeURIComponent(bankOwner)}`;
     }
 
     if (isSheet) {
@@ -4413,11 +4495,11 @@ function buildReceiptHTML(inv, cfg, isPreview = false) {
 
         const qrBlock = cfg.showQr
             ? `<div id="receipt-qr-wrap" class="mt-2 pt-2 border-t border-dashed border-gray-300 flex flex-col items-center sm:items-start">
-                <div class="text-[10.5px] text-gray-500 font-sans mb-1">Mã VietQR thanh toán 24/7:</div>
+                <div class="text-[10.5px] text-gray-500 font-sans mb-1 font-semibold">Mã VietQR thanh toán 24/7:</div>
                 ${
                     qrSrc
                         ? `<img id="receipt-qr-img" src="${escapeHTML(qrSrc)}" class="${qrSizeClass} object-contain rounded border border-gray-200" alt="VietQR" />`
-                        : `<div id="receipt-qr-img" class="${qrSizeClass} bg-gray-50 border border-gray-300 rounded p-1 flex items-center justify-center font-mono text-[9px] text-gray-400">[ QR VietQR ]</div>`
+                        : `<div id="receipt-qr-img" class="${qrSizeClass} bg-amber-50 border border-amber-200 rounded p-1 flex items-center justify-center font-mono text-[9px] text-amber-700 text-center">[ Chưa cài STK ]</div>`
                 }
                </div>`
             : `<div id="receipt-qr-wrap" class="hidden"><img id="receipt-qr-img" /></div>`;
@@ -4443,12 +4525,14 @@ function buildReceiptHTML(inv, cfg, isPreview = false) {
                 </div>
 
                 <!-- Customer Details Box -->
-                <div class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-3 text-[12px] space-y-1 text-slate-700">
+                <div id="receipt-customer-box" class="${cfg.showCustomer ? '' : 'hidden '}bg-slate-50 border border-slate-200 rounded-lg p-2.5 mb-3 text-[12px] space-y-1 text-slate-700">
                     <div class="grid grid-cols-2 gap-2">
                         <div id="receipt-row-customer" class="${cfg.showCustomer ? '' : 'hidden'}">
                             <span class="font-semibold text-slate-800">Khách hàng:</span> <span id="receipt-customer" class="font-bold text-slate-900">${escapeHTML(custName)}</span>
                         </div>
-                        ${custPhone ? `<div><span class="font-semibold text-slate-800">Điện thoại:</span> <span class="font-medium text-slate-900">${escapeHTML(custPhone)}</span></div>` : '<div></div>'}
+                        <div id="receipt-row-cust-phone" class="${cfg.showCustomer && cfg.showCustomerPhone !== false && custPhone ? '' : 'hidden'}">
+                            <span class="font-semibold text-slate-800">Điện thoại:</span> <span id="receipt-cust-phone" class="font-medium text-slate-900">${escapeHTML(custPhone)}</span>
+                        </div>
                     </div>
                     <div id="receipt-row-cust-addr" class="${cfg.showCustomer && cfg.showCustomerAddress && custAddr ? '' : 'hidden'}">
                         <span class="font-semibold text-slate-800">Địa chỉ giao hàng:</span> <span id="receipt-cust-addr">${escapeHTML(custAddr)}</span>
@@ -4588,11 +4672,11 @@ function buildReceiptHTML(inv, cfg, isPreview = false) {
 
     const qrBlock = cfg.showQr
         ? `<div id="receipt-qr-wrap" class="mt-2 pt-2 border-t border-dashed border-gray-300 flex flex-col items-center">
-            <div class="text-[10px] text-gray-500 font-sans mb-1">Mã VietQR thanh toán 24/7:</div>
+            <div class="text-[10px] text-gray-500 font-sans mb-1 font-semibold">Mã VietQR thanh toán 24/7:</div>
             ${
                 qrSrc
                     ? `<img id="receipt-qr-img" src="${escapeHTML(qrSrc)}" class="${qrSizeClass} object-contain mx-auto" alt="VietQR" />`
-                    : `<div id="receipt-qr-img" class="${qrSizeClass} bg-gray-50 border border-gray-300 rounded p-1 mx-auto flex items-center justify-center font-mono text-[9px] text-gray-400">[ QR VietQR ]</div>`
+                    : `<div id="receipt-qr-img" class="${qrSizeClass} bg-amber-50 border border-amber-200 rounded p-1 mx-auto flex items-center justify-center font-mono text-[9px] text-amber-700 text-center">[ Chưa cài STK ]</div>`
             }
            </div>`
         : `<div id="receipt-qr-wrap" class="hidden"><img id="receipt-qr-img" /></div>`;
@@ -4610,6 +4694,7 @@ function buildReceiptHTML(inv, cfg, isPreview = false) {
             <div id="receipt-row-code">Số HĐ: <span id="receipt-code" class="font-bold">${escapeHTML(inv.code || '')}</span></div>
             <div id="receipt-row-time">Ngày: <span id="receipt-time">${escapeHTML(inv.time || '')}</span></div>
             <div id="receipt-row-customer" class="${cfg.showCustomer ? '' : 'hidden'}">Khách hàng: <span id="receipt-customer">${escapeHTML(custName)}</span></div>
+            <div id="receipt-row-cust-phone" class="${cfg.showCustomer && cfg.showCustomerPhone !== false && custPhone ? '' : 'hidden'}">Điện thoại: <span id="receipt-cust-phone">${escapeHTML(custPhone)}</span></div>
             <div id="receipt-row-cust-addr" class="${cfg.showCustomer && cfg.showCustomerAddress && custAddr ? '' : 'hidden'}">Địa chỉ: <span id="receipt-cust-addr">${escapeHTML(custAddr)}</span></div>
             <div id="receipt-row-cust-points" class="${cfg.showCustomer && cfg.showCustomerPoints && custPoints != null ? '' : 'hidden'}">Điểm tích lũy: <span id="receipt-cust-points" class="font-bold text-[#0066cc]">${custPoints || 0} điểm</span></div>
             <div id="receipt-row-cust-debt" class="${cfg.showCustomer && cfg.showCustomerDebt && custDebt && custDebt > 0 ? '' : 'hidden'}">Nợ cũ: <span id="receipt-cust-debt" class="font-bold text-red-600">${formatVND(custDebt || 0)} đ</span></div>

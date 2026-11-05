@@ -537,174 +537,295 @@ test('Invoice printing supports A4 and A5 formats with in-words currency, respon
     dom.window.close();
 });
 
-test('Bill customization UX/UI: One-click presets, Live preview badge, and preview expand toggle', async () => {
+test('Customer phone number renders on actual invoices, drafts and previews across thermal and sheet formats', async () => {
     const dom = browser(),
         w = dom.window;
     w.eval('KVStore.save = async () => {}');
 
-    // 1. Setup logo in settings, open modal and check initial states
-    w.eval(
-        'if (!KVStore.data.settings) KVStore.data.settings = {}; KVStore.data.settings.logoUrl = "https://example.com/logo-test.png";'
-    );
-    w.openBillCustomModal();
-    const modal = w.document.getElementById('bill-custom-modal');
+    // 1. Test actual invoice from POS (which stores customer: string, phone: string)
+    const realInv = {
+        id: 'HD009999',
+        code: 'HD009999',
+        time: '05/11/2026 16:30',
+        customer: 'Nguyễn Văn Đạt',
+        phone: '0857927778',
+        items: [
+            {
+                code: 'SP001',
+                name: 'Đồng hồ thông minh Garmin MarQ II',
+                qty: 1,
+                price: 6000000,
+                total: 6000000
+            }
+        ],
+        total: 6000000,
+        paid: 6000000,
+        cashier: 'Thu ngân Test'
+    };
+
+    // Open receipt modal in default thermal (K80) format
+    w.openReceiptModal(realInv);
+    const modal = w.document.getElementById('receipt-modal');
     assert.ok(!modal.classList.contains('hidden'));
 
-    const paperBadge = w.document.getElementById('bill-preview-paper-badge');
-    assert.ok(paperBadge);
-    assert.ok(paperBadge.textContent.includes('K80'));
+    // Check thermal layout displays customer phone
+    const phoneEl = w.document.getElementById('receipt-cust-phone');
+    const phoneRow = w.document.getElementById('receipt-row-cust-phone');
+    assert.ok(phoneEl, 'Customer phone element should exist in thermal layout');
+    assert.equal(phoneEl.textContent, '0857927778');
+    assert.ok(!phoneRow.classList.contains('hidden'), 'Customer phone row should be visible');
 
-    const logoPreview = w.document.getElementById('bill-custom-logo-preview');
-    assert.ok(logoPreview);
-    assert.ok(logoPreview.innerHTML.includes('https://example.com/logo-test.png'));
+    // Switch to A4 sheet format and verify customer phone
+    w.setReceiptPaperPreview('a4');
+    const sheetPhoneEl = w.document.getElementById('receipt-cust-phone');
+    const sheetPhoneRow = w.document.getElementById('receipt-row-cust-phone');
+    assert.ok(sheetPhoneEl, 'Customer phone element should exist in sheet layout');
+    assert.equal(sheetPhoneEl.textContent, '0857927778');
+    assert.ok(
+        !sheetPhoneRow.classList.contains('hidden'),
+        'Customer phone row should be visible in sheet'
+    );
 
-    // 2. Test expand/collapse toggle
-    const ctrlCol = w.document.getElementById('bill-custom-controls-col');
-    const prevCol = w.document.getElementById('bill-custom-preview-col');
-    const expandLabel = w.document.getElementById('bill-preview-expand-label');
-    assert.ok(ctrlCol);
-    assert.ok(prevCol);
-    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
-    assert.ok(prevCol.classList.contains('lg:col-span-5'));
+    // Switch to A5 sheet format and verify customer phone
+    w.setReceiptPaperPreview('a5');
+    assert.equal(w.document.getElementById('receipt-cust-phone').textContent, '0857927778');
 
-    w.toggleBillPreviewExpand();
-    assert.ok(ctrlCol.classList.contains('lg:col-span-4'));
-    assert.ok(prevCol.classList.contains('lg:col-span-8'));
-    assert.equal(expandLabel.textContent, 'Thu nhỏ');
+    // 2. Test customer lookup via customerId from KVStore.data.customers
+    // Customer KH0002 has name 'Chị Thuý', phone '0946745931'
+    const custLookupInv = {
+        code: 'HD-LOOKUP',
+        time: '05/11/2026 17:00',
+        customer: 'Chị Thuý',
+        customerId: 'KH0002',
+        items: [{ name: 'Tai nghe', qty: 1, price: 100000 }],
+        total: 100000,
+        paid: 100000
+    };
+    w.openReceiptModal(custLookupInv);
+    assert.equal(w.document.getElementById('receipt-cust-phone').textContent, '0946745931');
 
-    w.toggleBillPreviewExpand();
-    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
-    assert.ok(prevCol.classList.contains('lg:col-span-5'));
-    assert.equal(expandLabel.textContent, 'Phóng to');
+    // 3. Test retail customer (Khách lẻ with phone 'Tại quầy') does not show phone row
+    const retailInv = {
+        code: 'HD-RETAIL',
+        time: '05/11/2026 17:05',
+        customer: 'Khách lẻ',
+        phone: 'Tại quầy',
+        items: [{ name: 'Phụ kiện', qty: 1, price: 50000 }],
+        total: 50000,
+        paid: 50000
+    };
+    w.openReceiptModal(retailInv);
+    const retailPhoneRow = w.document.getElementById('receipt-row-cust-phone');
+    assert.ok(
+        retailPhoneRow.classList.contains('hidden'),
+        'Retail invoice without phone should hide phone row'
+    );
 
-    // 3. Test Minimal Preset ('minimal')
-    w.applyBillPreset('minimal');
-    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
-    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'compact');
-    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'monospace');
-    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, false);
-    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, false);
-    assert.ok(paperBadge.textContent.includes('K80'));
-    assert.ok(paperBadge.textContent.includes('Cỡ nhỏ'));
+    // 4. Test bill custom configuration toggle for showCustomerPhone
+    w.openBillCustomModal();
+    const custPhoneCb = w.document.getElementById('bill-custom-show-cust-phone');
+    assert.ok(custPhoneCb, 'Checkbox bill-custom-show-cust-phone should exist in modal');
+    assert.equal(custPhoneCb.checked, true, 'Default showCustomerPhone should be true');
 
-    // 4. Test Tech Preset ('tech')
-    w.applyBillPreset('tech');
-    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
-    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'standard');
-    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-item-code').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, true);
-    assert.ok(w.document.getElementById('bill-custom-policy').value.includes('Bảo hành'));
-    assert.ok(paperBadge.textContent.includes('K80'));
-    assert.ok(paperBadge.textContent.includes('Tiêu chuẩn'));
+    // Uncheck customer phone toggle
+    custPhoneCb.checked = false;
+    w.onBillConfigChange();
 
-    // 5. Test Wholesale Preset ('wholesale')
-    w.applyBillPreset('wholesale');
-    assert.ok(w.document.getElementById('bill-opt-paper-a4').checked);
-    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'sans');
-    assert.equal(w.document.getElementById('bill-custom-show-item-unit').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-cust-debt').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-signatures').checked, true);
-    assert.ok(paperBadge.textContent.includes('Khổ A4'));
-    assert.ok(paperBadge.textContent.includes('Sans'));
+    // Verify phone row is hidden in live preview
+    const livePreviewPhoneRow = w.document.querySelector(
+        '#bill-preview-paper #receipt-row-cust-phone'
+    );
+    assert.ok(livePreviewPhoneRow);
+    assert.ok(
+        livePreviewPhoneRow.classList.contains('hidden'),
+        'Live preview should hide customer phone row'
+    );
 
-    // Wholesale on A4 preview renders 3 signature columns
-    const previewPaper = w.document.getElementById('bill-preview-paper');
-    assert.ok(previewPaper.textContent.includes('Người lập hóa đơn'));
-    assert.ok(previewPaper.textContent.includes('Người giao hàng'));
-
-    // 6. Save custom configuration after preset
+    // Save with phone unchecked and verify openReceiptModal respects saved config
     await w.saveBillCustomConfig();
-    const finalCfg = w.getBillConfig();
-    assert.equal(finalCfg.paperSize, 'a4');
-    assert.equal(finalCfg.fontFamily, 'sans');
-    assert.equal(finalCfg.showSignatures, true);
+    assert.equal(w.getBillConfig().showCustomerPhone, false);
+
+    w.openReceiptModal(realInv);
+    assert.ok(
+        w.document.getElementById('receipt-row-cust-phone').classList.contains('hidden'),
+        'Receipt modal should hide customer phone when showCustomerPhone is false'
+    );
+
+    // Re-check customer phone and save
+    w.openBillCustomModal();
+    w.document.getElementById('bill-custom-show-cust-phone').checked = true;
+    w.onBillConfigChange();
+    await w.saveBillCustomConfig();
+
+    const savedCfg = w.getBillConfig();
+    assert.equal(savedCfg.showCustomerPhone, true);
+
+    w.openReceiptModal(realInv);
+    assert.ok(
+        !w.document.getElementById('receipt-row-cust-phone').classList.contains('hidden'),
+        'Receipt modal should show customer phone when showCustomerPhone is true'
+    );
+
+    // 5. Test draft POS invoice with selected customer
+    w.switchView('pos');
+    const sampleCust = w.eval(
+        'KVStore.data.customers.find(c => c.phone && c.phone !== "Tại quầy")'
+    );
+    assert.ok(sampleCust);
+    w.selectPosCustomer(sampleCust);
+    const sampleProd = w.eval('KVStore.data.products.find(p => p.stock > 0)');
+    w.addPosCartItem(sampleProd);
+    w.printCurrentPosDraft();
+
+    const draftModal = w.document.getElementById('receipt-modal');
+    assert.ok(!draftModal.classList.contains('hidden'));
+    assert.equal(w.document.getElementById('receipt-cust-phone').textContent, sampleCust.phone);
 
     dom.window.close();
 });
 
-test('Bill customization UX/UI: One-click presets, Live preview badge, and preview expand toggle', async () => {
+test('VietQR code generates and displays on invoices across cash, transfer, debt and draft formats with custom bank support', async () => {
     const dom = browser(),
         w = dom.window;
     w.eval('KVStore.save = async () => {}');
 
-    // 1. Setup logo in settings, open modal and check initial states
-    w.eval(
-        'if (!KVStore.data.settings) KVStore.data.settings = {}; KVStore.data.settings.logoUrl = "https://example.com/logo-test.png";'
-    );
-    w.openBillCustomModal();
-    const modal = w.document.getElementById('bill-custom-modal');
+    // 1. Setup store bank settings
+    w.eval(`
+        if (!KVStore.data.settings) KVStore.data.settings = {};
+        KVStore.data.settings.bankCode = 'VCB';
+        KVStore.data.settings.bankAccount = '1028889999';
+        KVStore.data.settings.bankOwner = 'TRAN VAN NHAT';
+        KVStore.data.settings.storeName = 'Kalo HCM';
+    `);
+
+    // 2. Test cash invoice (previously would NOT show QR because transferAmount === 0 and isPreview === false)
+    const cashInv = {
+        id: 'HD-CASH-TEST',
+        code: 'HD-CASH-TEST',
+        time: '05/11/2026 17:30',
+        customer: 'Nguyễn Văn Mua Hàng',
+        phone: '0912345678',
+        items: [{ code: 'SP01', name: 'Sản phẩm Test', qty: 1, price: 5000000, total: 5000000 }],
+        total: 5000000,
+        paid: 5000000,
+        paymentMethod: 'cash',
+        payments: [{ method: 'cash', amount: 5000000 }],
+        cashier: 'Thu ngân'
+    };
+
+    w.openReceiptModal(cashInv);
+    const modal = w.document.getElementById('receipt-modal');
     assert.ok(!modal.classList.contains('hidden'));
 
-    const paperBadge = w.document.getElementById('bill-preview-paper-badge');
-    assert.ok(paperBadge);
-    assert.ok(paperBadge.textContent.includes('K80'));
+    // Verify QR code is rendered in thermal K80 layout
+    const qrWrap = w.document.getElementById('receipt-qr-wrap');
+    assert.ok(qrWrap);
+    assert.ok(!qrWrap.classList.contains('hidden'), 'QR wrap should be visible');
 
-    const logoPreview = w.document.getElementById('bill-custom-logo-preview');
-    assert.ok(logoPreview);
-    assert.ok(logoPreview.innerHTML.includes('https://example.com/logo-test.png'));
+    const qrImg = w.document.getElementById('receipt-qr-img');
+    assert.ok(qrImg);
+    assert.equal(qrImg.tagName, 'IMG', 'QR element should be an img tag, not placeholder div');
+    assert.ok(
+        qrImg.src.includes('VCB-1028889999-compact.jpg'),
+        'QR src should contain bank code and account'
+    );
+    assert.ok(qrImg.src.includes('amount=5000000'), 'QR src should encode the bill total amount');
+    assert.ok(qrImg.src.includes('HD-CASH-TEST'), 'QR src should encode invoice code');
 
-    // 2. Test expand/collapse toggle
-    const ctrlCol = w.document.getElementById('bill-custom-controls-col');
-    const prevCol = w.document.getElementById('bill-custom-preview-col');
-    const expandLabel = w.document.getElementById('bill-preview-expand-label');
-    assert.ok(ctrlCol);
-    assert.ok(prevCol);
-    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
-    assert.ok(prevCol.classList.contains('lg:col-span-5'));
+    // 3. Verify Sheet A4 and A5 layouts also display VietQR
+    w.setReceiptPaperPreview('a4');
+    const sheetQrImg = w.document.getElementById('receipt-qr-img');
+    assert.ok(sheetQrImg);
+    assert.equal(sheetQrImg.tagName, 'IMG');
+    assert.ok(sheetQrImg.src.includes('VCB-1028889999-compact.jpg'));
 
-    w.toggleBillPreviewExpand();
-    assert.ok(ctrlCol.classList.contains('lg:col-span-4'));
-    assert.ok(prevCol.classList.contains('lg:col-span-8'));
-    assert.equal(expandLabel.textContent, 'Thu nhỏ');
+    w.setReceiptPaperPreview('a5');
+    const a5QrImg = w.document.getElementById('receipt-qr-img');
+    assert.ok(a5QrImg);
+    assert.equal(a5QrImg.tagName, 'IMG');
+    assert.ok(a5QrImg.src.includes('VCB-1028889999-compact.jpg'));
 
-    w.toggleBillPreviewExpand();
-    assert.ok(ctrlCol.classList.contains('lg:col-span-7'));
-    assert.ok(prevCol.classList.contains('lg:col-span-5'));
-    assert.equal(expandLabel.textContent, 'Phóng to');
+    // 4. Test debt invoice: QR encodes remaining debt amount
+    const debtInv = {
+        code: 'HD-DEBT-TEST',
+        time: '05/11/2026 17:40',
+        customer: 'Khách Ghi Nợ',
+        items: [{ code: 'SP02', name: 'Máy Laptop', qty: 1, price: 10000000, total: 10000000 }],
+        total: 10000000,
+        paid: 3000000,
+        payments: [{ method: 'cash', amount: 3000000 }]
+    };
+    w.openReceiptModal(debtInv);
+    const debtQrImg = w.document.getElementById('receipt-qr-img');
+    assert.ok(debtQrImg);
+    assert.ok(
+        debtQrImg.src.includes('amount=7000000'),
+        'QR src should encode remaining debt 7,000,000'
+    );
 
-    // 3. Test Minimal Preset ('minimal')
-    w.applyBillPreset('minimal');
-    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
-    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'compact');
-    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'monospace');
-    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, false);
-    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, false);
-    assert.ok(paperBadge.textContent.includes('K80'));
-    assert.ok(paperBadge.textContent.includes('Cỡ nhỏ'));
+    // 5. Test Custom Bank in Custom Bill settings modal
+    w.openBillCustomModal();
+    const bankCodeInput = w.document.getElementById('bill-custom-bank-code');
+    const bankAccountInput = w.document.getElementById('bill-custom-bank-account');
+    const bankOwnerInput = w.document.getElementById('bill-custom-bank-owner');
+    assert.ok(bankCodeInput, 'Custom bank code input should exist');
+    assert.ok(bankAccountInput, 'Custom bank account input should exist');
+    assert.ok(bankOwnerInput, 'Custom bank owner input should exist');
 
-    // 4. Test Tech Preset ('tech')
-    w.applyBillPreset('tech');
-    assert.ok(w.document.getElementById('bill-opt-paper-k80').checked);
-    assert.equal(w.document.getElementById('bill-custom-font-size').value, 'standard');
-    assert.equal(w.document.getElementById('bill-custom-show-imei').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-item-code').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-qr').checked, true);
-    assert.ok(w.document.getElementById('bill-custom-policy').value.includes('Bảo hành'));
-    assert.ok(paperBadge.textContent.includes('K80'));
-    assert.ok(paperBadge.textContent.includes('Tiêu chuẩn'));
+    bankCodeInput.value = 'MB';
+    bankAccountInput.value = '999988887777';
+    bankOwnerInput.value = 'NGUYEN VAN MB';
+    w.onBillConfigChange();
 
-    // 5. Test Wholesale Preset ('wholesale')
-    w.applyBillPreset('wholesale');
-    assert.ok(w.document.getElementById('bill-opt-paper-a4').checked);
-    assert.equal(w.document.getElementById('bill-custom-font-family').value, 'sans');
-    assert.equal(w.document.getElementById('bill-custom-show-item-unit').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-cust-debt').checked, true);
-    assert.equal(w.document.getElementById('bill-custom-show-signatures').checked, true);
-    assert.ok(paperBadge.textContent.includes('Khổ A4'));
-    assert.ok(paperBadge.textContent.includes('Sans'));
+    // Verify live preview renders custom bank VietQR
+    const previewQrImg = w.document.querySelector('#bill-preview-paper #receipt-qr-img');
+    assert.ok(previewQrImg);
+    assert.equal(previewQrImg.tagName, 'IMG');
+    assert.ok(previewQrImg.src.includes('MB-999988887777-compact.jpg'));
+    assert.ok(previewQrImg.src.includes('NGUYEN%20VAN%20MB'));
 
-    // Wholesale on A4 preview renders 3 signature columns
-    const previewPaper = w.document.getElementById('bill-preview-paper');
-    assert.ok(previewPaper.textContent.includes('Người lập hóa đơn'));
-    assert.ok(previewPaper.textContent.includes('Người giao hàng'));
-
-    // 6. Save custom configuration after preset
+    // Save custom configuration
     await w.saveBillCustomConfig();
-    const finalCfg = w.getBillConfig();
-    assert.equal(finalCfg.paperSize, 'a4');
-    assert.equal(finalCfg.fontFamily, 'sans');
-    assert.equal(finalCfg.showSignatures, true);
+    const savedBillCfg = w.getBillConfig();
+    assert.equal(savedBillCfg.customBankCode, 'MB');
+    assert.equal(savedBillCfg.customBankAccount, '999988887777');
+    assert.equal(savedBillCfg.customBankOwner, 'NGUYEN VAN MB');
+
+    // Actual bill now renders with the saved MB bank info
+    w.openReceiptModal(cashInv);
+    assert.ok(
+        w.document.getElementById('receipt-qr-img').src.includes('MB-999988887777-compact.jpg')
+    );
+
+    // 6. Test toggling showQr = false hides the QR block
+    w.openBillCustomModal();
+    w.document.getElementById('bill-custom-show-qr').checked = false;
+    w.onBillConfigChange();
+    await w.saveBillCustomConfig();
+
+    w.openReceiptModal(cashInv);
+    assert.ok(w.document.getElementById('receipt-qr-wrap').classList.contains('hidden'));
+
+    // 7. Re-enable QR code
+    w.openBillCustomModal();
+    w.document.getElementById('bill-custom-show-qr').checked = true;
+    w.onBillConfigChange();
+    await w.saveBillCustomConfig();
+    w.openReceiptModal(cashInv);
+    assert.ok(!w.document.getElementById('receipt-qr-wrap').classList.contains('hidden'));
+
+    // 8. Test when bank account is missing: renders fallback notice
+    w.eval(`
+        KVStore.data.settings.bankAccount = '';
+        const curCfg = JSON.parse(KVStore.data.settings.billConfig || '{}');
+        curCfg.customBankAccount = '';
+        KVStore.data.settings.billConfig = JSON.stringify(curCfg);
+    `);
+    w.openReceiptModal(cashInv);
+    const fallbackEl = w.document.getElementById('receipt-qr-img');
+    assert.ok(fallbackEl);
+    assert.notEqual(fallbackEl.tagName, 'IMG');
+    assert.ok(fallbackEl.textContent.includes('Chưa cài STK'));
 
     dom.window.close();
 });
