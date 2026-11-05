@@ -13,7 +13,8 @@ const defaultData = {
         bankOwner: 'TRAN VAN NHAT',
         cashier: 'Trần Văn Nhất',
         logoUrl: '',
-        logoText: 'NKiot'
+        logoText: 'NKiot',
+        billConfig: ''
     },
     products: [
         {

@@ -511,9 +511,17 @@ function applyCatalogPatch(data, user, patch) {
     }
     if (Object.keys(patch.settings).length) {
         requirePermission(user, 'settings');
-        for (const key of Object.keys(patch.settings))
+        for (const key of Object.keys(patch.settings)) {
             if (!Object.hasOwn(data.settings, key) || key === 'branch')
                 fail('Trường cài đặt không hợp lệ.');
+            if (
+                key === 'billConfig' &&
+                patch.settings[key] &&
+                typeof patch.settings[key] === 'object'
+            ) {
+                patch.settings[key] = JSON.stringify(patch.settings[key]);
+            }
+        }
         incoming.settings = { ...data.settings, ...patch.settings };
     }
     return applyEdit(data, user, incoming, true);
@@ -651,9 +659,24 @@ function applyEdit(data, user, incoming, partial = false) {
         )
             fail('Cài đặt không hợp lệ.');
         for (const [k, v] of Object.entries(incoming.settings)) {
-            const maxLen = k === 'logoUrl' ? 2 * 1024 * 1024 : 1000;
+            if (k === 'billConfig' && v && typeof v === 'object' && !Array.isArray(v)) {
+                incoming.settings[k] = JSON.stringify(v);
+            }
+        }
+        for (const [k, v] of Object.entries(incoming.settings)) {
+            const maxLen =
+                k === 'logoUrl' ? 2 * 1024 * 1024 : k === 'billConfig' ? 64 * 1024 : 1000;
             if (!Object.hasOwn(data.settings, k) || typeof v !== 'string' || v.length > maxLen)
                 fail('Trường cài đặt không hợp lệ.');
+            if (k === 'billConfig' && v.trim()) {
+                try {
+                    const parsed = JSON.parse(v);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+                        fail('Trường cài đặt không hợp lệ.');
+                } catch {
+                    fail('Trường cài đặt không hợp lệ.');
+                }
+            }
         }
         if (Object.keys(data.settings).some((k) => !Object.hasOwn(incoming.settings, k)))
             fail('Thiếu trường cài đặt.');

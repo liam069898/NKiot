@@ -237,6 +237,14 @@ test('catalog add, settings save and staff create roundtrip through actual HTTP 
         setValue(b.w, 'set-bank-account', '00123456789');
         await b.w.saveSettingsFromModal({ preventDefault() {} });
         assert.equal(db.getAllData().settings.bankAccount, '00123456789');
+        b.w.openBillCustomModal();
+        b.w.applyBillPreset('tech');
+        await b.w.saveBillCustomConfig();
+        const savedSettings = db.getAllData().settings;
+        assert.ok(savedSettings.billConfig);
+        const parsedBillCfg = JSON.parse(savedSettings.billConfig);
+        assert.equal(parsedBillCfg.paperSize, 'k80');
+        assert.equal(parsedBillCfg.showImei, true);
         b.w.openStaffFormModal();
         setValue(b.w, 'staff-input-name', 'New cashier');
         setValue(b.w, 'staff-input-username', 'newcashier');

@@ -333,6 +333,10 @@ function initDb() {
                 'logoText',
                 '"NKiot"'
             );
+            d.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(
+                'billConfig',
+                '""'
+            );
         } catch {}
         if (isNew) {
             const initial = JSON.parse(JSON.stringify(defaultData));

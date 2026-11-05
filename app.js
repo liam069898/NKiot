@@ -3743,7 +3743,14 @@ const SAMPLE_MOCK_INVOICE = {
 };
 
 function getBillConfig() {
-    const stored = KVStore.data?.settings?.billConfig;
+    let stored = KVStore.data?.settings?.billConfig;
+    if (typeof stored === 'string' && stored.trim()) {
+        try {
+            stored = JSON.parse(stored);
+        } catch {
+            stored = null;
+        }
+    }
     if (!stored || typeof stored !== 'object') return { ...DEFAULT_BILL_CONFIG };
     return { ...DEFAULT_BILL_CONFIG, ...stored };
 }
@@ -3824,7 +3831,7 @@ function setReceiptPaperPreview(size) {
     const cfg = getBillConfig();
     cfg.paperSize = size;
     if (!KVStore.data.settings) KVStore.data.settings = {};
-    KVStore.data.settings.billConfig = cfg;
+    KVStore.data.settings.billConfig = JSON.stringify(cfg);
     applyReceiptPaperSize(size, cfg.fontSize, cfg.fontFamily);
     if (state.currentReceiptInvoice) {
         renderReceiptContent(state.currentReceiptInvoice, cfg);
@@ -4201,7 +4208,7 @@ function onBillConfigChange() {
 async function saveBillCustomConfig() {
     const cfg = readBillCustomModalValues();
     if (!KVStore.data.settings) KVStore.data.settings = {};
-    KVStore.data.settings.billConfig = cfg;
+    KVStore.data.settings.billConfig = JSON.stringify(cfg);
     await KVStore.save();
     closeBillCustomModal();
     if (state.currentReceiptInvoice) {
