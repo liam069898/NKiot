@@ -11,10 +11,12 @@
             html {
                 zoom: 1;
             }
+            #pos-layout,
             #view-pos {
                 zoom: 1.1;
             }
             @media (min-width: 1024px) {
+                #pos-layout,
                 #view-pos {
                     width: calc(100vw / 1.1) !important;
                     height: calc(100dvh / 1.1) !important;
@@ -998,8 +1000,9 @@
                             />
                         </svg>
                         <span
-                            class="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[11px] font-bold w-3.5 h-3.5 rounded-full flex items-center justify-center"
-                            >1</span
+                            id="header-notification-badge"
+                            class="hidden absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[10px] font-bold w-3.5 h-3.5 rounded-full items-center justify-center"
+                            >0</span
                         >
                     </button>
                     <!-- Settings Button -->
@@ -1391,9 +1394,9 @@
                     >
                         Báo cáo
                     </button>
-                    <!-- Mobile More Dropdown -->
+                    <!-- Mobile / Tablet More Dropdown -->
                     <div
-                        class="group relative h-full flex items-center md:hidden flex-shrink-0"
+                        class="group relative h-full flex items-center lg:hidden flex-shrink-0"
                         id="nav-more-dropdown-wrapper"
                     >
                         <button
@@ -1429,13 +1432,13 @@
                             >
                                 <button
                                     onclick="switchView('invoices')"
-                                    class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc]"
+                                    class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc] md:hidden"
                                 >
                                     Đơn hàng
                                 </button>
                                 <button
                                     onclick="switchView('customers')"
-                                    class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc]"
+                                    class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc] md:hidden"
                                 >
                                     Khách hàng
                                 </button>
@@ -1592,6 +1595,7 @@
                                     class="relative flex items-center w-full border-b border-gray-200/50 h-0"
                                 >
                                     <span
+                                        id="dashboard-chart-y-max"
                                         class="absolute -left-12 -top-2.5 w-10 text-right font-mono text-[11px] leading-tight"
                                         >100 tr</span
                                     >
@@ -1600,6 +1604,7 @@
                                     class="relative flex items-center w-full border-b border-gray-200/50 h-0"
                                 >
                                     <span
+                                        id="dashboard-chart-y-mid"
                                         class="absolute -left-12 -top-2.5 w-10 text-right font-mono text-[11px] leading-tight"
                                         >50 tr</span
                                     >
@@ -1608,6 +1613,7 @@
                                     class="relative flex items-center w-full border-b border-gray-200/70 h-0"
                                 >
                                     <span
+                                        id="dashboard-chart-y-min"
                                         class="absolute -left-12 -top-2.5 w-10 text-right font-mono text-[11px] leading-tight"
                                         >0</span
                                     >
@@ -5668,32 +5674,46 @@
             role="dialog"
             aria-modal="true"
             aria-labelledby="contact-product-name"
-            class="kv-modal hidden fixed inset-0 bg-black/40 z-[120] flex items-center justify-center p-4"
+            class="kv-modal hidden fixed inset-0 bg-black/50 backdrop-blur-md z-[120] flex items-center justify-center p-3 sm:p-4"
         >
             <div
-                class="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-5 max-h-[92vh] overflow-y-auto space-y-3"
+                class="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-5 max-h-[92vh] overflow-y-auto space-y-4 border border-gray-100"
             >
-                <div class="flex justify-between items-center gap-3">
-                    <h2 id="contact-product-name" class="font-bold text-lg"></h2>
+                <div class="flex justify-between items-start gap-3 border-b border-gray-100 pb-3">
+                    <div class="min-w-0">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-[#0066cc] mb-1">Kho liên kết đối tác</span>
+                        <h2 id="contact-product-name" class="font-bold text-lg text-gray-900 leading-snug"></h2>
+                    </div>
                     <button
                         type="button"
                         data-close-partner
-                        class="px-3 py-1 rounded-lg bg-gray-100"
+                        class="glass-btn-secondary px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 transition flex-shrink-0"
                     >
                         Đóng
                     </button>
                 </div>
-                <p>Mã hàng: <span id="contact-product-code" class="font-mono"></span></p>
-                <p>
-                    Giá sỉ: <strong id="contact-product-wholesale"></strong> · Tối thiểu:
-                    <span id="contact-product-min-qty"></span>
-                </p>
-                <span id="contact-condition-badge"></span>
-                <div id="contact-condition-detail-row" class="hidden">
+
+                <div class="grid grid-cols-2 gap-2.5 p-3 rounded-xl bg-gray-50/80 border border-gray-100 text-xs">
+                    <div>
+                        <span class="text-gray-500 block mb-0.5">Mã hàng:</span>
+                        <span id="contact-product-code" class="font-mono font-bold text-gray-800"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500 block mb-0.5">Giá sỉ & Số lượng:</span>
+                        <strong id="contact-product-wholesale" class="text-emerald-600 font-bold"></strong>
+                        <span class="text-gray-400 mx-1">·</span>
+                        <span class="text-gray-600">Tối thiểu: <span id="contact-product-min-qty" class="font-semibold text-gray-800"></span></span>
+                    </div>
+                </div>
+
+                <div>
+                    <span id="contact-condition-badge"></span>
+                </div>
+                <div id="contact-condition-detail-row" class="hidden text-xs text-gray-600 p-2.5 rounded-lg bg-amber-50/70 border border-amber-200/60">
                     <p id="contact-condition-detail"></p>
                 </div>
                 <section id="contact-imei-selector-container" class="hidden space-y-2">
-                    <p id="contact-imei-count-badge"></p>
+                    <p id="contact-imei-count-badge" class="text-xs font-semibold text-gray-700"></p>
                     <div id="contact-imei-pills" class="flex flex-wrap gap-2"></div>
                 </section>
                 <p id="contact-active-imei-banner" class="hidden text-sm"></p>
@@ -5702,8 +5722,8 @@
                     class="hidden space-y-2"
                     aria-label="Ảnh và video đối tác"
                 >
-                    <p id="contact-media-count" class="text-sm text-gray-500"></p>
-                    <div id="contact-main-image-container" class="hidden">
+                    <p id="contact-media-count" class="text-xs text-gray-500 font-medium"></p>
+                    <div id="contact-main-image-container" class="hidden rounded-xl overflow-hidden border border-gray-200/80 bg-gray-50">
                         <img
                             id="contact-main-image"
                             alt="Ảnh sản phẩm đối tác"
@@ -5716,27 +5736,31 @@
                             id="contact-video-player"
                             controls
                             preload="none"
-                            class="hidden w-full max-h-64"
+                            class="hidden w-full max-h-64 rounded-xl border border-gray-200"
                         ></video>
                         <a
                             id="contact-video-link"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="hidden text-blue-600 underline"
+                            class="hidden text-[#0066cc] hover:underline text-xs font-semibold"
                         ></a>
                     </div>
                 </section>
-                <div id="contact-description-row" class="hidden">
+                <div id="contact-description-row" class="hidden text-xs text-gray-700 p-3 rounded-xl bg-gray-50 border border-gray-100">
                     <p id="contact-product-desc" class="whitespace-pre-wrap"></p>
                 </div>
-                <div id="contact-product-note-row" class="hidden">
+                <div id="contact-product-note-row" class="hidden text-xs text-amber-800 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
                     <p id="contact-product-note" class="whitespace-pre-wrap"></p>
                 </div>
-                <div class="border-t pt-3 space-y-1">
-                    <p id="contact-owner-name" class="font-bold"></p>
-                    <p id="contact-owner-branch"></p>
-                    <p id="contact-owner-phone"></p>
-                    <a id="call-partner-link" class="hidden text-blue-600 underline">Gọi đối tác</a>
+                <div class="border-t border-gray-100 pt-3 p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
+                    <div class="font-bold text-gray-900 text-sm" id="contact-owner-name"></div>
+                    <div class="text-gray-600" id="contact-owner-branch"></div>
+                    <div class="font-mono text-gray-700 font-semibold" id="contact-owner-phone"></div>
+                    <div>
+                        <a id="call-partner-link" class="hidden inline-flex items-center gap-1 text-[#0066cc] hover:underline font-bold text-xs mt-1">
+                            <span>📞 Gọi đối tác</span>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -6197,49 +6221,81 @@
             role="dialog"
             aria-modal="true"
             aria-labelledby="non-imei-modal-title"
-            class="kv-modal hidden fixed inset-0 bg-black/40 z-[130] flex items-center justify-center p-4"
+            class="kv-modal hidden fixed inset-0 bg-black/50 backdrop-blur-md z-[130] flex items-center justify-center p-3 sm:p-4"
         >
-            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto">
-                <h2 id="non-imei-modal-title" class="font-bold">Ảnh và tình trạng lô hàng</h2>
-                <p id="non-imei-modal-sub"></p>
-                <label class="block"
-                    >Tình trạng
-                    <select id="non-imei-modal-condition" class="border rounded-lg p-2">
-                        <option value="new">Mới</option>
-                        <option value="like_new">Như mới</option>
-                        <option value="good">Tốt</option>
-                        <option value="fair">Đã qua sử dụng</option>
-                    </select>
-                </label>
-                <label class="block"
-                    >Chi tiết
-                    <input
-                        id="non-imei-modal-condition-detail"
-                        type="text"
-                        class="border rounded-lg p-2 w-full"
-                /></label>
-                <label class="block"
-                    >Ảnh sản phẩm
-                    <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onchange="handleNonImeiModalImageUpload(event)"
-                /></label>
-                <div id="non-imei-modal-img-previews" class="flex flex-wrap gap-2"></div>
-                <div class="flex justify-end gap-2">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 space-y-4 max-h-[92vh] overflow-y-auto border border-gray-100">
+                <div class="flex justify-between items-start border-b border-gray-100 pb-3">
+                    <div class="min-w-0">
+                        <h2 id="non-imei-modal-title" class="font-bold text-gray-900 text-base leading-snug">Ảnh và tình trạng lô hàng</h2>
+                        <p id="non-imei-modal-sub" class="text-xs text-gray-500 font-medium mt-0.5"></p>
+                    </div>
                     <button
                         type="button"
                         onclick="closeNonImeiMediaModal()"
-                        class="px-3 py-2 bg-gray-100 rounded-lg"
+                        class="p-1 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition"
+                        title="Đóng"
                     >
-                        Đóng</button
-                    ><button
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+
+                <div class="space-y-3 text-xs">
+                    <div>
+                        <label for="non-imei-modal-condition" class="block font-semibold text-gray-700 mb-1">Tình trạng</label>
+                        <select id="non-imei-modal-condition" class="w-full border border-gray-200/90 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] bg-white">
+                            <option value="new">Mới</option>
+                            <option value="like_new">Như mới</option>
+                            <option value="good">Tốt</option>
+                            <option value="fair">Đã qua sử dụng</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="non-imei-modal-condition-detail" class="block font-semibold text-gray-700 mb-1">Chi tiết tình trạng</label>
+                        <input
+                            id="non-imei-modal-condition-detail"
+                            type="text"
+                            placeholder="Mô tả cụ thể (ví dụ: Fullbox, xước dăm nhẹ góc viền...)"
+                            class="w-full border border-gray-200/90 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc]"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block font-semibold text-gray-700 mb-1">Ảnh sản phẩm</label>
+                        <label class="flex flex-col items-center justify-center p-3 border-2 border-dashed border-gray-200 rounded-xl hover:border-blue-400 transition cursor-pointer bg-slate-50/50">
+                            <svg class="w-6 h-6 text-gray-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <span class="text-xs text-gray-600 font-medium">Bấm để chọn nhiều ảnh</span>
+                            <span class="text-[10px] text-gray-400 mt-0.5">Hỗ trợ JPG, PNG, WEBP</span>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                class="hidden"
+                                onchange="handleNonImeiModalImageUpload(event)"
+                            />
+                        </label>
+                    </div>
+
+                    <div>
+                        <span class="block font-semibold text-gray-700 mb-1.5">Ảnh đã chọn</span>
+                        <div id="non-imei-modal-img-previews" class="flex flex-wrap gap-2 p-2 rounded-xl bg-gray-50 border border-gray-100 min-h-[50px] items-center"></div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                    <button
+                        type="button"
+                        onclick="closeNonImeiMediaModal()"
+                        class="glass-btn-secondary px-4 py-2 text-gray-700 rounded-xl font-medium text-xs transition"
+                    >
+                        Đóng
+                    </button>
+                    <button
                         type="button"
                         onclick="saveNonImeiMediaModal()"
-                        class="px-3 py-2 bg-blue-600 text-white rounded-lg"
+                        class="glass-btn-primary px-5 py-2 text-white rounded-xl font-bold text-xs transition"
                     >
-                        Lưu
+                        Lưu thông tin
                     </button>
                 </div>
             </div>
@@ -7001,35 +7057,45 @@
                             </div>
                         </div>
                     </div>
-                    <div
-                        class="flex items-center justify-between pt-2.5 border-t border-gray-100/80"
-                    >
-                        <button
-                            type="button"
-                            onclick="KVStore.exportJSON()"
-                            class="text-[#0066cc] hover:underline font-medium text-[12.5px] flex items-center space-x-1"
-                        >
-                            <span> Sao lưu (Tải file JSON)</span>
-                        </button>
-                        <button
-                            type="button"
-                            onclick="openBillCustomModal()"
-                            class="text-[#0066cc] hover:underline font-medium text-[12.5px] flex items-center space-x-1"
-                        >
-                            <span> Tùy biến mẫu in hóa đơn</span>
-                        </button>
+                    <div class="pt-3 border-t border-gray-100/80">
+                        <div class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Công cụ & Kết nối mở rộng</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onclick="openBillCustomModal()"
+                                class="flex items-center space-x-2.5 p-2.5 rounded-xl border border-gray-200/90 hover:border-[#0066cc] hover:bg-blue-50/50 text-left transition group"
+                            >
+                                <span class="w-8 h-8 rounded-lg bg-blue-50 text-[#0066cc] flex items-center justify-center font-bold text-sm flex-shrink-0 group-hover:scale-105 transition-transform">🖨️</span>
+                                <div class="min-w-0">
+                                    <div class="text-[12px] font-bold text-gray-800 leading-tight">Mẫu in hóa đơn</div>
+                                    <div class="text-[10.5px] text-gray-500 truncate mt-0.5">K80, K58, A4, A5, VietQR</div>
+                                </div>
+                            </button>
+                            <button
+                                type="button"
+                                onclick="openApiTokensModal()"
+                                class="flex items-center space-x-2.5 p-2.5 rounded-xl border border-gray-200/90 hover:border-[#0066cc] hover:bg-blue-50/50 text-left transition group"
+                                title="Cấp API Key để Deplao kết nối chỉ đọc thông tin hàng hóa từ NKiot"
+                            >
+                                <span class="w-8 h-8 rounded-lg bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-sm flex-shrink-0 group-hover:scale-105 transition-transform">🔑</span>
+                                <div class="min-w-0">
+                                    <div class="text-[12px] font-bold text-gray-800 leading-tight">Kết nối Deplao (API Key)</div>
+                                    <div class="text-[10.5px] text-gray-500 truncate mt-0.5">Cấp API Key lấy hàng hóa</div>
+                                </div>
+                            </button>
+                            <button
+                                type="button"
+                                onclick="KVStore.exportJSON()"
+                                class="col-span-2 flex items-center space-x-2.5 p-2.5 rounded-xl border border-gray-200/90 hover:border-[#0066cc] hover:bg-blue-50/50 text-left transition group"
+                            >
+                                <span class="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center font-bold text-sm flex-shrink-0 group-hover:scale-105 transition-transform">💾</span>
+                                <div class="min-w-0">
+                                    <div class="text-[12px] font-bold text-gray-800 leading-tight">Sao lưu dữ liệu</div>
+                                    <div class="text-[10.5px] text-gray-500 truncate mt-0.5">Tải file JSON dự phòng</div>
+                                </div>
+                            </button>
+                        </div>
                     </div>
-                    <div class="flex items-center justify-between pt-2 border-t border-gray-100/80">
-                        <button
-                            type="button"
-                            onclick="openApiTokensModal()"
-                            class="text-[#0066cc] hover:underline font-semibold text-[12.5px] flex items-center space-x-1"
-                            title="Quản lý API Token cho CRM chat và Website ngoài"
-                        >
-                            <span>🔗 Kết nối API (CRM & Website ngoài)</span>
-                        </button>
-                    </div>
-                    <button type="button" onclick="openDeplao()" class="glass-btn-secondary min-h-11 px-3 rounded-lg">Kết nối / gửi ảnh qua Deplao</button>
                     <div class="flex justify-end space-x-2.5 pt-3">
                         <button
                             type="button"
@@ -8004,166 +8070,6 @@
             </div>
         </div>
 
-        <!-- 14. SQLITE DATABASE INFO MODAL -->
-        <div
-            id="db-info-modal"
-            class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[120] flex items-center justify-center p-4"
-        >
-            <div
-                class="bg-white/95 backdrop-blur-2xl rounded-2xl shadow-2xl max-w-lg w-full p-5 sm:p-6 flex flex-col border border-white/80"
-            >
-                <div
-                    class="flex justify-between items-center mb-3 border-b border-gray-100/80 pb-2.5 flex-shrink-0"
-                >
-                    <div class="flex items-center space-x-2.5">
-                        <div
-                            class="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-600 flex items-center justify-center font-bold text-base shadow-xs flex-shrink-0"
-                            aria-hidden="true"
-                        >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-                        </div>
-                        <div>
-                            <h2 class="font-bold text-[16.5px] text-gray-900 tracking-tight">
-                                Cơ sở dữ liệu SQLite
-                            </h2>
-                            <div class="text-[11.5px] text-gray-500">
-                                Tích hợp sẵn qua Node.js v24 (node:sqlite)
-                            </div>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        onclick="document.getElementById('db-info-modal').classList.add('hidden')"
-                        class="w-8 h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
-                    >
-                        <svg
-                            class="w-4 h-4"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <path d="M18 6L6 18M6 6l12 12" />
-                        </svg>
-                    </button>
-                </div>
-                <div class="space-y-3 text-[12.5px] text-gray-700">
-                    <div
-                        class="bg-emerald-50/80 p-3 rounded-xl border border-emerald-200/70 flex items-center justify-between"
-                    >
-                        <div class="flex items-center space-x-2">
-                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                            <span class="font-bold text-emerald-800 text-[13px]"
-                                >Trạng thái: Hoạt động bình thường</span
-                            >
-                        </div>
-                        <span
-                            id="db-info-size"
-                            class="text-[11.5px] font-mono text-emerald-700 bg-white/80 px-2 py-0.5 rounded-md font-semibold"
-                            >108 KB</span
-                        >
-                    </div>
-                    <div
-                        class="bg-gray-50/80 p-3 rounded-xl border border-gray-200/70 space-y-1.5 font-mono text-[11.5px] text-gray-600"
-                    >
-                        <div>
-                            <b>File DB:</b>
-                            <span id="db-info-file" class="text-gray-900 select-all"
-                                >minikiot.db</span
-                            >
-                        </div>
-                        <div>
-                            <b>Động cơ:</b>
-                            <span class="text-gray-900">node:sqlite (Node.js Built-in SQLite)</span>
-                        </div>
-                        <div>
-                            <b>Cơ chế lưu:</b>
-                            <span class="text-emerald-700 font-semibold"
-                                >WAL Mode (Write-Ahead Logging)</span
-                            >
-                        </div>
-                    </div>
-                    <div class="border border-gray-200/70 rounded-xl p-3 bg-white/70">
-                        <div
-                            class="font-bold text-gray-800 mb-2 text-[12px] uppercase tracking-wider"
-                        >
-                            Thống kê bản ghi trong SQLite
-                        </div>
-                        <div class="grid grid-cols-2 gap-2 text-[12px]" id="db-info-counts">
-                            <div>
-                                Sản phẩm: <b id="db-cnt-products" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Hóa đơn bán: <b id="db-cnt-invoices" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Khách hàng: <b id="db-cnt-customers" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Nhà cung cấp: <b id="db-cnt-suppliers" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Phiếu nhập kho: <b id="db-cnt-imports" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Phiếu thu/chi: <b id="db-cnt-cashbook" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Phiếu kiểm kho:
-                                <b id="db-cnt-stocktakes" class="text-gray-900">--</b>
-                            </div>
-                            <div>
-                                Phiếu chuyển kho:
-                                <b id="db-cnt-transfers" class="text-gray-900">--</b>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="flex items-center justify-between pt-3 mt-3 border-t border-gray-100/80"
-                >
-                    <button
-                        type="button"
-                        onclick="forceSyncDatabase()"
-                        class="glass-btn-primary px-3.5 py-1.5 text-white rounded-xl font-semibold text-[12.5px] flex items-center space-x-1.5"
-                    >
-                        <svg
-                            class="w-3.5 h-3.5"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                            />
-                        </svg>
-                        <span>Đồng bộ ngay</span>
-                    </button>
-                    <div class="flex items-center space-x-2">
-                        <button
-                            type="button"
-                            onclick="KVStore.exportJSON()"
-                            class="glass-btn-secondary px-3 py-1.5 text-gray-700 hover:text-gray-900 rounded-xl font-medium text-[12px]"
-                        >
-                            Tải sao lưu JSON
-                        </button>
-                        <button
-                            type="button"
-                            onclick="
-                                document.getElementById('db-info-modal').classList.add('hidden')
-                            "
-                            class="glass-btn-secondary px-4 py-1.5 text-gray-700 hover:text-gray-900 rounded-xl font-medium text-[12.5px]"
-                        >
-                            Đóng
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- 15. CREATE RECEIPT MODAL (LẬP PHIẾU THU) -->
         <div
             id="create-receipt-modal"
@@ -8906,9 +8812,15 @@
                 <!-- Brand & Header -->
                 <div class="flex flex-col items-center text-center mb-5">
                     <div
-                        class="w-12 h-12 rounded-lg bg-[#0066cc] text-white flex items-center justify-center font-bold text-2xl mb-2.5"
+                        class="w-14 h-14 rounded-2xl bg-blue-50/80 border border-blue-100/80 flex items-center justify-center mb-2.5 shadow-xs"
                     >
-                        K
+                        <svg width="34" height="28" viewBox="0 0 28 24" fill="none">
+                            <circle cx="8" cy="12" r="6.5" fill="#0066CC" />
+                            <path
+                                d="M19.5 3.5C14.8 3.5 11 7.3 11 12C11 16.7 14.8 20.5 19.5 20.5V3.5Z"
+                                fill="#00B33C"
+                            />
+                        </svg>
                     </div>
                     <h2 class="text-[20px] font-bold text-gray-900 tracking-tight">
                         NKiot - Đăng nhập
@@ -9049,7 +8961,7 @@
 
                     <button
                         type="submit"
-                        class="w-full py-2.5 rounded-xl font-bold text-white text-[13.5px] bg-[#0066cc] hover:bg-[#0055b3] hover: transition-all duration-200 flex items-center justify-center space-x-2 mt-2"
+                        class="w-full py-2.5 rounded-xl font-bold text-white text-[13.5px] bg-[#0066cc] hover:bg-[#0055b3] hover:shadow-md transition-all duration-200 flex items-center justify-center space-x-2 mt-2"
                     >
                         <span>Đăng nhập hệ thống</span>
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -9149,6 +9061,11 @@
                                 <path
                                     stroke-linecap="round"
                                     stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                                />
+                            </svg>
+                        </span>
                         <input
                             id="staff-search-input"
                             oninput="renderStaffTable()"
@@ -9889,7 +9806,31 @@
                             <tbody id="public-catalogs-tbody"></tbody>
                         </table>
                     </div>
-                    <div class="flex justify-end gap-3 mt-3"><button type="button" id="catalog-page-prev" onclick="loadPublicCatalogsList(catalogPage - 1)" disabled>Trang trước</button><span id="catalog-page-label">Trang 1</span><button type="button" id="catalog-page-next" onclick="loadPublicCatalogsList(catalogPage + 1)" disabled>Trang sau</button></div>
+                    <div class="flex items-center justify-between mt-3 pt-2.5 border-t border-gray-100">
+                        <span id="catalog-page-label" class="text-xs text-gray-500 font-medium">Trang 1</span>
+                        <div class="flex items-center gap-2">
+                            <button
+                                type="button"
+                                id="catalog-page-prev"
+                                onclick="loadPublicCatalogsList(catalogPage - 1)"
+                                disabled
+                                class="glass-btn-secondary px-3 py-1.5 text-xs font-semibold rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition inline-flex items-center gap-1"
+                            >
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                                <span>Trang trước</span>
+                            </button>
+                            <button
+                                type="button"
+                                id="catalog-page-next"
+                                onclick="loadPublicCatalogsList(catalogPage + 1)"
+                                disabled
+                                class="glass-btn-secondary px-3 py-1.5 text-xs font-semibold rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition inline-flex items-center gap-1"
+                            >
+                                <span>Trang sau</span>
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -9912,37 +9853,55 @@
             </div>
         </div>
 
-        <!-- Modal Quản lý API Token cho CRM & Website ngoài -->
+        <!-- Modal Kết nối Deplao & Cấp API Key Hàng Hóa (Chỉ đọc 1 chiều: Deplao -> NKiot) -->
         <div id="api-tokens-modal" class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[150] flex items-center justify-center p-3 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="api-tokens-modal-title">
             <div class="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl border border-gray-200/80">
                 <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100/90 flex-shrink-0">
                     <div class="flex items-center gap-2.5 min-w-0">
-                        <span class="text-lg">🔗</span>
-                        <h3 id="api-tokens-modal-title" class="font-bold text-[16px] text-gray-900 truncate">Kết nối API & CRM / Website ngoài</h3>
+                        <span class="w-8 h-8 rounded-lg bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-sm flex-shrink-0">🔑</span>
+                        <div class="min-w-0">
+                            <h3 id="api-tokens-modal-title" class="font-bold text-[15.5px] sm:text-[16px] text-gray-900 truncate">Kết nối Deplao &amp; Cấp API Key Hàng Hóa</h3>
+                            <p class="text-[11px] text-gray-500 truncate">Kết nối 1 chiều (Deplao → NKiot): Deplao dùng API Key để đọc thông tin &amp; hình ảnh hàng hóa từ NKiot</p>
+                        </div>
                     </div>
                     <button type="button" onclick="closeApiTokensModal()" class="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-bold transition cursor-pointer" aria-label="Đóng">✕</button>
                 </div>
                 <div class="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-blue-50/60 p-3.5 rounded-xl border border-blue-100">
-                        <div>
-                            <div class="font-bold text-[13px] text-blue-950">Mã API Token chia sẻ hàng hóa & hình ảnh</div>
-                            <div class="text-[11.5px] text-blue-800/80">Dùng token này để kết nối với app chat CRM, website riêng (WordPress, Shopify, Next.js) để lấy danh sách máy và hình ảnh thực tế.</div>
+                    <!-- 1-Way Connection Overview & Base URL -->
+                    <div class="bg-blue-50/60 p-3.5 sm:p-4 rounded-xl border border-blue-100 space-y-3">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                            <div>
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="font-bold text-[13px] text-blue-950">Thông số kết nối nhập vào Deplao</span>
+                                    <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10.5px]">Chỉ đọc 1 chiều · An toàn</span>
+                                </div>
+                                <div class="text-[11.5px] text-blue-900/80 mt-0.5">
+                                    Deplao kết nối vào NKiot qua <strong>Địa chỉ NKiot</strong> và <strong>API Key</strong> bên dưới để lấy danh sách hàng hóa, máy/IMEI và hình ảnh thực tế. NKiot hoàn toàn không can thiệp hay gửi thao tác nào sang Deplao.
+                                </div>
+                            </div>
+                            <button type="button" onclick="toggleCreateTokenForm(true)" class="glass-btn-primary px-3.5 py-1.5 rounded-xl text-white font-bold text-[12px] flex items-center gap-1.5 self-start sm:self-auto shrink-0">+ Tạo API Key mới</button>
                         </div>
-                        <button type="button" onclick="toggleCreateTokenForm(true)" class="glass-btn-primary px-3.5 py-1.5 rounded-xl text-white font-bold text-[12px] flex items-center gap-1.5 self-start sm:self-auto shrink-0">+ Tạo Token mới</button>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-2 pt-2 border-t border-blue-200/60">
+                            <label for="api-connection-base-url" class="text-[11.5px] font-bold text-blue-950 whitespace-nowrap">1. Địa chỉ NKiot (Base URL):</label>
+                            <div class="flex items-center gap-2 flex-1 min-w-0">
+                                <input id="api-connection-base-url" type="text" readonly class="flex-1 bg-white border border-blue-200 rounded-lg px-2.5 py-1 text-[12px] font-mono text-gray-800 select-all" placeholder="https://pos.ten-cua-hang.vn" />
+                                <button type="button" onclick="copyApiBaseUrl()" class="px-3 py-1 rounded-lg bg-white hover:bg-blue-600 text-[#0066cc] hover:text-white border border-blue-200 font-semibold text-[11.5px] transition whitespace-nowrap">Sao chép Địa chỉ</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div id="create-token-form-card" class="hidden p-4 rounded-xl border border-blue-200 bg-white shadow-xs space-y-3">
                         <div class="flex items-center justify-between border-b border-gray-100 pb-2">
-                            <span class="font-bold text-[13px] text-gray-900">Thiết lập Token mới</span>
+                            <span class="font-bold text-[13px] text-gray-900">Thiết lập API Key mới cho Deplao</span>
                             <button type="button" onclick="toggleCreateTokenForm(false)" class="text-gray-400 hover:text-gray-600 text-xs">Đóng lại</button>
                         </div>
                         <p class="text-[11.5px] leading-relaxed text-slate-600 bg-slate-50 border border-slate-200/80 rounded-lg px-2.5 py-2">
-                            Token chỉ cho phép <strong>đọc hàng hóa và ảnh</strong> của <strong>một chi nhánh</strong> đã chọn. Chỉ lưu token trong backend CRM/website; không đưa vào trình duyệt, URL hoặc tin nhắn gửi khách. Thu hồi token sẽ chặn mọi truy cập mới ngay lập tức.
+                            API Key chỉ cấp quyền <strong>đọc thông tin hàng hóa và hình ảnh</strong> của <strong>chi nhánh đã chọn</strong>. Chỉ dán API Key vào phần cài đặt ứng dụng <strong>Kho hàng NKiot</strong> trên Deplao; thu hồi API Key sẽ ngắt kết nối ngay lập tức.
                         </p>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                                 <label for="new-token-name" class="block text-[11.5px] font-semibold text-gray-700 mb-1">Tên gợi nhớ *</label>
-                                <input id="new-token-name" type="text" placeholder="VD: App Chat CRM, Website riêng..." class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
+                                <input id="new-token-name" type="text" placeholder="VD: Kết nối Deplao Chi nhánh 1..." class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-[12.5px]" />
                             </div>
                             <div>
                                 <label for="new-token-branch" class="block text-[11.5px] font-semibold text-gray-700 mb-1">Phạm vi chi nhánh</label>
@@ -9961,21 +9920,21 @@
                         <p id="new-token-error" role="alert" aria-live="polite" class="hidden text-[11.5px] font-semibold text-rose-600"></p>
                         <div class="flex justify-end gap-2 pt-1">
                             <button type="button" onclick="toggleCreateTokenForm(false)" class="glass-btn-secondary px-3 py-1.5 rounded-lg text-xs font-medium text-gray-700">Hủy</button>
-                            <button type="button" id="btn-submit-create-token" onclick="submitCreateApiToken()" class="glass-btn-primary px-4 py-1.5 rounded-lg text-xs font-bold text-white">Xác nhận tạo Token</button>
+                            <button type="button" id="btn-submit-create-token" onclick="submitCreateApiToken()" class="glass-btn-primary px-4 py-1.5 rounded-lg text-xs font-bold text-white">Xác nhận tạo API Key</button>
                         </div>
                     </div>
 
                     <div id="new-token-banner" class="hidden p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-950 space-y-2">
                         <div class="flex items-center gap-1.5 font-bold text-[13px] text-emerald-800">
                             <span>✅</span>
-                            <span>Tạo API Token thành công! Hãy sao chép ngay bây giờ</span>
+                            <span>Tạo API Key thành công! Hãy sao chép và dán vào Deplao ngay bây giờ</span>
                         </div>
                         <div class="text-[11.5px] text-emerald-700">
-                            Vì lý do an toàn, mã bí mật này chỉ hiển thị <strong>một lần duy nhất</strong>. Nếu đánh mất, bạn sẽ phải tạo lại Token mới.
+                            Vì lý do an toàn, mã API Key đầy đủ chỉ hiển thị <strong>một lần duy nhất</strong>. Nếu đánh mất, bạn chỉ cần thu hồi và tạo API Key mới.
                         </div>
                         <div class="flex items-center gap-2 pt-1">
                             <input id="new-token-raw-value" type="text" readonly class="flex-1 bg-white border border-emerald-300 rounded-lg px-2.5 py-1.5 text-[12.5px] font-mono text-gray-900 select-all" />
-                            <button type="button" onclick="copyRawTokenValue()" class="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[12px] transition shadow-xs">Sao chép Token</button>
+                            <button type="button" onclick="copyRawTokenValue()" class="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[12px] transition shadow-xs">Sao chép API Key</button>
                         </div>
                     </div>
                     <!-- Token list table -->
@@ -9983,11 +9942,11 @@
                         <table class="w-full text-left border-collapse text-[12.5px]">
                             <thead>
                                 <tr class="border-b border-gray-200/80 bg-gray-50/80 text-gray-600 font-semibold">
-                                    <th class="py-2.5 px-3">Tên Token</th>
-                                    <th class="py-2.5 px-3">Mã Token</th>
+                                    <th class="py-2.5 px-3">Tên kết nối</th>
+                                    <th class="py-2.5 px-3">Mã API Key</th>
                                     <th class="py-2.5 px-3">Chi nhánh</th>
                                     <th class="py-2.5 px-3">Hạn dùng</th>
-                                    <th class="py-2.5 px-3">Lần dùng cuối</th>
+                                    <th class="py-2.5 px-3">Lần đọc cuối</th>
                                     <th class="py-2.5 px-3 text-center">Trạng thái</th>
                                     <th class="py-2.5 px-3 text-right">Thao tác</th>
                                 </tr>
@@ -9996,45 +9955,37 @@
                         </table>
                     </div>
 
-                    <!-- Integration Quick Guide -->
-                    <div class="p-3.5 bg-gray-50/80 border border-gray-200/70 rounded-xl text-[12px] text-gray-700 space-y-1.5">
+                    <!-- Step-by-Step Deplao Connection Guide -->
+                    <div class="p-3.5 bg-gray-50/80 border border-gray-200/70 rounded-xl text-[12px] text-gray-700 space-y-2">
                         <div class="font-bold text-gray-900 flex items-center gap-1.5">
                             <span>📖</span>
-                            <span>Hướng dẫn tích hợp nhanh cho dev CRM / Website</span>
+                            <span>Quy trình kết nối từ Deplao vào NKiot (3 bước)</span>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11.5px]">
+                            <div class="bg-white border border-gray-200/80 rounded-lg p-2.5">
+                                <div class="font-bold text-gray-900 mb-0.5">Bước 1: Tạo API Key trên NKiot</div>
+                                <div class="text-gray-600">Sao chép <strong>Địa chỉ NKiot</strong> ở trên và bấm <strong>+ Tạo API Key mới</strong> cho chi nhánh cần đồng bộ.</div>
+                            </div>
+                            <div class="bg-white border border-gray-200/80 rounded-lg p-2.5">
+                                <div class="font-bold text-gray-900 mb-0.5">Bước 2: Nhập vào Deplao</div>
+                                <div class="text-gray-600">Trên Deplao, mở cài đặt ứng dụng <strong>Kho hàng NKiot</strong>, dán <strong>Địa chỉ NKiot</strong> và <strong>API Key (nk_live_...)</strong> rồi lưu lại.</div>
+                            </div>
+                            <div class="bg-white border border-gray-200/80 rounded-lg p-2.5">
+                                <div class="font-bold text-gray-900 mb-0.5">Bước 3: Tra cứu hàng hóa từ Deplao</div>
+                                <div class="text-gray-600">Deplao tự động gọi API chỉ đọc của NKiot để lấy thông tin sản phẩm, giá bán, tồn kho và ảnh máy.</div>
+                            </div>
                         </div>
                         <div class="font-mono text-[11px] bg-white border border-gray-200 rounded-lg p-2 text-slate-800 space-y-1">
-                            <div><strong>1. Lấy sản phẩm:</strong> <span class="text-blue-700">GET /api/v1/open/products?in_stock=true</span> (Header: <code>Authorization: Bearer &lt;TOKEN&gt;</code>)</div>
-                            <div><strong>2. Lấy chi tiết &amp; máy:</strong> <span class="text-blue-700">GET /api/v1/open/products/:code</span></div>
-                            <div><strong>3. Tải ảnh:</strong> <span class="text-blue-700">GET /api/v1/open/media/:id</span> — backend CRM gọi kèm Bearer token rồi mới gửi/lưu ảnh.</div>
+                            <div><strong>1. Danh sách hàng hóa:</strong> <span class="text-blue-700">GET /api/v1/open/products?in_stock=true</span> (Header: <code>Authorization: Bearer nk_live_...</code>)</div>
+                            <div><strong>2. Chi tiết &amp; máy/IMEI:</strong> <span class="text-blue-700">GET /api/v1/open/products/:code</span></div>
+                            <div><strong>3. Hình ảnh hàng hóa:</strong> <span class="text-blue-700">GET /api/v1/open/media/:id</span></div>
                         </div>
-                        <p class="text-[11px] text-amber-800 bg-amber-50/80 border border-amber-200/70 rounded-lg px-2.5 py-1.5">Không nhúng trực tiếp link ảnh NKiot vào trình duyệt khách và không đưa token vào frontend, URL hoặc tin nhắn. Xem hướng dẫn đầy đủ trong <code>DEPLOYMENT.md</code>.</p>
                     </div>
 
                 </div>
             </div>
         </div>
 
-        <div id="deplao-modal" class="kv-modal hidden fixed inset-0 bg-black/40 z-[160] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="deplao-title">
-            <div class="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-5 space-y-3">
-                <div class="flex justify-between items-center"><h3 id="deplao-title" class="font-bold text-lg">Gửi ảnh qua Deplao</h3><button type="button" class="min-h-11 px-3" onclick="document.getElementById('deplao-modal').classList.add('hidden')" aria-label="Đóng Deplao">Đóng</button></div>
-                <p class="text-sm text-gray-600">Bản đầu dành cho quản trị viên. Cấu hình trên server: NKIOT_DEPLAO_URL, NKIOT_DEPLAO_KEY và NKIOT_DEPLAO_ACCOUNTS (ánh xạ chi nhánh → tài khoản chat). Không nhập key vào chat hoặc trình duyệt.</p>
-                <p id="deplao-status" role="status" aria-live="polite" class="text-sm whitespace-pre-wrap"></p>
-                <fieldset id="deplao-fields" class="space-y-3">
-                    <button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoConnect()">Kiểm tra kết nối / tải tài khoản</button>
-                    <label class="block" for="deplao-product">Sản phẩm tại chi nhánh đang chọn</label><select id="deplao-product" class="w-full border rounded-lg p-2" onchange="deplaoProductChanged()"></select>
-                    <label class="block" for="deplao-imei">Máy / IMEI</label><select id="deplao-imei" class="w-full border rounded-lg p-2" onchange="deplaoImagesChanged()"></select>
-                    <div id="deplao-images" class="flex flex-wrap gap-3"></div>
-                    <label class="block" for="deplao-account">Tài khoản gửi</label><select id="deplao-account" class="w-full border rounded-lg p-2" onchange="deplaoClearThreads()"></select>
-                    <label class="block" for="deplao-search">Tìm hội thoại theo tên / số điện thoại</label><input id="deplao-search" class="w-full border rounded-lg p-2" maxlength="200" />
-                    <div class="flex gap-2"><button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoSearch(0)">Tìm hội thoại</button><button id="deplao-more" type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoSearch(deplaoOffset + 20)" disabled>Trang tiếp</button></div>
-                    <label class="block" for="deplao-thread">Hội thoại nhận ảnh</label><select id="deplao-thread" class="w-full border rounded-lg p-2"></select>
-                    <label class="block" for="deplao-text">Lời tư vấn gửi kèm (ảnh được gửi trước văn bản)</label><textarea id="deplao-text" maxlength="10000" rows="3" class="w-full border rounded-lg p-2"></textarea>
-                    <button type="button" id="deplao-send" class="glass-btn-primary min-h-11 px-4 text-white rounded-lg" onclick="deplaoConfirmSend()">Xác nhận người nhận và gửi ảnh</button>
-                </fieldset>
-                <div class="flex gap-2"><button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoCheckJob()">Kiểm tra lượt gửi gần nhất</button><button type="button" class="glass-btn-secondary min-h-11 px-3" onclick="deplaoNewSend()">Chuẩn bị lượt gửi mới</button></div>
-                <p class="text-xs text-gray-600">Tối đa 10 ảnh, 10 MB/ảnh, 30 MB/lượt. Nếu kết quả chưa rõ, kiểm tra hội thoại Deplao trước khi tạo lượt gửi mới. Không tự gửi lại sau lỗi mạng.</p>
-            </div>
-        </div>
         <!-- Load App Scripts -->
         <script src="constants.js"></script>
         <script src="catalog-patch.js"></script>
@@ -10044,6 +9995,5 @@
         <script src="app-reports.js"></script>
         <script src="app-export.js"></script>
         <script src="app.js"></script>
-        <script src="app-deplao.js"></script>
     </body>
 </html>

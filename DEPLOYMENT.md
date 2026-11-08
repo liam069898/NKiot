@@ -118,27 +118,20 @@ Bundle chứa `database.db`, thư mục `uploads/` và `manifest.json` với SHA
 
 Để phục hồi: dừng các tiến trình, kiểm tra bundle, sao lưu hiện trạng, rồi sao chép `database.db` và toàn bộ `uploads/` vào vị trí tenant mới; không ghi đè DB đang mở. Đối soát hóa đơn, tồn kho và ảnh trước khi chạy lại; thực hiện lưu ý đồng bộ Hub ở trên.
 
-### Open API cho CRM (server-to-server)
+### Kết nối 1 chiều từ Deplao vào NKiot qua API Key (chỉ đọc hàng hóa)
 
-Chỉ quản trị viên tạo token, mỗi token giới hạn một chi nhánh. Lưu token tại backend CRM; chỉ dùng header `Authorization: Bearer <TOKEN>`, không đưa token vào URL, frontend, log hoặc dịch vụ chat. `GET /api/v1/open/products` trả thông tin hàng hóa và đường dẫn media tương đối; backend CRM gọi đường dẫn đó với cùng header để tải ảnh được phép. Không nhúng URL media trực tiếp vào trình duyệt hay gửi token cho bên thứ ba. Không trả số tồn chính xác hoặc IMEI đầy đủ. Dùng HTTPS và cấu hình giới hạn request ở reverse proxy; chưa có rate limit phân tán. Sau thu hồi, không thể xóa ảnh đã được CRM tải về.
+NKiot **không** thực hiện bất kỳ thao tác hay kết nối chiều đi nào sang Deplao. Toàn bộ luồng kết nối là **1 chiều từ Deplao gọi vào NKiot** (`Deplao → NKiot`) thông qua API Key (`nk_live_...`) để đọc thông tin hàng hóa và hình ảnh:
 
-### Gửi ảnh sản phẩm qua Deplao CRM
+1. **Tạo API Key trên NKiot:** Quản trị viên mở **Cài đặt (⚙️) → 🔑 Kết nối Deplao (API Key)**, sao chép **Địa chỉ NKiot (`Base URL`)** và tạo **API Key (`nk_live_...`)** giới hạn theo đúng một chi nhánh.
+2. **Cấu hình trên Deplao:** Dán `Địa chỉ NKiot` và `API Key` vào phần cài đặt ứng dụng **Kho hàng NKiot** trên Deplao. Lưu API Key tại backend Deplao; chỉ dùng header `Authorization: Bearer nk_live_...`, không đưa API Key vào URL, frontend, log hoặc tin nhắn gửi khách.
+3. **Các cổng chỉ đọc (`GET`) phục vụ Deplao:**
+    - `GET /api/v1/open/products` — tìm kiếm & lọc danh sách hàng hóa theo chi nhánh của API Key, trả thông tin sản phẩm, trạng thái `availability` (`in_stock` / `out_of_stock`) và đường dẫn media tương đối. Dùng query `in_stock=true` để chỉ lấy hàng còn tồn.
+   - `GET /api/v1/open/products/:code` — lấy chi tiết sản phẩm, danh sách máy/IMEI đang còn hàng (IMEI được che định danh `***1234`) và hình ảnh theo từng máy.
+   - `GET /api/v1/open/media/:id` — tải tệp hình ảnh hợp lệ thuộc chi nhánh của API Key.
+4. **Thu hồi quyền truy cập:** Khi thu hồi hoặc xóa API Key trên NKiot, mọi yêu cầu mới từ Deplao dùng API Key đó sẽ bị chặn ngay lập tức (`401 Unauthorized`).
 
-Bản đầu chỉ mở cho quản trị viên. Cấu hình hoàn toàn ở môi trường server, **không lưu trong DB, không gửi xuống trình duyệt**:
-
-```bash
-NKIOT_DEPLAO_URL=https://crm.example.com/api/v1   # HTTPS; HTTP chỉ chấp nhận loopback
-NKIOT_DEPLAO_KEY=dpk_...                          # scope accounts:read, chat:read, media:write, chat:send
-NKIOT_DEPLAO_ACCOUNTS='{"Kalo Sport":["zalo-account-id"],"Chi nhánh phụ":["acc-2"]}'
-```
-
-- Mỗi chi nhánh chỉ được dùng tài khoản chat trong ánh xạ `NKIOT_DEPLAO_ACCOUNTS`. Tài khoản ngoài danh sách bị từ chối, kể cả khi key có quyền.
-- Luồng gửi: chọn sản phẩm → chọn đúng IMEI còn tồn → chọn 1–10 ảnh nội bộ `/uploads/` → tìm hội thoại → xác nhận người nhận → server đọc ảnh, upload sang Deplao, rồi gửi **một** request `messages` kèm `Idempotency-Key: nkiot-<jobId>`.
-- Ảnh chỉ được gửi nếu đúng sản phẩm/IMEI của chi nhánh. Ảnh ngoài `/uploads/` (URL bên ngoài, kho đối tác qua Hub) **chưa** được gửi tự động.
-- Giới hạn: 10 MB/ảnh, 30 MB/lượt, tối đa 2 lượt xử lý đồng thời trong một tiến trình.
-- Trạng thái lưu tại bảng `deplao_send_jobs`: `uploading`, `sending`, `sent`, `failed` (dừng trước khi gửi chat), `needs_review` (có thể đã gửi một phần hoặc chưa rõ). Cùng `jobId` + cùng nội dung sẽ trả lại kết quả cũ, **không tự gửi lại**; đổi nội dung với cùng `jobId` bị từ chối `409`.
-- Khi gặp `needs_review`, phải đối soát hội thoại trên Deplao rồi mới tạo lượt gửi mới. Không thể bảo đảm chống trùng tuyệt đối nếu Deplao khởi động lại hoặc mất kết nối giữa chừng.
-- Key Deplao nên có IP allowlist, hạn dùng và rate limit phù hợp. Xoay key bằng cách cập nhật biến môi trường và khởi động lại POS.
+Plugin được phát triển/đóng gói tại dự án riêng `/Users/nhattran/Desktop/deplao-nkiot`.
+NKiot chỉ giữ Open API và kiểm thử hợp đồng HTTP, không cần mã nguồn plugin để chạy hoặc kiểm thử.
 
 ## Hub Media Proxy (ảnh theo từng IMEI cho hàng cũ)
 

@@ -104,11 +104,18 @@ async function initApp() {
     setupTableCheckboxes();
     setupSearchInputs();
     try {
-        if (
-            typeof localStorage !== 'undefined' &&
-            localStorage.getItem('minikiot_pos_show_catalog') === 'true'
-        ) {
-            state.posShowCatalog = true;
+        if (typeof localStorage !== 'undefined') {
+            const savedCatalog = localStorage.getItem('minikiot_pos_show_catalog');
+            if (savedCatalog === 'true') {
+                state.posShowCatalog = true;
+            } else if (
+                savedCatalog === null &&
+                typeof window !== 'undefined' &&
+                window.innerWidth >= 1024
+            ) {
+                // Default to true on large desktop displays for first-time use
+                state.posShowCatalog = true;
+            }
         }
     } catch {}
     const ready = await KVStore.init();
@@ -190,10 +197,6 @@ function refreshCurrentView() {
 // Lưu vị trí cuộn của từng view để khôi phục khi quay lại.
 const viewScrollPositions = new Map();
 let cancelEnterAnimation = null;
-function getViewScroller(el) {
-    if (!el) return null;
-    return el.querySelector('.overflow-auto, .overflow-y-auto') || el;
-}
 function rememberViewScroll(el) {
     if (!el) return;
     viewScrollPositions.set(
@@ -1235,6 +1238,20 @@ function renderDashboard() {
     if (barsContainer && xAxisContainer) {
         barsContainer.innerHTML = '';
         xAxisContainer.innerHTML = '';
+
+        // Dynamically scale Y-axis labels to match the current data's maximum daily revenue
+        const formatChartY = (val) => {
+            if (!val || val <= 0) return '0';
+            if (val >= 1000000000) return (val / 1000000000).toFixed(1).replace(/\.0$/, '') + ' tỷ';
+            if (val >= 1000000) return (val / 1000000).toFixed(1).replace(/\.0$/, '') + ' tr';
+            if (val >= 1000) return (val / 1000).toFixed(0) + ' k';
+            return String(Math.round(val));
+        };
+        const yMaxEl = document.getElementById('dashboard-chart-y-max');
+        const yMidEl = document.getElementById('dashboard-chart-y-mid');
+        if (yMaxEl) yMaxEl.textContent = maxDayVal > 0 ? formatChartY(maxDayVal) : '0';
+        if (yMidEl) yMidEl.textContent = maxDayVal > 0 ? formatChartY(maxDayVal / 2) : '0';
+
         dailyData.forEach((item, idx) => {
             const col = document.createElement('div');
             col.className =
@@ -1735,11 +1752,15 @@ function renderPosScreen() {
     if (curTab.cart.length === 0) {
         cartContainer.innerHTML = renderHTML`
             <div class="h-full flex flex-col items-center justify-center text-gray-400 py-16">
-                <div class="w-16 h-16 rounded-2xl bg-white/60 border border-white/80 shadow-sm flex items-center justify-center text-gray-400 mb-3">
+                <div class="w-16 h-16 rounded-2xl bg-white/60 border border-white/80 shadow-xs flex items-center justify-center text-gray-400 mb-3">
                     <svg class="w-8 h-8 stroke-current" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg>
                 </div>
                 <div class="font-semibold text-gray-600 text-[14px]">Chưa có sản phẩm nào trong đơn</div>
                 <div class="text-[12px] text-gray-400 mt-1">Chọn từ danh mục hoặc quét mã vạch để thêm vào giỏ</div>
+                <button type="button" onclick="togglePosCatalog()" class="mt-3.5 inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-[#0066cc] font-semibold text-[12.5px] hover:bg-blue-100 transition border border-blue-200/80 shadow-xs">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
+                    <span>Mở bảng chọn nhanh hàng hóa</span>
+                </button>
             </div>
         `;
     } else {
@@ -5038,17 +5059,6 @@ function renderProducts() {
                 <button onclick="viewProductDetail('${p.code}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs">Chi tiết</button>
             </td>
         `;
-        if (KVStore.user?.role === 'admin') {
-            const send = document.createElement('button');
-            send.type = 'button';
-            send.className = 'px-2 py-1 rounded-lg text-blue-700 border border-blue-200 ml-2';
-            send.textContent = 'Gửi ảnh Deplao';
-            send.onclick = (event) => {
-                event.stopPropagation();
-                openDeplao(p.id);
-            };
-            tr.lastElementChild.appendChild(send);
-        }
         tr.onclick = () => viewProductDetail(p.code);
         tbody.appendChild(tr);
     });
@@ -5567,54 +5577,6 @@ async function uploadMediaFile(file) {
     });
 }
 
-async function handleProductImageUpload(e) {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    if (currentProductImages.length + files.length > 10) {
-        showToast('Tối đa 10 ảnh cho mỗi sản phẩm!', 'warning');
-        return;
-    }
-    showToast('Đang tải ảnh lên...', 'info');
-    try {
-        for (const file of files) {
-            if (file.size > 8 * 1024 * 1024) {
-                showToast(`Ảnh ${file.name} vượt quá 8MB`, 'error');
-                continue;
-            }
-            const url = await uploadMediaFile(file);
-            currentProductImages.push(url);
-        }
-        renderProductImagePreviews();
-        showToast('Đã tải ảnh lên thành công!', 'success');
-    } catch (err) {
-        showToast(err.message || 'Lỗi khi tải ảnh lên', 'error');
-    } finally {
-        e.target.value = '';
-    }
-}
-
-async function handleProductVideoUpload(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-        showToast('Video không được vượt quá 10MB', 'warning');
-        return;
-    }
-    showToast('Đang tải video lên...', 'info');
-    try {
-        const url = await uploadMediaFile(file);
-        currentProductVideoUrl = url;
-        const urlInput = document.getElementById('prod-video-url');
-        if (urlInput) urlInput.value = url;
-        renderProductVideoPreview();
-        showToast('Đã tải video lên thành công!', 'success');
-    } catch (err) {
-        showToast(err.message || 'Lỗi khi tải video lên', 'error');
-    } finally {
-        e.target.value = '';
-    }
-}
-
 function removeProductImage(idx) {
     currentProductImages.splice(idx, 1);
     renderProductImagePreviews();
@@ -5702,7 +5664,13 @@ function openAddProductModal(editCode = null, callback = null) {
             document.getElementById('prod-cost').value =
                 p.costPrice != null ? formatVND(p.costPrice) : '';
             document.getElementById('prod-price').value = p.price != null ? formatVND(p.price) : '';
-            document.getElementById('prod-stock').value = p.stock != null ? p.stock : '';
+            const stockInput = document.getElementById('prod-stock');
+            if (stockInput) {
+                stockInput.value = p.stock != null ? p.stock : '';
+                stockInput.readOnly = true;
+                stockInput.classList.add('bg-gray-100', 'cursor-not-allowed');
+                stockInput.title = 'Tồn kho được điều chỉnh qua Nhập hàng và Kiểm kho';
+            }
             document.getElementById('prod-min-stock').value = p.minStock != null ? p.minStock : '';
             document.getElementById('prod-unit').value = p.unit || 'Chiếc';
             document.getElementById('prod-barcode').value = p.barcode || '';
@@ -5731,7 +5699,13 @@ function openAddProductModal(editCode = null, callback = null) {
         document.getElementById('prod-code').value = makeCode('SP');
         document.getElementById('prod-cost').value = '';
         document.getElementById('prod-price').value = '';
-        document.getElementById('prod-stock').value = '';
+        const stockInput = document.getElementById('prod-stock');
+        if (stockInput) {
+            stockInput.value = '';
+            stockInput.readOnly = false;
+            stockInput.classList.remove('bg-gray-100', 'cursor-not-allowed');
+            stockInput.title = '';
+        }
         document.getElementById('prod-min-stock').value = '';
         document.getElementById('prod-unit').value = 'Chiếc';
         const imeiCheck = document.getElementById('prod-has-imei');
@@ -5754,6 +5728,12 @@ function openAddProductModal(editCode = null, callback = null) {
     updateProductModalPriceColor();
     const costInput = document.getElementById('prod-cost');
     const priceInput = document.getElementById('prod-price');
+    // The client may not have permission to read all historical documents.
+    // Keep existing cost read-only; the server enforces the history invariant.
+    costInput.readOnly = Boolean(editCode);
+    costInput.title = editCode ? 'Giá vốn được cập nhật qua nghiệp vụ nhập/trả/chuyển kho.' : '';
+    priceInput.readOnly = Boolean(editCode) && !hasPermission('posPrice');
+    priceInput.title = priceInput.readOnly ? 'Cần quyền sửa giá bán.' : '';
     if (costInput && !costInput.dataset.warnBound) {
         costInput.dataset.warnBound = 'true';
         costInput.addEventListener('input', updateProductModalPriceColor);
@@ -5804,7 +5784,7 @@ async function saveProductFromModal(e) {
     const category = document.getElementById('prod-category').value.trim();
     const costPrice = parseVND(document.getElementById('prod-cost').value) || 0;
     const price = parseVND(document.getElementById('prod-price').value) || 0;
-    const stock = parseInt(document.getElementById('prod-stock').value, 10) || 0;
+    let stock = parseInt(document.getElementById('prod-stock').value, 10) || 0;
     const minStock = parseInt(document.getElementById('prod-min-stock').value, 10) || 0;
     const unit = document.getElementById('prod-unit').value.trim() || 'Chiếc';
     const barcode = document.getElementById('prod-barcode').value.trim();
@@ -5841,6 +5821,8 @@ async function saveProductFromModal(e) {
     if (idx >= 0) {
         const currentImeis = KVStore.data.products[idx].imeis || [];
         const productBranch = KVStore.data.products[idx].branch || effectiveBranch;
+        // Khi chỉnh sửa sản phẩm có sẵn, giữ nguyên số tồn kho thực tế (điều chỉnh qua nhập hàng/kiểm kho)
+        stock = KVStore.data.products[idx].stock;
         KVStore.data.products[idx] = {
             ...KVStore.data.products[idx],
             name,
@@ -6238,13 +6220,58 @@ function removeStocktakeRow(code) {
     renderStocktakeRows();
 }
 
+function updateStocktakeSummary() {
+    const sumCount = activeStocktakeItems.length;
+    const sumSystem = activeStocktakeItems.reduce((acc, it) => acc + (it.systemStock || 0), 0);
+    const sumActual = activeStocktakeItems.reduce((acc, it) => acc + (it.actualStock || 0), 0);
+    const sumVariance = sumActual - sumSystem;
+
+    const countEl = document.getElementById('stocktake-sum-count');
+    const sysEl = document.getElementById('stocktake-sum-system');
+    const actEl = document.getElementById('stocktake-sum-actual');
+    const varEl = document.getElementById('stocktake-sum-variance');
+
+    if (countEl) countEl.textContent = sumCount;
+    if (sysEl) sysEl.textContent = sumSystem;
+    if (actEl) actEl.textContent = sumActual;
+    if (varEl) {
+        varEl.textContent = (sumVariance > 0 ? '+' : '') + sumVariance;
+        varEl.className =
+            sumVariance === 0
+                ? 'font-bold text-gray-700'
+                : sumVariance > 0
+                  ? 'font-bold text-emerald-600'
+                  : 'font-bold text-rose-600';
+    }
+}
+
 function onStocktakeActualChange(code, val) {
     const item = activeStocktakeItems.find((it) => it.code === code);
     if (!item) return;
     const num = parseInt(val, 10);
     item.actualStock = isNaN(num) ? 0 : Math.max(0, num);
     item.variance = item.actualStock - item.systemStock;
-    renderStocktakeRows();
+
+    // Update row DOM in place to prevent table re-render from destroying active input focus
+    const tbody = document.getElementById('stocktake-items-tbody');
+    if (tbody) {
+        const row = Array.from(tbody.querySelectorAll('tr')).find((r) => r.dataset?.code === code);
+        if (row) {
+            const diffCell = row.querySelector('.stocktake-diff-cell');
+            if (diffCell) {
+                const varColor =
+                    item.variance === 0
+                        ? 'text-gray-500'
+                        : item.variance > 0
+                          ? 'text-emerald-600 font-bold'
+                          : 'text-rose-600 font-bold';
+                const varPrefix = item.variance > 0 ? '+' : '';
+                diffCell.className = `stocktake-diff-cell py-2 px-3 text-right ${varColor}`;
+                diffCell.textContent = `${varPrefix}${item.variance}`;
+            }
+        }
+    }
+    updateStocktakeSummary();
 }
 
 function onStocktakeReasonChange(code, reason) {
@@ -6275,7 +6302,7 @@ function renderStocktakeRows() {
                           : 'text-rose-600 font-bold';
                 const varPrefix = item.variance > 0 ? '+' : '';
                 return renderHTML`
-                <tr class="border-b border-gray-100 hover:bg-gray-50/80">
+                <tr data-code="${escapeHTML(item.code)}" class="border-b border-gray-100 hover:bg-gray-50/80">
                     <td class="py-2 px-3 text-center text-gray-500">${idx + 1}</td>
                     <td class="py-2 px-3 font-mono font-semibold text-[#0066cc]">${item.code}</td>
                     <td class="py-2 px-3 font-medium text-gray-800 leading-snug">${item.name}</td>
@@ -6284,12 +6311,12 @@ function renderStocktakeRows() {
                     <td class="py-2 px-3 text-right">
                         <input type="number" min="0" value="${item.actualStock}" oninput="onStocktakeActualChange('${item.code}', this.value)" class="w-24 text-right border border-gray-300 rounded px-2 py-1 font-bold text-[#0066cc] focus:border-[#0066cc] focus:outline-none focus:ring-1 focus:ring-blue-500">
                     </td>
-                    <td class="py-2 px-3 text-right ${varColor}">${varPrefix}${item.variance}</td>
+                    <td class="stocktake-diff-cell py-2 px-3 text-right ${varColor}">${varPrefix}${item.variance}</td>
                     <td class="py-2 px-3">
                         <input type="text" value="${(item.reason || '').replace(/"/g, '&quot;')}" placeholder="Lý do chênh lệch..." onchange="onStocktakeReasonChange('${item.code}', this.value)" class="w-full border border-gray-200 rounded px-2 py-1 text-[12px] focus:border-[#0066cc] focus:outline-none">
                     </td>
                     <td class="py-2 pr-3 text-center">
-                        <button type="button" onclick="removeStocktakeRow('${item.code}')" class="text-rose-500 hover:text-rose-700 font-bold p-1" title="Xóa hàng"></button>
+                        <button type="button" onclick="removeStocktakeRow('${item.code}')" class="text-rose-500 hover:text-rose-700 font-bold p-1 text-sm leading-none" title="Xóa hàng">✕</button>
                     </td>
                 </tr>
             `;
@@ -6297,29 +6324,7 @@ function renderStocktakeRows() {
             .join('');
     }
 
-    // Summaries
-    const sumCount = activeStocktakeItems.length;
-    const sumSystem = activeStocktakeItems.reduce((acc, it) => acc + (it.systemStock || 0), 0);
-    const sumActual = activeStocktakeItems.reduce((acc, it) => acc + (it.actualStock || 0), 0);
-    const sumVariance = sumActual - sumSystem;
-
-    const countEl = document.getElementById('stocktake-sum-count');
-    const sysEl = document.getElementById('stocktake-sum-system');
-    const actEl = document.getElementById('stocktake-sum-actual');
-    const varEl = document.getElementById('stocktake-sum-variance');
-
-    if (countEl) countEl.textContent = sumCount;
-    if (sysEl) sysEl.textContent = sumSystem;
-    if (actEl) actEl.textContent = sumActual;
-    if (varEl) {
-        varEl.textContent = (sumVariance > 0 ? '+' : '') + sumVariance;
-        varEl.className =
-            sumVariance === 0
-                ? 'font-bold text-gray-700'
-                : sumVariance > 0
-                  ? 'font-bold text-emerald-600'
-                  : 'font-bold text-rose-600';
-    }
+    updateStocktakeSummary();
 }
 
 async function saveStocktake(isBalance) {
@@ -7651,18 +7656,6 @@ function showContactPartnerModal(sharedId) {
     document.getElementById('contact-partner-modal')?.classList.remove('hidden');
 }
 
-function copyContactPhone() {
-    if (!activeContactPhone) return;
-    navigator.clipboard
-        .writeText(activeContactPhone)
-        .then(() => {
-            showToast(`Đã sao chép SĐT: ${activeContactPhone}`, 'success');
-        })
-        .catch(() => {
-            showToast(`SĐT: ${activeContactPhone}`, 'info');
-        });
-}
-
 // --- PARTNER CONNECT & SHARE TOKENS MANAGEMENT ---
 let currentPartnerTokenTab = 'redeem';
 
@@ -8398,8 +8391,26 @@ function openReturnModal(invoiceCode) {
             const select = document.createElement('select');
             select.id = `ret-imeis-${idx}`;
             select.multiple = true;
-            select.className = 'w-full border border-gray-300 rounded mt-2 p-1';
+            select.className = 'w-full border border-gray-300 rounded mt-2 p-1 hidden';
             select.setAttribute('aria-label', `IMEI trả của ${item.name}`);
+
+            const pillContainer = document.createElement('div');
+            pillContainer.className = 'flex flex-wrap gap-1.5 mt-1.5';
+            pillContainer.id = `ret-imeis-pills-${idx}`;
+
+            const updatePillStyles = () => {
+                const selectedSet = new Set(Array.from(select.selectedOptions, (o) => o.value));
+                pillContainer.querySelectorAll('button[data-serial]').forEach((btn) => {
+                    const isSel = selectedSet.has(btn.dataset.serial);
+                    btn.className = `inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border transition cursor-pointer ${
+                        isSel
+                            ? 'bg-blue-50 text-[#0066cc] border-blue-300 shadow-xs'
+                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 opacity-60'
+                    }`;
+                    btn.textContent = `${isSel ? '✓ ' : ''}${btn.dataset.serial}`;
+                });
+            };
+
             for (const serial of item.imeis || []) {
                 if (returnedSerials.has(serial)) continue;
                 const option = document.createElement('option');
@@ -8407,19 +8418,33 @@ function openReturnModal(invoiceCode) {
                 option.textContent = serial;
                 option.selected = true;
                 select.appendChild(option);
+
+                const pillBtn = document.createElement('button');
+                pillBtn.type = 'button';
+                pillBtn.dataset.serial = serial;
+                pillBtn.onclick = (e) => {
+                    e.preventDefault();
+                    option.selected = !option.selected;
+                    select.dispatchEvent(new Event('change'));
+                };
+                pillContainer.appendChild(pillBtn);
             }
+            updatePillStyles();
+
             const qtyInput = tr.querySelector(`#ret-qty-${idx}`);
             qtyInput.readOnly = true;
             qtyInput.value = select.selectedOptions.length;
             select.addEventListener('change', () => {
                 qtyInput.value = select.selectedOptions.length;
                 tr.querySelector(`#ret-chk-${idx}`).checked = select.selectedOptions.length > 0;
+                updatePillStyles();
                 recalculateReturnRefund();
             });
             const label = document.createElement('label');
             label.htmlFor = select.id;
-            label.textContent = 'Chọn đúng IMEI nhận trả (có thể chọn nhiều):';
-            tr.children[1].append(label, select);
+            label.className = 'block text-[11px] font-semibold text-gray-600 mt-1.5';
+            label.textContent = 'Bấm chọn IMEI nhận trả (có thể chọn nhiều):';
+            tr.children[1].append(label, select, pillContainer);
         }
         tbody.appendChild(tr);
     });
@@ -9336,18 +9361,6 @@ function removeInlineImei(code, imei) {
     renderImportItemsTable();
 }
 
-function syncItemQtyWithImeis(code) {
-    const item = currentImportItems.find((i) => i.code === code);
-    if (!item) return;
-    const count = (item.imeis || []).length;
-    if (count > 0) {
-        item.qty = count;
-        item.total = item.qty * item.price;
-        renderImportItemsTable();
-        showToast(`Đã đồng bộ số lượng ${item.name} = ${count}`, 'info');
-    }
-}
-
 async function handleDeviceImageUpload(code, imei, event) {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
@@ -9440,11 +9453,6 @@ function openMediaPreview(url) {
     const img = document.getElementById('global-preview-img');
     if (img) img.src = url;
     modal.classList.remove('hidden');
-}
-
-// Retain compatibility alias
-function addImportItem(code) {
-    if (code) selectImportProduct(code);
 }
 
 function openAddSupplierFromImport() {
@@ -11041,55 +11049,7 @@ async function saveSettingsFromModal(e) {
     showToast('Đã lưu thiết lập cửa hàng & logo!', 'success');
 }
 
-// --- SQLITE DATABASE MODAL & SYNC CONTROLLER ---
-async function showDbInfoModal() {
-    const modal = document.getElementById('db-info-modal');
-    if (!modal) return;
-    modal.classList.remove('hidden');
-    try {
-        const res = await fetch('/api/status');
-        if (res.ok) {
-            const json = await res.json();
-            if (json.success && json.stats) {
-                const s = json.stats;
-                const sizeEl = document.getElementById('db-info-size');
-                if (sizeEl) sizeEl.textContent = `${s.dbSizeKB || 0} KB`;
-                const fileEl = document.getElementById('db-info-file');
-                if (fileEl)
-                    fileEl.textContent = s.dbPath ? s.dbPath.split('/').pop() : 'minikiot.db';
-                if (s.counts) {
-                    if (document.getElementById('db-cnt-products'))
-                        document.getElementById('db-cnt-products').textContent =
-                            s.counts.products || 0;
-                    if (document.getElementById('db-cnt-invoices'))
-                        document.getElementById('db-cnt-invoices').textContent =
-                            s.counts.invoices || 0;
-                    if (document.getElementById('db-cnt-customers'))
-                        document.getElementById('db-cnt-customers').textContent =
-                            s.counts.customers || 0;
-                    if (document.getElementById('db-cnt-suppliers'))
-                        document.getElementById('db-cnt-suppliers').textContent =
-                            s.counts.suppliers || 0;
-                    if (document.getElementById('db-cnt-imports'))
-                        document.getElementById('db-cnt-imports').textContent =
-                            s.counts.imports || 0;
-                    if (document.getElementById('db-cnt-cashbook'))
-                        document.getElementById('db-cnt-cashbook').textContent =
-                            s.counts.cashbook || 0;
-                    if (document.getElementById('db-cnt-stocktakes'))
-                        document.getElementById('db-cnt-stocktakes').textContent =
-                            s.counts.stocktakes || 0;
-                    if (document.getElementById('db-cnt-transfers'))
-                        document.getElementById('db-cnt-transfers').textContent =
-                            s.counts.transfers || 0;
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Lỗi nạp thống kê SQLite:', e);
-    }
-}
-
+// --- PENDING TRANSACTION RECONCILIATION ---
 async function forceSyncDatabase() {
     await KVStore.syncToDatabase();
     showToast('Đã tải dữ liệu và đối soát giao dịch chờ.', 'success');
@@ -11366,7 +11326,7 @@ const ROLE_PRESETS = {
             pos: true,
             posPrice: false,
             invoices: true,
-            products: true,
+            products: false,
             stocktakes: false,
             transfers: false,
             imports: false,
@@ -13069,17 +13029,24 @@ async function duplicatePublicCatalogItem(catalogId) {
 }
 
 // ==========================================
-// KẾT NỐI API TOKEN (CRM & WEBSITE NGOÀI)
+// KẾT NỐI DEPLAO & API KEY (CHỈ ĐỌC TỪ NKIOT)
 // ==========================================
 let loadedApiTokens = [];
 
 function openApiTokensModal() {
     if (typeof hasPermission === 'function' && !hasPermission('settings')) {
-        showToast('Chỉ Quản trị viên mới có quyền quản lý API Token kết nối!', 'error');
+        showToast('Chỉ Quản trị viên mới có quyền quản lý API Key kết nối!', 'error');
         return;
     }
     const modal = document.getElementById('api-tokens-modal');
     if (!modal) return;
+
+    const baseUrlInput = document.getElementById('api-connection-base-url');
+    if (baseUrlInput) {
+        const origin =
+            typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+        baseUrlInput.value = origin;
+    }
 
     const branchSelect = document.getElementById('new-token-branch');
     if (branchSelect) {
@@ -13094,6 +13061,12 @@ function openApiTokensModal() {
     document.getElementById('new-token-banner')?.classList.add('hidden');
     modal.classList.remove('hidden');
     loadApiTokensList();
+}
+
+async function copyApiBaseUrl() {
+    const val = document.getElementById('api-connection-base-url')?.value || '';
+    if (!val) return;
+    await copyTextToClipboard(val, 'Đã sao chép Địa chỉ NKiot vào bộ nhớ tạm!');
 }
 
 function closeApiTokensModal() {

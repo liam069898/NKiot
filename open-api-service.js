@@ -157,15 +157,15 @@ function deleteToken(user, tokenId) {
     return { success: true };
 }
 
-function extractTokenString(req, url) {
+function extractTokenString(req) {
     const authHeader = req.headers['authorization'] || '';
     const match = /^Bearer\s+([A-Za-z0-9_-]+)$/i.exec(authHeader.trim());
     if (match) return match[1];
     return '';
 }
 
-function authenticateOpenRequest(req, url) {
-    const rawToken = extractTokenString(req, url);
+function authenticateOpenRequest(req) {
+    const rawToken = extractTokenString(req);
     if (!rawToken || !rawToken.startsWith(TOKEN_PREFIX)) {
         fail('Thiếu hoặc sai mã API Token (yêu cầu header Authorization: Bearer).', 401);
     }
@@ -197,7 +197,7 @@ function authenticateOpenRequest(req, url) {
     if (!row.lastUsedAt || Date.now() - Date.parse(row.lastUsedAt) >= 300000)
         database.prepare('UPDATE api_tokens SET lastUsedAt=? WHERE id=?').run(nowIso, row.id);
 
-    return { tokenRecord: row, rawToken };
+    return { tokenRecord: row };
 }
 
 function mediaId(tokenRecord, filename) {
@@ -250,7 +250,7 @@ function productView(p, tokenRecord) {
         units
     };
 }
-function getOpenProducts(tokenRecord, rawToken, searchParams) {
+function getOpenProducts(tokenRecord, searchParams) {
     const q = (searchParams.get('q') || '').trim().toLowerCase();
     const category = (searchParams.get('category') || '').trim();
     const page = Number(searchParams.get('page') || 1),
@@ -303,10 +303,16 @@ function getOpenProducts(tokenRecord, rawToken, searchParams) {
         data: rows.slice(offset, offset + limit).map((p) => productView(p, tokenRecord))
     };
 }
-function getOpenProductByCode(tokenRecord, rawToken, code) {
-    const matches = activeProducts(tokenRecord).filter(
-        (p) => String(p.code || '').toLowerCase() === String(code || '').toLowerCase()
-    );
+function getOpenProductByCode(tokenRecord, code) {
+    const products = activeProducts(tokenRecord);
+    // Catalog/POS codes are case-sensitive. Keep exact identity, with a unique
+    // case-insensitive fallback for existing clients that normalize input.
+    const exact = products.filter((p) => p.code === code);
+    const matches = exact.length
+        ? exact
+        : products.filter(
+              (p) => String(p.code || '').toLowerCase() === String(code || '').toLowerCase()
+          );
     if (!matches.length) fail('Không tìm thấy sản phẩm.', 404);
     if (matches.length > 1) fail('Mã sản phẩm không duy nhất trong chi nhánh.', 409);
     return { success: true, data: productView(matches[0], tokenRecord) };

@@ -588,7 +588,7 @@ function renderSalesReportTab(
             dotClass: 'bg-emerald-500',
             barClass: 'bg-emerald-500'
         },
-        { label: 'Thẻ', value: methods.card, dotClass: 'bg-[#0066cc]', barClass: 'bg-[#0066cc]' },
+        { label: 'Thẻ', value: methods.card, dotClass: 'bg-indigo-600', barClass: 'bg-indigo-600' },
         {
             label: 'Khách nợ / Chưa trả',
             value: debtTotal,

@@ -599,6 +599,12 @@ test('product sync respects branch scope and uses the edited branch row as sourc
 
     const priceOnly = app.project(db.getAllData(), worker);
     priceOnly.products[0].price = 120000;
+    assert.throws(() => command('edit', priceOnly, app.revision(), crypto.randomUUID(), worker), {
+        status: 403
+    });
+    const authorized = db.getAllData();
+    authorized.users.find((u) => u.id === worker.id).permissions.posPrice = true;
+    db.saveAllData(authorized);
     command('edit', priceOnly, app.revision(), crypto.randomUUID(), worker);
     assert.equal(db.getAllData().products.find((p) => p.id === 'SP-B').price, 100000);
 
@@ -1548,6 +1554,12 @@ test('catalog patch enforces branch and table permissions including removals', (
         { status: 403 }
     );
     assert.throws(() => run({ tables: {}, settings: { storeName: 'Forbidden' } }), { status: 403 });
+    assert.throws(() => run(patchTable('products', [{ ...data.products[0], price: 42000 }])), {
+        status: 403
+    });
+    const authorized = db.getAllData();
+    authorized.users.find((u) => u.id === staff.id).permissions.posPrice = true;
+    db.saveAllData(authorized);
     run(patchTable('products', [{ ...data.products[0], price: 42000 }]));
     assert.equal(db.getAllData().products.find((p) => p.id === 'SP').price, 42000);
     assert.equal(db.getAllData().products.find((p) => p.id === 'OTHER').price, 100000);
@@ -1916,4 +1928,236 @@ test('shared availability updates after import, transfer, receive, stocktake and
         balance: true
     });
     assert.equal(availability('BSP'), 'out_of_stock');
+});
+
+for (const type of ['edit', 'catalogPatch']) {
+    test(`${type} cannot swap serials or change historical cost, including admin (round 2)`, () => {
+        const invoice = sell({ items: [{ code: 'SP', qty: 1, imeis: ['I1'] }] });
+        const before = db.getAllData();
+        const revision = app.revision();
+        const mutate = (fields) => {
+            const data = app.project(db.getAllData(), admin);
+            const row = { ...data.products[0], ...fields };
+            if (type === 'catalogPatch') return command(type, patchTable('products', [row]));
+            data.products[0] = row;
+            return command(type, data);
+        };
+        assert.throws(() => mutate({ imeis: ['I1', 'I3'] }), /Thay đổi IMEI tồn kho/);
+        assert.throws(() => mutate({ costPrice: 0 }), /giá vốn/);
+        assert.deepEqual(db.getAllData(), before, 'failed commands must roll back');
+        assert.equal(app.revision(), revision);
+        mutate({ imeis: ['I3', 'I2'] }); // ordering alone is not an inventory mutation
+        command('return', {
+            invoiceId: invoice.id,
+            items: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+            refundMethod: 'cash'
+        });
+        assert.equal(db.getAllData().products[0].stock, 3);
+        assert.equal(
+            sell({ items: [{ code: 'SP', qty: 1, imeis: ['I1'] }] }).items[0].imeis[0],
+            'I1'
+        );
+    });
+}
+
+test('existing opening stock serials cannot be replaced without a stock document', () => {
+    const product = db.getAllData().products[0];
+    assert.throws(
+        () =>
+            command(
+                'catalogPatch',
+                patchTable('products', [{ ...product, imeis: ['X', 'I2', 'I3'] }])
+            ),
+        /Thay đổi IMEI tồn kho/
+    );
+});
+
+test('import rejects metadata outside its serials and rolls back preceding lines', () => {
+    const data = db.getAllData();
+    data.products[0].imeiDetails = { I2: { images: ['/uploads/original.jpg'], condition: 'good' } };
+    data.products.push({
+        ...data.products[0],
+        id: 'PLAIN',
+        code: 'PLAIN',
+        hasImei: false,
+        imeis: [],
+        imeiDetails: {}
+    });
+    db.saveAllData(data);
+    const before = db.getAllData();
+    const revision = app.revision();
+    const input = {
+        branch: 'A',
+        supplierCode: 'S',
+        paid: 0,
+        paymentMethod: 'cash',
+        items: [
+            { code: 'PLAIN', qty: 1, price: 50000 },
+            {
+                code: 'SP',
+                qty: 1,
+                price: 50000,
+                imeis: ['I4'],
+                imeiDetails: { I4: { images: ['/uploads/new.jpg'] }, I2: { condition: 'fair' } }
+            }
+        ]
+    };
+    assert.throws(() => command('import', input), /chỉ được chứa các máy thuộc dòng nhập/);
+    assert.deepEqual(db.getAllData(), before);
+    assert.equal(app.revision(), revision);
+    assert.throws(
+        () =>
+            command('import', {
+                ...input,
+                items: [
+                    {
+                        code: 'PLAIN',
+                        qty: 1,
+                        price: 50000,
+                        imeiDetails: { I2: { condition: 'fair' } }
+                    }
+                ]
+            }),
+        /chỉ được chứa các máy thuộc dòng nhập/
+    );
+    delete input.items[1].imeiDetails.I2;
+    command('import', input);
+    const product = db.getAllData().products.find((p) => p.code === 'SP');
+    assert.deepEqual(product.imeiDetails.I2, before.products[0].imeiDetails.I2);
+    assert.deepEqual(product.imeiDetails.I4.images, ['/uploads/new.jpg']);
+    assert.equal(product.stock, 4);
+});
+
+test('missing posPrice is denied consistently by sale, edit and catalogPatch', () => {
+    const data = db.getAllData();
+    const clerk = {
+        ...admin,
+        id: 'ROUND2',
+        username: 'round2',
+        role: 'custom',
+        permissions: { products: true, pos: true }
+    };
+    data.users.push(clerk);
+    db.saveAllData(data);
+    const revision = app.revision();
+    const run = (type, payload) =>
+        command(type, payload, app.revision(), crypto.randomUUID(), clerk);
+    assert.throws(
+        () => run('sale', { branch: 'A', items: [{ code: 'SP', qty: 1, salePrice: 1 }], given: 1 }),
+        { status: 403 }
+    );
+    const edited = app.project(db.getAllData(), clerk);
+    edited.products[0].price = 1;
+    assert.throws(() => run('edit', edited), { status: 403 });
+    assert.throws(() => run('catalogPatch', patchTable('products', [edited.products[0]])), {
+        status: 403
+    });
+    assert.equal(app.revision(), revision);
+    assert.equal(db.getAllData().products[0].price, 100000);
+    assert.equal(db.getAllData().invoices.length, 0);
+});
+
+test('catalog price change is forbidden when posPrice is explicitly false (F1)', () => {
+    const data = db.getAllData();
+    const clerk = {
+        id: 'CLERK',
+        username: 'clerk',
+        role: 'custom',
+        branch: 'A',
+        branches: ['A'],
+        permissions: { products: true, posPrice: false }
+    };
+    data.users.push(clerk);
+    db.saveAllData(data);
+    const run = (payload) =>
+        command('catalogPatch', payload, app.revision(), crypto.randomUUID(), clerk);
+    assert.throws(() => run(patchTable('products', [{ ...data.products[0], price: 1 }])), {
+        status: 403
+    });
+});
+
+test('catalog stock and cost edits on products with transaction history are rejected (F2)', () => {
+    sell(); // creates an invoice history for product SP in branch A
+    const data = db.getAllData();
+    const product = data.products.find((p) => p.code === 'SP' && p.branch === 'A');
+    assert.throws(
+        () => command('catalogPatch', patchTable('products', [{ ...product, stock: 999 }])),
+        { status: 409 }
+    );
+    const worker = {
+        id: 'WORKER',
+        username: 'worker',
+        role: 'custom',
+        branch: 'A',
+        branches: ['A'],
+        permissions: { products: true }
+    };
+    data.users.push(worker);
+    db.saveAllData(data);
+    assert.throws(
+        () =>
+            command(
+                'catalogPatch',
+                patchTable('products', [{ ...product, costPrice: 0 }]),
+                app.revision(),
+                crypto.randomUUID(),
+                worker
+            ),
+        { status: 403 }
+    );
+});
+
+test('import cannot toggle a sold non-IMEI product to IMEI when history exists (F3)', () => {
+    const data = db.getAllData();
+    data.products.push({
+        id: 'NON_IMEI',
+        code: 'NON_IMEI',
+        name: 'Simple Product',
+        branch: 'A',
+        stock: 1,
+        price: 100000,
+        costPrice: 50000,
+        unit: 'Chiếc',
+        category: 'Test',
+        status: 'active',
+        hasImei: false,
+        imeis: []
+    });
+    db.saveAllData(data);
+    sell({ items: [{ code: 'NON_IMEI', qty: 1 }] });
+    assert.throws(
+        () =>
+            command('import', {
+                branch: 'A',
+                supplierCode: 'S',
+                items: [
+                    { code: 'NON_IMEI', qty: 1, price: 50000, hasImei: true, imeis: ['NEW_SN'] }
+                ],
+                paid: 50000
+            }),
+        /quản lý IMEI/
+    );
+});
+
+test('transfer and receive into branch without existing product preserves metadata and media (F5)', () => {
+    const data = db.getAllData();
+    data.products[0].images = ['/uploads/watch.jpg'];
+    data.products[0].videoUrl = '/uploads/watch.mp4';
+    data.products[0].condition = 'good';
+    data.products[0].conditionDetail = 'Mặt kính xước nhẹ';
+    data.products[0].description = 'Mô tả chi tiết sản phẩm';
+    db.saveAllData(data);
+    const transfer = command('transfer', {
+        fromBranch: 'A',
+        toBranch: 'B',
+        items: [{ code: 'SP', qty: 1 }]
+    }).result;
+    command('receive', { id: transfer.id });
+    const received = db.getAllData().products.find((p) => p.code === 'SP' && p.branch === 'B');
+    assert.ok(received);
+    assert.deepEqual(received.images, ['/uploads/watch.jpg']);
+    assert.equal(received.videoUrl, '/uploads/watch.mp4');
+    assert.equal(received.condition, 'good');
+    assert.equal(received.conditionDetail, 'Mặt kính xước nhẹ');
+    assert.equal(received.description, 'Mô tả chi tiết sản phẩm');
 });

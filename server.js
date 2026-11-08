@@ -40,7 +40,6 @@ const ASSETS = {
     '/app-utils.js': 'app-utils.js',
     '/app-reports.js': 'app-reports.js',
     '/app-export.js': 'app-export.js',
-    '/app-deplao.js': 'app-deplao.js',
     '/constants.js': 'constants.js',
     '/catalog-patch.js': 'catalog-patch.js',
     '/data.js': 'client-store.js',
@@ -177,7 +176,7 @@ async function handler(req, res) {
             const openApi = require('./open-api-service');
             const mediaMatch = /^\/api\/v1\/open\/media\/([a-f0-9]{64})$/.exec(url.pathname);
             if (mediaMatch) {
-                const { tokenRecord } = openApi.authenticateOpenRequest(req, url);
+                const { tokenRecord } = openApi.authenticateOpenRequest(req);
                 const resolved = openApi.resolveOpenMediaFile(
                     mediaMatch[1],
                     UPLOADS_DIR,
@@ -251,28 +250,35 @@ async function handler(req, res) {
                 return stream.pipe(res);
             }
 
-            const prodDetailMatch = /^\/api\/v1\/open\/products\/([A-Za-z0-9_-]+)$/.exec(
-                url.pathname
-            );
+            const prodDetailMatch = /^\/api\/v1\/open\/products\/([^/]+)$/.exec(url.pathname);
             if (prodDetailMatch) {
-                const { tokenRecord, rawToken } = openApi.authenticateOpenRequest(req, url);
-                const result = openApi.getOpenProductByCode(
-                    tokenRecord,
-                    rawToken,
-                    prodDetailMatch[1],
-                    req.headers.host
-                );
+                let codeParam;
+                try {
+                    codeParam = decodeURIComponent(prodDetailMatch[1]);
+                } catch {
+                    return json(
+                        res,
+                        400,
+                        { success: false, error: 'Mã sản phẩm không hợp lệ.' },
+                        corsHeaders
+                    );
+                }
+                if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(codeParam)) {
+                    return json(
+                        res,
+                        404,
+                        { success: false, error: 'Không tìm thấy sản phẩm.' },
+                        corsHeaders
+                    );
+                }
+                const { tokenRecord } = openApi.authenticateOpenRequest(req);
+                const result = openApi.getOpenProductByCode(tokenRecord, codeParam);
                 return json(res, 200, result, corsHeaders);
             }
 
             if (url.pathname === '/api/v1/open/products') {
-                const { tokenRecord, rawToken } = openApi.authenticateOpenRequest(req, url);
-                const result = openApi.getOpenProducts(
-                    tokenRecord,
-                    rawToken,
-                    url.searchParams,
-                    req.headers.host
-                );
+                const { tokenRecord } = openApi.authenticateOpenRequest(req);
+                const result = openApi.getOpenProducts(tokenRecord, url.searchParams);
                 return json(res, 200, result, corsHeaders);
             }
 
@@ -368,35 +374,6 @@ async function handler(req, res) {
                         success: false,
                         error: 'Mã bảo vệ phiên không hợp lệ. Hãy tải lại trang.'
                     });
-            }
-            if (url.pathname.startsWith('/api/deplao/')) {
-                const crm = require('./deplao-service');
-                const branch = url.searchParams.get('branch') || '';
-                if (url.pathname === '/api/deplao/connection' && req.method === 'GET')
-                    return json(res, 200, {
-                        success: true,
-                        ...(await crm.connection(user, branch))
-                    });
-                if (url.pathname === '/api/deplao/conversations' && req.method === 'GET')
-                    return json(res, 200, {
-                        success: true,
-                        ...(await crm.conversations(
-                            user,
-                            branch,
-                            url.searchParams.get('accountId'),
-                            url.searchParams.get('search'),
-                            Number(url.searchParams.get('offset') || 0)
-                        ))
-                    });
-                if (url.pathname === '/api/deplao/send' && req.method === 'POST') {
-                    const input = await body(req);
-                    const fresh = sessionUser(req);
-                    return json(res, 200, { success: true, job: await crm.send(fresh, input) });
-                }
-                const match = /^\/api\/deplao\/jobs\/([a-f0-9-]{36})$/i.exec(url.pathname);
-                if (match && req.method === 'GET')
-                    return json(res, 200, { success: true, job: crm.job(user, match[1]) });
-                return json(res, 404, { success: false, error: 'API Deplao không tồn tại.' });
             }
             if (url.pathname === '/api/invoices' && req.method === 'GET')
                 return json(

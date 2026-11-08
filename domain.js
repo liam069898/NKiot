@@ -23,6 +23,18 @@ const timestamp = () => {
     };
 };
 const branchOf = (record) => record.branch || FALLBACK_BRANCH;
+function productHasHistory(data, product) {
+    const branch = branchOf(product),
+        hasCode = (doc) => (doc.items || []).some((item) => item.code === product.code);
+    return (
+        ['invoices', 'imports', 'returns', 'stocktakes'].some((table) =>
+            (data[table] || []).some((doc) => branchOf(doc) === branch && hasCode(doc))
+        ) ||
+        (data.transfers || []).some(
+            (doc) => (doc.fromBranch === branch || doc.toBranch === branch) && hasCode(doc)
+        )
+    );
+}
 function branch(data, user, name) {
     if (!allowedBranches(user, data).includes(name) || !data.branches.some((b) => b.name === name))
         fail('Chi nhánh không hợp lệ hoặc chưa được cấp quyền.', 403);
@@ -537,8 +549,13 @@ function importGoods(data, user, input) {
             imeis = row.imeis || [],
             stockBefore = amount(p.stock, 'Tồn kho'),
             costPriceBefore = amount(p.costPrice, 'Giá vốn');
+        const importedSerials = new Set(p.hasImei || row.hasImei ? imeis : []);
+        if (Object.keys(row.imeiDetails || {}).some((serial) => !importedSerials.has(serial)))
+            fail('Chi tiết IMEI chỉ được chứa các máy thuộc dòng nhập hàng.');
         if (!p.hasImei && row.hasImei && p.stock > 0)
-            fail('Cần đối soát hàng đang tồn trước khi bật quản lý IMEI.');
+            fail('Cần đối soát hàng đang tồn hoặc lịch sử giao dịch trước khi bật quản lý IMEI.');
+        if (!p.hasImei && row.hasImei && productHasHistory(data, p))
+            fail('Cần đối soát hàng đang tồn hoặc lịch sử giao dịch trước khi bật quản lý IMEI.');
         if (p.hasImei || row.hasImei) {
             if (
                 !Array.isArray(imeis) ||
@@ -866,7 +883,12 @@ function transfer(data, user, input) {
                 price: p.price,
                 barcode: p.barcode,
                 minStock: p.minStock,
-                status: p.status
+                status: p.status,
+                images: Array.isArray(p.images) ? [...p.images] : [],
+                videoUrl: p.videoUrl || '',
+                condition: p.condition || 'new',
+                conditionDetail: p.conditionDetail || '',
+                description: p.description || ''
             }
         };
     });
@@ -908,6 +930,14 @@ function receive(data, user, input) {
                 stock: 0,
                 price: item.productSnapshot?.price ?? source?.price ?? item.price,
                 category: item.productSnapshot?.category ?? source?.category ?? '',
+                images:
+                    item.productSnapshot?.images ??
+                    (Array.isArray(source?.images) ? [...source.images] : []),
+                videoUrl: item.productSnapshot?.videoUrl ?? source?.videoUrl ?? '',
+                condition: item.productSnapshot?.condition ?? source?.condition ?? 'new',
+                conditionDetail:
+                    item.productSnapshot?.conditionDetail ?? source?.conditionDetail ?? '',
+                description: item.productSnapshot?.description ?? source?.description ?? '',
                 branch: record.toBranch,
                 hasImei: !!item.hasImei,
                 imeis: [],
@@ -1347,4 +1377,12 @@ function execute(data, user, type, input) {
             fail('Thao tác không hợp lệ.', 400);
     }
 }
-module.exports = { execute, amount, fail, branchOf, recordActivity, syncSharedAvailability };
+module.exports = {
+    execute,
+    amount,
+    fail,
+    branchOf,
+    recordActivity,
+    syncSharedAvailability,
+    productHasHistory
+};

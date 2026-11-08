@@ -141,6 +141,47 @@ after(async () => {
     db.closeDb();
 });
 
+test('external clients read products and unit media with a revocable branch token', async () => {
+    const openApi = require('../open-api-service');
+    const admin = db.getAllData().users.find((user) => user.role === 'admin');
+    const created = openApi.createToken(admin, {
+        name: 'External client contract test',
+        branch: 'Chi nhánh chính',
+        expiresInDays: 1
+    });
+    const headers = { Authorization: `Bearer ${created.token}` };
+    try {
+        const result = await apiRequest(
+            '/api/v1/open/products?q=DH_SEIKO&in_stock=true&page=1&limit=12',
+            { headers }
+        );
+        assert.equal(result.status, 200);
+        assert.equal(result.body.success, true);
+        assert.equal(result.body.data.length, 1);
+        const product = result.body.data[0];
+        assert.equal(product.code, 'DH_SEIKO');
+        assert.equal(product.price, 6500000);
+        assert.equal(product.units.length, 1);
+        const unit = product.units[0];
+        assert.doesNotMatch(JSON.stringify(result.body), /SN-SEIKO-999999|costPrice|nk_live_/);
+        const media = await apiRequest(unit.images[0], { headers });
+        assert.equal(media.status, 200);
+        assert.equal(media.headers.get('content-type'), 'image/jpeg');
+        assert.deepEqual(
+            media.body,
+            fs.readFileSync(path.join(process.env.NKIOT_UPLOADS_DIR, 'imei-sn1-pic.jpg'))
+        );
+        const detail = await apiRequest(`/api/v1/open/products/${product.code}`, { headers });
+        assert.equal(detail.status, 200);
+        assert.deepEqual(detail.body.data.units, product.units);
+        openApi.revokeToken(admin, created.id);
+        assert.equal((await apiRequest('/api/v1/open/products', { headers })).status, 401);
+        assert.equal((await apiRequest(unit.images[0], { headers })).status, 401);
+    } finally {
+        openApi.deleteToken(admin, created.id);
+    }
+});
+
 test('admin creates, lists, revokes and deletes API tokens with permission guard', async () => {
     const admin = await loginAs('admin', 'Admin-pass-123');
     const staff = await loginAs('staff', 'Staff-pass-123');
@@ -224,7 +265,7 @@ test('admin creates, lists, revokes and deletes API tokens with permission guard
     assert.equal(deleteRes.status, 200);
 });
 
-test('open API retrieves sanitized products, photos, units, supports CORS and bearer/query token', async () => {
+test('open API sanitizes products and media, supports CORS and Bearer auth, rejects query tokens', async () => {
     const admin = await loginAs('admin', 'Admin-pass-123');
     const created = await apiRequest('/api/tokens', {
         method: 'POST',
@@ -295,7 +336,7 @@ test('open API retrieves sanitized products, photos, units, supports CORS and be
     assert.equal(seiko.units[0].serialMasked, '***9999');
     assert.match(seiko.units[0].images[0], /open\/media\/[a-f0-9]{64}$/);
 
-    // 3. Gọi Open API qua query ?token=... (hỗ trợ cho các webhook/iframe đơn giản)
+    // 3. Không chấp nhận token trên URL (tránh lộ qua log, lịch sử và referrer).
     const resQuery = await apiRequest(`/api/v1/open/products?token=${rawToken}&q=seiko`);
     assert.equal(resQuery.status, 401);
 
@@ -305,6 +346,66 @@ test('open API retrieves sanitized products, photos, units, supports CORS and be
     });
     assert.equal(detail.status, 200);
     assert.equal(detail.body.data.name, 'Đồng hồ Seiko 5 Sport Automatic');
+
+    // 4b. Lấy chi tiết sản phẩm có dấu chấm hoặc dấu hai chấm trong mã (F4)
+    const data = db.getAllData();
+    data.products.push({
+        id: 'P_DOT_COLON',
+        code: 'DH.SEIKO:01',
+        name: 'Seiko Special Edition',
+        category: 'Đồng hồ',
+        costPrice: 4000000,
+        price: 7000000,
+        stock: 5,
+        branch: 'Chi nhánh chính',
+        status: 'active',
+        images: [],
+        hasImei: false
+    });
+    db.saveAllData(data);
+    const detailDot = await apiRequest('/api/v1/open/products/DH.SEIKO%3A01', {
+        headers: { Authorization: `Bearer ${rawToken}` }
+    });
+    assert.equal(detailDot.status, 200);
+    assert.equal(detailDot.body.data.name, 'Seiko Special Edition');
+
+    // Exact case-sensitive identity wins; normalized input is only a fallback
+    // when it identifies one product unambiguously.
+    const caseData = db.getAllData();
+    const template = caseData.products.find((p) => p.id === 'P_DOT_COLON');
+    caseData.products.push(
+        { ...template, id: 'CASE_UPPER', code: 'Case:01', name: 'Upper variant', price: 111 },
+        { ...template, id: 'CASE_LOWER', code: 'case:01', name: 'Lower variant', price: 222 },
+        { ...template, id: 'CASE_OTHER_BRANCH', code: 'Case:01', branch: 'Kho Phụ', price: 333 }
+    );
+    db.saveAllData(caseData);
+    for (const [code, price] of [
+        ['Case:01', 111],
+        ['case:01', 222]
+    ]) {
+        const response = await apiRequest(`/api/v1/open/products/${encodeURIComponent(code)}`, {
+            headers: { Authorization: `Bearer ${rawToken}` }
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.code, code);
+        assert.equal(response.body.data.price, price);
+    }
+    assert.equal(
+        (
+            await apiRequest('/api/v1/open/products/CASE%3A01', {
+                headers: { Authorization: `Bearer ${rawToken}` }
+            })
+        ).status,
+        409
+    );
+    assert.equal(
+        (
+            await apiRequest('/api/v1/open/products/dh_seiko', {
+                headers: { Authorization: `Bearer ${rawToken}` }
+            })
+        ).status,
+        200
+    );
 
     // 5. Tải ảnh Open Media trực tiếp
     const mediaRes = await apiRequest(seiko.images[0], {

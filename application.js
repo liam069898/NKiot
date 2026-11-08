@@ -289,6 +289,14 @@ function validateRecord(table, row, data, old, user) {
             fail('Không được sửa kho khác.', 403);
         if (old && (row.code !== old.code || row.branch !== old.branch))
             fail('Không thể đổi mã/chi nhánh của sản phẩm có sẵn.');
+        if (old && row.price !== old.price) requirePermission(user, 'posPrice');
+        if (old && row.stock !== old.stock && productHasHistory(data, old))
+            fail(
+                'Không thể sửa trực tiếp tồn kho của sản phẩm đã phát sinh giao dịch. Hãy dùng phiếu nhập hoặc kiểm kho.',
+                409
+            );
+        if (old && row.costPrice !== old.costPrice && productHasHistory(data, old))
+            fail('Không thể sửa trực tiếp giá vốn của sản phẩm đã phát sinh giao dịch.', 403);
         if (typeof row.hasImei !== 'boolean' || !['active', 'archived'].includes(row.status))
             fail('Trạng thái sản phẩm không hợp lệ.');
         if (
@@ -299,6 +307,12 @@ function validateRecord(table, row, data, old, user) {
             fail('Danh sách IMEI không hợp lệ.');
         if (row.hasImei && row.imeis.length !== row.stock)
             fail('Tồn kho phải bằng số IMEI. Nhập hàng có IMEI qua phiếu nhập.');
+        if (
+            old &&
+            (row.imeis.length !== (old.imeis || []).length ||
+                row.imeis.some((serial) => !(old.imeis || []).includes(serial)))
+        )
+            fail('Thay đổi IMEI tồn kho phải qua nghiệp vụ nhập, trả hoặc chuyển kho.', 409);
         if (old && row.hasImei !== old.hasImei && (old.stock || productHasHistory(data, old)))
             fail('Không thể đổi cách quản lý IMEI khi còn tồn kho hoặc lịch sử chứng từ.');
         if (row.images !== undefined) {

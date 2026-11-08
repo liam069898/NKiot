@@ -128,8 +128,14 @@ Các module chính:
 - `catalog-patch.js`, `client-store.js`, `ui-safety.js`: tạo thay đổi danh mục tối thiểu, kết nối, phục hồi yêu cầu, render HTML an toàn và in. Nạp `catalog-patch.js` trước `client-store.js`.
 - `app-utils.js`, `app-reports.js`, `app-export.js`, `app.js`: tiện ích, báo cáo, mã vạch/xuất file và giao diện. Các script dùng chung phạm vi global, phải được nạp theo thứ tự trong `index.html`; `app.js` được nạp sau cùng.
 - `data.js`: dữ liệu ví dụ cho test và mặc định khởi tạo, không phục vụ ra trình duyệt. URL `/data.js` trả về `client-store.js`.
+- `open-api-service.js`: Open API chỉ đọc cho ứng dụng ngoài, xác thực Bearer token theo chi nhánh.
 
-Xem [trạng thái sửa lỗi](FIXES.md), [báo cáo review ban đầu](CODE_REVIEW.md) và [triển khai HTTPS/reverse proxy](DEPLOYMENT.md).
+Plugin Deplao đã tách khỏi NKiot, nằm tại `/Users/nhattran/Desktop/deplao-nkiot` trên máy phát triển.
+Mã nguồn và ZIP plugin không còn nằm trong dự án này. NKiot chạy và kiểm thử độc lập;
+không cần cài Deplao. Kiểm thử HTTP cho bên tích hợp vẫn ở `/Users/nhattran/Desktop/NKiot/tests/open-api.test.js`.
+
+Xem [trạng thái sửa lỗi](FIXES.md), [báo cáo review ban đầu](CODE_REVIEW.md),
+[rà soát và dọn mã 2026-11-07](CLEANUP_REVIEW.md) và [triển khai HTTPS/reverse proxy](DEPLOYMENT.md).
 
 ## Bảo mật phiên và dữ liệu vận hành
 

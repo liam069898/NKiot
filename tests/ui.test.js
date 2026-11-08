@@ -18,13 +18,7 @@ function browser() {
     w.eval(fs.readFileSync('catalog-patch.js', 'utf8'));
     w.eval(fs.readFileSync('ui-safety.js', 'utf8'));
     w.eval(fs.readFileSync('client-store.js', 'utf8'));
-    for (const file of [
-        'app-utils.js',
-        'app-reports.js',
-        'app-export.js',
-        'app.js',
-        'app-deplao.js'
-    ]) {
+    for (const file of ['app-utils.js', 'app-reports.js', 'app-export.js', 'app.js']) {
         w.eval(
             fs
                 .readFileSync(file, 'utf8')
@@ -59,6 +53,47 @@ test('login screen and modals are top-level so a closed modal can never hide the
         w.close();
     }
 });
+test('cleanup removes the unreachable database modal but preserves POS reconciliation and backup', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        assert.equal(w.document.getElementById('db-info-modal'), null);
+        assert.equal(typeof w.showDbInfoModal, 'undefined');
+        const reconcile = w.document.getElementById('pos-reconcile-btn');
+        assert.ok(reconcile);
+        assert.equal(reconcile.getAttribute('onclick'), 'forceSyncDatabase()');
+        w.eval('window.syncCalls=0;KVStore.syncToDatabase=async()=>{window.syncCalls++};');
+        await w.forceSyncDatabase();
+        assert.equal(w.syncCalls, 1);
+        assert.ok(w.document.querySelector('[onclick="KVStore.exportJSON()"]'));
+        assert.equal(w.eval('typeof KVStore.exportJSON'), 'function');
+    } finally {
+        w.close();
+    }
+});
+
+test('product modal locks existing cost and unauthorized price and resets for creation', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval("KVStore.user={...KVStore.user,role:'custom',permissions:{products:true}};");
+        const code = w.eval('KVStore.data.products[0].code');
+        w.openAddProductModal(code);
+        assert.equal(w.document.getElementById('prod-price').readOnly, true);
+        assert.equal(w.document.getElementById('prod-cost').readOnly, true);
+        assert.equal(w.document.getElementById('prod-stock').readOnly, true);
+        w.eval('KVStore.user.permissions.posPrice=true;');
+        w.openAddProductModal(code);
+        assert.equal(w.document.getElementById('prod-price').readOnly, false);
+        assert.equal(w.document.getElementById('prod-cost').readOnly, true);
+        w.openAddProductModal();
+        assert.equal(w.document.getElementById('prod-cost').readOnly, false);
+        assert.equal(w.document.getElementById('prod-stock').readOnly, false);
+    } finally {
+        w.close();
+    }
+});
+
 test('POS catalog, search and scanner exclude archived products', () => {
     const dom = browser(),
         w = dom.window;
@@ -2907,43 +2942,161 @@ test('webapp enables mouse text selection on body and content while keeping butt
     }
 });
 
-test('Deplao modal lists branch products, IMEI images and blocks a second send in the same job', async () => {
+test('Deplao 1-way inbound API Key connection UI: removes outbound Deplao actions from NKiot and provides Base URL + API Key management', async () => {
     const dom = browser(),
         w = dom.window;
     try {
         const doc = w.document;
+        // 1. Outbound Deplao modal & actions must not exist in NKiot
+        assert.equal(doc.getElementById('deplao-modal'), null);
+        assert.equal(typeof w.openDeplao, 'undefined');
+
         w.eval(`
             KVStore.data.branches = [{ name: 'Chi nhánh A' }];
             KVStore.data.settings.branch = 'Chi nhánh A';
             KVStore.data.products = [{
                 id: 'P1', code: 'DH1', name: 'Đồng hồ A', price: 1000000, stock: 2,
-                branch: 'Chi nhánh A', status: 'active', hasImei: 1, imeis: ['SN1'],
-                images: ['/uploads/common.jpg'],
-                imeiDetails: { SN1: { images: ['/uploads/a.jpg', '/uploads/b.jpg'] } }
-            }, {
-                id: 'P2', code: 'DH2', name: 'Đồng hồ B', price: 2000000, stock: 1,
-                branch: 'Chi nhánh A', status: 'active', images: ['javascript:alert(1)']
+                branch: 'Chi nhánh A', status: 'active', hasImei: 1, imeis: ['SN1']
             }];
-            openDeplao('P1');
+            renderProducts();
         `);
-        assert.equal(doc.getElementById('deplao-modal').classList.contains('hidden'), false);
-        assert.equal(doc.querySelectorAll('#deplao-product option').length, 3);
-        // Phải chọn rõ từng máy, không tự đoán IMEI.
-        assert.equal(doc.querySelectorAll('#deplao-images input').length, 0);
-        w.eval("depEl('imei').value='SN1'; deplaoImagesChanged();");
-        assert.equal(doc.querySelectorAll('#deplao-images input').length, 2);
-        assert.equal(doc.querySelector('#deplao-images img').getAttribute('src'), '/uploads/a.jpg');
-        assert.match(doc.getElementById('deplao-text').value, /Máy \*\*\*\*SN1|Máy \*\*\*SN1/);
+        assert.equal(
+            doc.body.textContent.includes('Gửi ảnh Deplao'),
+            false,
+            'Product table must not render outbound Gửi ảnh Deplao button'
+        );
+        assert.equal(
+            doc.querySelector('#view-products [onclick*="openApiTokensModal"]'),
+            null,
+            'Deplao API Key button must not appear in Products toolbar'
+        );
+        const settingsModal = doc.getElementById('settings-modal');
+        assert.ok(
+            settingsModal.querySelector('[onclick*="openApiTokensModal"]'),
+            'Deplao API Key button must appear in Settings modal'
+        );
+        assert.equal(
+            settingsModal.querySelector('[onclick*="openPublicCatalogModal"]'),
+            null,
+            'Catalog builder button must not appear in Settings modal'
+        );
 
-        // Sản phẩm không có ảnh upload nội bộ hợp lệ thì không hiện ảnh.
-        w.eval("depEl('product').value='P2'; deplaoProductChanged();");
-        assert.equal(doc.querySelectorAll('#deplao-images input').length, 0);
+        // 2. Inbound API Key connection modal populates Base URL and branch options for Deplao
+        w.eval(`
+            KVStore.request = async (url) => {
+                if (url === '/api/tokens') return { tokens: [] };
+                return {};
+            };
+            openApiTokensModal();
+        `);
+        const modal = doc.getElementById('api-tokens-modal');
+        assert.equal(modal.classList.contains('hidden'), false);
+        const baseUrlInput = doc.getElementById('api-connection-base-url');
+        assert.ok(baseUrlInput, 'api-connection-base-url input must exist');
+        assert.equal(baseUrlInput.value, 'http://localhost');
+        assert.match(modal.textContent, /Kết nối 1 chiều/i);
+    } finally {
+        w.close();
+    }
+});
 
-        // Đang có lượt gửi thì không cho tạo lượt mới trùng.
-        w.eval("deplaoJobId='11111111-1111-4111-8111-111111111111';");
-        w.eval("depEl('fields').disabled=true;");
-        await w.deplaoConfirmSend();
-        assert.equal(doc.getElementById('deplao-fields').disabled, true);
+test('UX/UI comprehensive fixes: DOM elements, tablet navigation, stocktake focus, return IMEI pills, and styling polish', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+
+        // 1. Staff search input is parsed correctly and present in DOM
+        const staffInput = doc.getElementById('staff-search-input');
+        assert.ok(staffInput, 'staff-search-input must exist in DOM');
+        assert.equal(staffInput.tagName, 'INPUT');
+        assert.equal(staffInput.getAttribute('placeholder'), 'Tìm tên, tài khoản...');
+
+        // 2. Notification badge is hidden by default (no false 1 badge)
+        const notifBadge = doc.getElementById('header-notification-badge');
+        assert.ok(notifBadge, 'header-notification-badge must exist');
+        assert.ok(
+            notifBadge.classList.contains('hidden'),
+            'notification badge should be hidden by default'
+        );
+
+        // 3. Tablet nav: More dropdown wrapper is lg:hidden so tablet (768-1023px) can access cashbook & reports
+        const moreWrapper = doc.getElementById('nav-more-dropdown-wrapper');
+        assert.ok(moreWrapper, 'nav-more-dropdown-wrapper must exist');
+        assert.ok(moreWrapper.classList.contains('lg:hidden'), 'more wrapper should be lg:hidden');
+        const moreMenu = doc.getElementById('nav-more-menu');
+        assert.ok(moreMenu.textContent.includes('Sổ quỹ'), 'more menu must contain Sổ quỹ');
+        assert.ok(moreMenu.textContent.includes('Báo cáo'), 'more menu must contain Báo cáo');
+
+        // 4. Dashboard chart dynamic Y-axis elements
+        const yMax = doc.getElementById('dashboard-chart-y-max');
+        const yMid = doc.getElementById('dashboard-chart-y-mid');
+        const yMin = doc.getElementById('dashboard-chart-y-min');
+        assert.ok(yMax && yMid && yMin, 'Dashboard Y-axis labels must exist');
+
+        // 5. Stocktake: in-place row update without re-rendering tbody and visible delete button
+        w.eval(`
+            activeStocktakeItems = [
+                { code: 'SP01', name: 'Sản phẩm 1', unit: 'Chiếc', systemStock: 10, actualStock: 10, variance: 0, reason: '' }
+            ];
+            renderStocktakeRows();
+        `);
+        const tbody = doc.getElementById('stocktake-items-tbody');
+        const trBefore = tbody.querySelector('tr[data-code="SP01"]');
+        assert.ok(trBefore, 'Stocktake row must have data-code');
+        const delBtn = trBefore.querySelector('button[title="Xóa hàng"]');
+        assert.ok(
+            delBtn && delBtn.textContent.trim() === '✕',
+            'Delete button must have visible ✕ content'
+        );
+
+        // Trigger onStocktakeActualChange
+        w.eval(`onStocktakeActualChange('SP01', 15)`);
+        const trAfter = tbody.querySelector('tr[data-code="SP01"]');
+        assert.strictEqual(
+            trBefore,
+            trAfter,
+            'Row DOM element must be preserved in-place without table re-render'
+        );
+        assert.equal(doc.getElementById('stocktake-sum-variance').textContent, '+5');
+        assert.equal(trAfter.querySelector('.stocktake-diff-cell').textContent, '+5');
+
+        // 6. Return modal IMEI pills
+        w.eval(`
+            KVStore.data = KVStore.data || {};
+            KVStore.data.invoices = [{
+                id: 'INV-01',
+                code: 'HD01',
+                customer: 'Khách VIP',
+                phone: '0901234567',
+                time: '12:00',
+                items: [{ code: 'P_IMEI', name: 'iPhone 15', qty: 2, price: 20000000, hasImei: true, imeis: ['IMEI_A', 'IMEI_B'] }]
+            }];
+            openReturnModal('HD01');
+        `);
+        const pillContainer = doc.getElementById('ret-imeis-pills-0');
+        assert.ok(pillContainer, 'Return modal IMEI pill container must exist');
+        const pills = pillContainer.querySelectorAll('button[data-serial]');
+        assert.equal(pills.length, 2);
+        assert.ok(pills[0].textContent.includes('IMEI_A'));
+        assert.ok(pills[1].textContent.includes('IMEI_B'));
+
+        // Click pill to toggle
+        pills[0].click();
+        const select = doc.getElementById('ret-imeis-0');
+        assert.equal(select.selectedOptions.length, 1);
+        assert.equal(select.selectedOptions[0].value, 'IMEI_B');
+
+        // 7. Login screen brand logo is dual-shape SVG
+        const loginScreen = doc.getElementById('login-screen');
+        assert.ok(loginScreen.querySelector('svg circle[fill="#0066CC"]'));
+        assert.ok(loginScreen.querySelector('svg path[fill="#00B33C"]'));
+
+        // 8. Public catalog pagination buttons have glass styling
+        const catPrev = doc.getElementById('catalog-page-prev');
+        const catNext = doc.getElementById('catalog-page-next');
+        assert.ok(catPrev.classList.contains('glass-btn-secondary'));
+        assert.ok(catNext.classList.contains('glass-btn-secondary'));
     } finally {
         w.close();
     }
