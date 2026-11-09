@@ -182,5 +182,55 @@ function matchesDocumentFilter(
     );
 }
 
+function normalizePaymentMethod(method) {
+    if (!method && method !== 0) return 'unknown';
+    const m = String(method).toLowerCase().trim();
+    if (!m) return 'unknown';
+    if (m === 'cash' || m.includes('tiền mặt') || m.includes('tien mat')) return 'cash';
+    if (
+        m === 'transfer' ||
+        m.includes('khoản') ||
+        m.includes('khoan') ||
+        m.includes('vietqr') ||
+        m.includes('bank') ||
+        m.includes('ngân hàng') ||
+        m.includes('ngan hang')
+    )
+        return 'transfer';
+    if (
+        m === 'card' ||
+        m.includes('thẻ') ||
+        m.includes('the') ||
+        m.includes('pos') ||
+        m.includes('quẹt') ||
+        m.includes('quet') ||
+        m.includes('credit') ||
+        m.includes('debit')
+    )
+        return 'card';
+    return 'unknown';
+}
+
+function getPaymentMethodLabel(method) {
+    const norm = normalizePaymentMethod(method);
+    switch (norm) {
+        case 'cash':
+            return 'Tiền mặt';
+        case 'transfer':
+            return 'Chuyển khoản';
+        case 'card':
+            return 'Thẻ / POS';
+        default:
+            return typeof method === 'string' && method.trim() ? method.trim() : 'Không xác định';
+    }
+}
+
 // Share date semantics with the paginated SQLite reader (no DOM access for supported presets).
-if (typeof module !== 'undefined') module.exports = { parseRecordDate, matchesDateFilter };
+if (typeof module !== 'undefined') {
+    module.exports = {
+        parseRecordDate,
+        matchesDateFilter,
+        normalizePaymentMethod,
+        getPaymentMethodLabel
+    };
+}

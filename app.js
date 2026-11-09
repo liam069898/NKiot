@@ -446,12 +446,18 @@ function setupNavigation() {
                 event.preventDefault();
                 openMenu();
                 menu.querySelector('button')?.focus();
+            } else if (event.key === 'Escape' && !menu.classList.contains('hidden')) {
+                event.preventDefault();
+                closeMenu();
+                button.focus();
             }
         });
         menu.addEventListener('keydown', (event) => {
             const items = [...menu.querySelectorAll('button')];
             const index = items.indexOf(document.activeElement);
             if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
                 closeMenu();
                 button.setAttribute('aria-expanded', 'false');
                 button.focus();
@@ -528,6 +534,145 @@ function visibleFocusables(root) {
     );
 }
 
+const modalSnapshots = new Map();
+const modalSubmittingMap = new Map();
+
+function getModalFormInputs(modal) {
+    if (!modal) return [];
+    return Array.from(modal.querySelectorAll('input:not([type="hidden"]), select, textarea'));
+}
+
+function captureModalSnapshot(modalId) {
+    const modal = typeof modalId === 'string' ? document.getElementById(modalId) : modalId;
+    if (!modal) return;
+    const inputs = getModalFormInputs(modal);
+    const state = inputs
+        .map((el) => {
+            if (el.type === 'checkbox' || el.type === 'radio') {
+                return `${el.name || el.id}:${el.checked}`;
+            }
+            return `${el.name || el.id}:${el.value}`;
+        })
+        .join('|||');
+    modalSnapshots.set(modal.id, state);
+    modalSubmittingMap.set(modal.id, false);
+}
+
+function isModalDirty(modalId) {
+    const modal = typeof modalId === 'string' ? document.getElementById(modalId) : modalId;
+    if (!modal || !modalSnapshots.has(modal.id)) return false;
+    const initial = modalSnapshots.get(modal.id);
+    const inputs = getModalFormInputs(modal);
+    const current = inputs
+        .map((el) => {
+            if (el.type === 'checkbox' || el.type === 'radio') {
+                return `${el.name || el.id}:${el.checked}`;
+            }
+            return `${el.name || el.id}:${el.value}`;
+        })
+        .join('|||');
+    return initial !== current;
+}
+
+function clearModalSnapshot(modalId) {
+    const mid = typeof modalId === 'string' ? modalId : modalId?.id;
+    if (!mid) return;
+    modalSnapshots.delete(mid);
+    modalSubmittingMap.delete(mid);
+}
+
+function setModalSubmitting(modalId, isSubmitting) {
+    const mid = typeof modalId === 'string' ? modalId : modalId?.id;
+    if (!mid) return;
+    modalSubmittingMap.set(mid, Boolean(isSubmitting));
+}
+
+function isModalSubmitting(modalId) {
+    const mid = typeof modalId === 'string' ? modalId : modalId?.id;
+    return Boolean(mid && modalSubmittingMap.get(mid));
+}
+
+function closeModalWithCheck(modalId, force = false) {
+    const modal = typeof modalId === 'string' ? document.getElementById(modalId) : modalId;
+    if (!modal) return true;
+    const mid = modal.id;
+
+    if (mid === 'create-import-modal') {
+        if (typeof closeCreateImport === 'function') {
+            closeCreateImport();
+            return modal.classList.contains('hidden');
+        }
+    }
+
+    if (isModalSubmitting(mid)) {
+        return false;
+    }
+
+    if (!force && isModalDirty(mid)) {
+        const discard = confirm(
+            'Dữ liệu chưa được lưu. Bạn có chắc muốn đóng và hủy các thay đổi?'
+        );
+        if (!discard) {
+            return false;
+        }
+    }
+
+    clearModalSnapshot(mid);
+    modal.classList.add('hidden');
+    return true;
+}
+
+function setFieldValidationError(input, message) {
+    if (!input) return;
+    input.setAttribute('aria-invalid', 'true');
+    input.classList.add('border-red-500', 'focus:ring-red-500/20');
+    let errId = input.id ? `${input.id}-error` : null;
+    let errEl = errId ? document.getElementById(errId) : null;
+    if (!errEl && errId) {
+        errEl = document.createElement('div');
+        errEl.id = errId;
+        errEl.className = 'field-error-msg text-[11px] text-red-600 font-medium mt-1';
+        input.parentNode.appendChild(errEl);
+    }
+    if (errEl) {
+        errEl.textContent = message;
+        input.setAttribute('aria-describedby', errId);
+    }
+    input.focus();
+}
+
+function clearFieldValidationError(input) {
+    if (!input) return;
+    input.removeAttribute('aria-invalid');
+    input.classList.remove('border-red-500', 'focus:ring-red-500/20');
+    let errId = input.id ? `${input.id}-error` : null;
+    if (errId) {
+        const errEl = document.getElementById(errId);
+        if (errEl) errEl.remove();
+        if (input.getAttribute('aria-describedby') === errId) {
+            input.removeAttribute('aria-describedby');
+        }
+    }
+}
+
+function clearFormValidationErrors(container) {
+    if (!container) return;
+    container.querySelectorAll('[aria-invalid="true"]').forEach(clearFieldValidationError);
+    container.querySelectorAll('.field-error-msg').forEach((el) => el.remove());
+}
+
+if (typeof document !== 'undefined') {
+    document.addEventListener('input', (e) => {
+        if (
+            e.target &&
+            typeof e.target.getAttribute === 'function' &&
+            e.target.getAttribute('aria-invalid') === 'true'
+        ) {
+            clearFieldValidationError(e.target);
+        }
+    });
+}
+
 function setupModalAccessibility() {
     document.querySelectorAll('.kv-modal').forEach((modal) => {
         modal.setAttribute('role', 'dialog');
@@ -541,14 +686,29 @@ function setupModalAccessibility() {
             const control = label.parentElement?.querySelector('input, select, textarea');
             if (control?.id) label.htmlFor = control.id;
         });
-        modal.querySelectorAll('button:not([aria-label])').forEach((button) => {
-            if (['', '×'].includes(button.textContent.trim()))
+        modal.querySelectorAll('button').forEach((button) => {
+            if (['', '×', '✕'].includes(button.textContent.trim()))
                 button.setAttribute('aria-label', 'Đóng');
+            const oc = button.getAttribute('onclick') || '';
+            if (oc.includes("classList.add('hidden')") || oc.includes('classList.add("hidden")')) {
+                button.onclick = (e) => {
+                    e.preventDefault();
+                    closeModalWithCheck(modal.id);
+                };
+            }
+        });
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                closeModalWithCheck(modal.id);
+            }
         });
         new MutationObserver(() => {
             const open = !modal.classList.contains('hidden');
             if (open && !modalOpeners.has(modal)) {
                 modalOpeners.set(modal, document.activeElement);
+                if (!modalSnapshots.has(modal.id)) {
+                    captureModalSnapshot(modal.id);
+                }
                 setTimeout(() => {
                     if (!modal.contains(document.activeElement)) {
                         const preferred = [
@@ -564,10 +724,13 @@ function setupModalAccessibility() {
                         (preferred || visibleFocusables(modal)[0])?.focus();
                     }
                 });
-            } else if (!open && modalOpeners.has(modal)) {
-                const opener = modalOpeners.get(modal);
-                modalOpeners.delete(modal);
-                if (opener?.isConnected) opener.focus();
+            } else if (!open) {
+                clearModalSnapshot(modal.id);
+                if (modalOpeners.has(modal)) {
+                    const opener = modalOpeners.get(modal);
+                    modalOpeners.delete(modal);
+                    if (opener?.isConnected) opener.focus();
+                }
             }
         }).observe(modal, { attributes: true, attributeFilter: ['class'] });
         modal.addEventListener('keydown', (event) => {
@@ -801,9 +964,8 @@ async function selectActiveBranch(branchName) {
     showToast(`Đã chuyển làm việc sang chi nhánh: ${branchName}`, 'info');
 }
 
-function closeBranchModal() {
-    const modal = document.getElementById('branch-modal');
-    if (modal) modal.classList.add('hidden');
+function closeBranchModal(force = false) {
+    if (!closeModalWithCheck('branch-modal', force)) return;
     const editId = document.getElementById('branch-edit-id');
     if (editId) editId.value = '';
     const hint = document.getElementById('branch-name-hint');
@@ -872,6 +1034,7 @@ function openAddBranchModal() {
     if (defCb) defCb.checked = false;
 
     modal.classList.remove('hidden');
+    captureModalSnapshot('branch-modal');
     setTimeout(() => document.getElementById('branch-name-input')?.focus(), 50);
 }
 
@@ -936,6 +1099,7 @@ function openEditBranchModal(branchIdentifier, event) {
     if (defCb) defCb.checked = Boolean(b.isDefault);
 
     modal.classList.remove('hidden');
+    captureModalSnapshot('branch-modal');
     setTimeout(() => {
         if (!document.getElementById('branch-name-input')?.readOnly) {
             document.getElementById('branch-name-input')?.focus();
@@ -1025,15 +1189,21 @@ async function saveBranchFromModal(e) {
         // Related product/user branch changes belong to the server transaction.
         // Sending those derived changes as separate patches can conflict with renamed IDs.
         const selectedOldBranch = sessionStorage.getItem('minikiot_branch') === oldName;
-        await KVStore.save();
-        if (oldName !== name && selectedOldBranch) {
-            sessionStorage.setItem('minikiot_branch', name);
-            KVStore.data.settings.branch = name;
+        try {
+            setModalSubmitting('branch-modal', true);
+            await KVStore.save();
+            if (oldName !== name && selectedOldBranch) {
+                sessionStorage.setItem('minikiot_branch', name);
+                KVStore.data.settings.branch = name;
+            }
+            clearModalSnapshot('branch-modal');
+            closeBranchModal(true);
+            renderBranchSelector();
+            refreshCurrentView();
+            showToast(`Đã cập nhật chi nhánh "${name}" thành công!`, 'success');
+        } finally {
+            setModalSubmitting('branch-modal', false);
         }
-        closeBranchModal();
-        renderBranchSelector();
-        refreshCurrentView();
-        showToast(`Đã cập nhật chi nhánh "${name}" thành công!`, 'success');
     } else {
         const exists = KVStore.data.branches.find(
             (b) => b.name.toLowerCase() === name.toLowerCase()
@@ -1062,12 +1232,17 @@ async function saveBranchFromModal(e) {
         KVStore.data.branches.push(newBranch);
         KVStore.data.settings.branch = name;
         sessionStorage.setItem('minikiot_branch', name);
-        await KVStore.save();
-
-        closeBranchModal();
-        renderBranchSelector();
-        refreshCurrentView();
-        showToast(`Đã tạo chi nhánh mới "${name}" thành công!`, 'success');
+        try {
+            setModalSubmitting('branch-modal', true);
+            await KVStore.save();
+            clearModalSnapshot('branch-modal');
+            closeBranchModal(true);
+            renderBranchSelector();
+            refreshCurrentView();
+            showToast(`Đã tạo chi nhánh mới "${name}" thành công!`, 'success');
+        } finally {
+            setModalSubmitting('branch-modal', false);
+        }
     }
 }
 
@@ -4872,6 +5047,7 @@ let productSortField = null;
 let productSortAsc = true;
 
 function sortProductsBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (productSortField === field) {
         productSortAsc = !productSortAsc;
     } else {
@@ -4879,6 +5055,9 @@ function sortProductsBy(field) {
         productSortAsc = true;
     }
     renderProducts();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function setProductStockFilter(status) {
@@ -5006,21 +5185,42 @@ function renderProducts() {
 
     ['code', 'name', 'category', 'costPrice', 'price', 'stock'].forEach((f) => {
         const ind = document.getElementById(`sort-prod-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = productSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (productSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = productSortField === f ? (productSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                productSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (productSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
     const visibleProducts = list.slice(0, productRenderLimit);
     visibleProducts.forEach((p) => {
+        const isExpanded = expandedProductCode === p.code;
         const tr = document.createElement('tr');
         tr.dataset.exportKey = String(p.code);
-        tr.className =
-            'table-row-hover border-b border-gray-100/70 transition text-[13px] cursor-pointer';
+        tr.className = `table-row-hover border-b border-gray-100/70 transition text-[13px] cursor-pointer ${isExpanded ? 'bg-blue-50/70 font-medium border-l-4 border-l-[#0066cc]' : ''}`;
+        tr.setAttribute('tabindex', '0');
+        tr.setAttribute('role', 'row');
+        tr.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        tr.onkeydown = (e) => {
+            if (
+                (e.key === 'Enter' || e.key === ' ') &&
+                !e.target.closest('input') &&
+                !e.target.closest('button')
+            ) {
+                e.preventDefault();
+                toggleProductRowDetail(p.code);
+            }
+        };
+
         const isLow = (p.minStock || 0) > 0 && p.stock < p.minStock;
         const isShared = (KVStore.data.shared_products || []).some(
             (sp) => (sp.sourceProductId === p.id || sp.code === p.code) && sp.status === 'active'
@@ -5038,8 +5238,13 @@ function renderProducts() {
                     : renderHTML`<span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200/80 ml-1" title="Còn ${imeiList.length - withPhoto} máy chưa có ảnh riêng">📷 ${withPhoto}/${imeiList.length}</span>`
                 : trustedHTML('');
         tr.innerHTML = renderHTML`
-            <td class="py-3 pl-3 pr-2 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="kv-checkbox"></td>
-            <td class="py-3 px-3 font-semibold text-[#0066cc] font-mono">${p.code}</td>
+            <td class="py-3 pl-3 pr-2 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="kv-checkbox" aria-label="Chọn sản phẩm ${p.name || p.code}"></td>
+            <td class="py-3 px-3 font-semibold text-[#0066cc] font-mono">
+                <div class="flex items-center space-x-1.5">
+                    <span class="row-expand-chevron text-[10px] text-gray-400 font-normal select-none mr-0.5">${isExpanded ? '▼' : '▶'}</span>
+                    <span id="prod-label-${p.code}">${p.code}</span>
+                </div>
+            </td>
             <td class="py-3 px-3 font-medium text-gray-900 leading-snug">
                 ${p.name}
                 ${trustedHTML(isAll ? renderHTML`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-blue-50 text-blue-700 ml-1.5" title="${p.branchBreakdown || 'Toàn bộ chi nhánh'}">Toàn bộ chi nhánh (${p.branchBreakdown || ''})</span>` : p.branch ? renderHTML`<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-blue-50 text-blue-700 ml-1.5">${p.branch}</span>` : '')}
@@ -5056,11 +5261,41 @@ function renderProducts() {
                 </span>
             </td>
             <td class="py-3 px-3 text-center" onclick="event.stopPropagation()">
-                <button onclick="viewProductDetail('${p.code}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs">Chi tiết</button>
+                <button type="button" class="prod-detail-btn px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs" title="Xem chi tiết">Chi tiết</button>
             </td>
         `;
-        tr.onclick = () => viewProductDetail(p.code);
+        const detailBtn = tr.querySelector('.prod-detail-btn');
+        if (detailBtn) {
+            detailBtn.onclick = (e) => {
+                e.stopPropagation();
+                toggleProductRowDetail(p.code);
+            };
+        }
+        tr.onclick = (e) => {
+            if (e.target.closest('input') || e.target.closest('button')) return;
+            toggleProductRowDetail(p.code);
+        };
         tbody.appendChild(tr);
+
+        if (isExpanded) {
+            const fullProd = getFullProductForDetail(p.code);
+            if (fullProd) {
+                const expandTr = document.createElement('tr');
+                expandTr.id = `prod-detail-${p.code}`;
+                expandTr.setAttribute('role', 'region');
+                expandTr.setAttribute('aria-labelledby', `prod-trigger-${p.code}`);
+                expandTr.className = 'expand-detail-row bg-slate-50/70 border-b border-blue-200';
+                expandTr.dataset.detailKey = String(p.code);
+                const td = document.createElement('td');
+                td.colSpan = 8;
+                td.className = 'p-3 sm:p-4 text-left';
+                td.innerHTML = renderProductDetailHtml(fullProd);
+                expandTr.appendChild(td);
+                tbody.appendChild(expandTr);
+                setupProductDetailImeis(expandTr, fullProd);
+                setupProductDetailMedia(expandTr, fullProd);
+            }
+        }
     });
 
     const countEl = document.getElementById('products-total-count');
@@ -5079,16 +5314,16 @@ function renderProducts() {
     updateTableBulkSelectionUI(tbody.closest('table'));
 }
 
-// Product Detail Modal
+// Product Detail Inline & Modal state
 let currentDetailProductCode = null;
 
-function viewProductDetail(code) {
+function getFullProductForDetail(code) {
     const currentBranch = getCurrentBranch();
     const isAll = currentBranch === ALL_BRANCHES;
     let prod;
     if (isAll) {
         const matches = (KVStore.data.products || []).filter((p) => p.code === code);
-        if (!matches.length) return;
+        if (!matches.length) return null;
         const totalStock = matches.reduce((sum, p) => sum + (Number(p.stock) || 0), 0);
         const allImeis = matches.flatMap((p) => (Array.isArray(p.imeis) ? p.imeis : []));
         const branchStocks = matches.map((p) => ({
@@ -5103,9 +5338,10 @@ function viewProductDetail(code) {
             branch: 'Toàn bộ chi nhánh'
         };
     } else {
-        prod = (KVStore.data.products || []).find(
-            (p) => p.code === code && (p.branch || FALLBACK_BRANCH) === currentBranch
-        );
+        prod =
+            (KVStore.data.products || []).find(
+                (p) => p.code === code && (p.branch || FALLBACK_BRANCH) === currentBranch
+            ) || (KVStore.data.products || []).find((p) => p.code === code);
         if (prod) {
             prod = {
                 ...prod,
@@ -5118,172 +5354,268 @@ function viewProductDetail(code) {
             };
         }
     }
-    if (!prod) return;
+    return prod;
+}
 
-    currentDetailProductCode = prod.code;
+function toggleProductRowDetail(code) {
+    const tbody = document.getElementById('products-tbody');
+    if (!tbody) return;
+    const existing = tbody.querySelector(`tr.expand-detail-row[data-detail-key="${code}"]`);
+    if (existing) {
+        collapseExpandedRow(existing);
+        expandedProductCode = null;
+        return;
+    }
+    tbody.querySelectorAll('tr.expand-detail-row').forEach(collapseExpandedRow);
+    expandedProductCode = null;
 
-    const modal = document.getElementById('product-detail-modal');
-    if (!modal) return;
+    let parentTr = tbody.querySelector(`tr[data-export-key="${code}"]`);
+    if (!parentTr) {
+        renderProducts();
+        parentTr = tbody.querySelector(`tr[data-export-key="${code}"]`);
+    }
+    if (!parentTr) return;
 
-    const titleEl = document.getElementById('prod-detail-name-title');
-    if (titleEl) titleEl.textContent = prod.name;
-    const subEl = document.getElementById('prod-detail-code-sub');
-    if (subEl) subEl.textContent = `Mã SKU: ${prod.code}`;
-    const codeEl = document.getElementById('prod-detail-code');
-    if (codeEl) codeEl.textContent = prod.code;
-    const barcodeEl = document.getElementById('prod-detail-barcode');
-    if (barcodeEl) barcodeEl.textContent = prod.barcode || '—';
-    const catEl = document.getElementById('prod-detail-category');
-    if (catEl) catEl.textContent = prod.category || 'Chung';
-    const unitEl = document.getElementById('prod-detail-unit');
-    if (unitEl) unitEl.textContent = prod.unit || 'Chiếc';
-    const costEl = document.getElementById('prod-detail-cost');
-    if (costEl) costEl.textContent = `${formatVND(prod.costPrice)} đ`;
-    const priceEl = document.getElementById('prod-detail-price');
-    if (priceEl) priceEl.textContent = `${formatVND(prod.price)} đ`;
-    const stockEl = document.getElementById('prod-detail-stock');
-    if (stockEl) stockEl.textContent = prod.stock;
+    const fullProd = getFullProductForDetail(code);
+    if (!fullProd) {
+        showToast('Hàng hóa không còn trong phạm vi dữ liệu hiện tại.', 'warning');
+        return;
+    }
 
+    currentDetailProductCode = fullProd.code;
+    expandedProductCode = fullProd.code;
+    parentTr.classList.add('bg-blue-50/70', 'font-medium', 'border-l-4', 'border-l-[#0066cc]');
+    parentTr.setAttribute('aria-expanded', 'true');
+    const chevron = parentTr.querySelector('.row-expand-chevron');
+    if (chevron) {
+        chevron.textContent = '▼';
+    }
+
+    const expandTr = document.createElement('tr');
+    expandTr.id = `prod-detail-${fullProd.code}`;
+    expandTr.setAttribute('role', 'region');
+    expandTr.setAttribute('aria-labelledby', `prod-label-${fullProd.code}`);
+    expandTr.className = 'expand-detail-row bg-slate-50/70 border-b border-blue-200';
+    expandTr.dataset.detailKey = String(fullProd.code);
+    const td = document.createElement('td');
+    td.colSpan = 8;
+    td.className = 'p-3 sm:p-4 text-left';
+    td.innerHTML = renderProductDetailHtml(fullProd);
+    expandTr.appendChild(td);
+    parentTr.after(expandTr);
+    setupProductDetailImeis(expandTr, fullProd);
+    setupProductDetailMedia(expandTr, fullProd);
+}
+
+function viewProductDetail(code) {
+    toggleProductRowDetail(code);
+}
+
+function setupProductDetailImeis(container, prod) {
+    const imeiListEl = container.querySelector('#prod-detail-imei-list');
+    if (!imeiListEl || !prod.hasImei) return;
+    const imeis = Array.isArray(prod.imeis) ? prod.imeis : [];
+    if (imeis.length === 0) return;
+    imeiListEl.replaceChildren();
+    for (const im of imeis) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className =
+            'prod-detail-imei-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-mono text-xs hover:border-[#0066cc] transition cursor-pointer';
+        btn.dataset.imei = im;
+        btn.textContent = im;
+        btn.addEventListener('click', () => selectProductDetailImei(im, prod.id));
+        imeiListEl.appendChild(btn);
+    }
+}
+
+function setupProductDetailMedia(container, prod) {
+    const imagesListEl = container.querySelector('#prod-detail-images-list');
+    const images = Array.isArray(prod.images) ? prod.images : [];
+    if (imagesListEl && images.length > 0) {
+        renderMediaImages(imagesListEl, images);
+    }
+}
+
+function renderProductDetailHtml(prod) {
+    const isShared = (KVStore.data.shared_products || []).some(
+        (sp) => (sp.sourceProductId === prod.id || sp.code === prod.code) && sp.status === 'active'
+    );
+    const imeis = Array.isArray(prod.imeis) ? prod.imeis : [];
     const minStock = Number(prod.minStock) || 0;
-    const minStockInfo = document.getElementById('prod-detail-min-stock-info');
-    if (minStockInfo) {
-        minStockInfo.textContent =
-            minStock > 0 ? `Định mức tối thiểu: ${minStock}` : 'Không cài định mức';
-    }
+    const isLow = minStock > 0 && prod.stock < minStock;
 
-    const branchListEl = document.getElementById('prod-detail-branch-list');
-    if (branchListEl) {
-        branchListEl.innerHTML = (prod.branchStocks || [])
-            .map(
-                (b) => renderHTML`
+    const branchListHtml = (prod.branchStocks || [])
+        .map(
+            (b) => `
             <div class="flex items-center justify-between py-1 px-2.5 rounded-lg bg-white border border-gray-100">
-                <span class="font-medium text-gray-800">${b.branch}</span>
-                <span class="font-bold font-mono ${b.stock <= 0 ? 'text-rose-600' : 'text-gray-900'}">${b.stock} ${prod.unit || 'Chiếc'}</span>
+                <span class="font-medium text-gray-800">${escapeHTML(b.branch)}</span>
+                <span class="font-bold font-mono ${b.stock <= 0 ? 'text-rose-600' : 'text-gray-900'}">${b.stock} ${escapeHTML(prod.unit || 'Chiếc')}</span>
             </div>`
-            )
-            .join('');
-    }
+        )
+        .join('');
 
-    const imeiContainer = document.getElementById('prod-detail-imei-container');
-    const imeiBadge = document.getElementById('prod-detail-imei-badge');
-    const imeiListEl = document.getElementById('prod-detail-imei-list');
-    if (prod.hasImei && imeiContainer) {
-        imeiContainer.classList.remove('hidden');
-        const imeis = prod.imeis || [];
-        if (imeiBadge) imeiBadge.textContent = `${imeis.length} IMEI`;
-        if (imeiListEl) {
-            if (imeis.length === 0) {
-                imeiListEl.innerHTML = renderHTML`<span class="text-gray-400 italic text-[12px]">Chưa có số IMEI nào tồn kho</span>`;
-            } else {
-                imeiListEl.replaceChildren();
-                for (const im of imeis) {
-                    const button = document.createElement('button');
-                    button.type = 'button';
-                    button.className =
-                        'prod-detail-imei-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-mono text-xs';
-                    button.dataset.imei = im;
-                    button.textContent = im;
-                    button.addEventListener('click', () => selectProductDetailImei(im, prod.id));
-                    imeiListEl.appendChild(button);
-                }
-            }
+    let imeiContainerHtml = '';
+    if (prod.hasImei) {
+        let imeiButtonsHtml = '';
+        if (imeis.length === 0) {
+            imeiButtonsHtml = `<span class="text-gray-400 italic text-[12px]">Chưa có số IMEI nào tồn kho</span>`;
+        } else {
+            imeiButtonsHtml = imeis
+                .map(
+                    (im) => `
+                <button type="button" class="prod-detail-imei-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-mono text-xs hover:border-[#0066cc] transition cursor-pointer" data-imei="${escapeHTML(im)}">
+                    ${escapeHTML(im)}
+                </button>`
+                )
+                .join('');
         }
-    } else if (imeiContainer) {
-        imeiContainer.classList.add('hidden');
+        imeiContainerHtml = `
+            <div id="prod-detail-imei-container" class="bg-slate-100 p-3 rounded-xl border border-slate-200/60 space-y-2">
+                <div class="flex items-center justify-between">
+                    <span class="text-[12px] font-bold text-slate-900 flex items-center space-x-1.5">
+                        <span>Danh sách Serial / IMEI tồn kho</span>
+                        <span id="prod-detail-imei-badge" class="px-1.5 py-0.5 rounded text-[11px] font-bold bg-slate-200 text-slate-800">${imeis.length} IMEI</span>
+                    </span>
+                    <span class="text-[11px] text-gray-500 italic">Bấm vào IMEI để xem tình trạng & ảnh chi tiết</span>
+                </div>
+                <div id="prod-detail-imei-list" class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                    ${imeiButtonsHtml}
+                </div>
+            </div>
+        `;
     }
 
-    const condBadgeEl = document.getElementById('prod-detail-condition-badge');
-    if (condBadgeEl)
-        condBadgeEl.outerHTML = `<span id="prod-detail-condition-badge">${getConditionBadge(prod.condition || 'new')}</span>`;
-    const condDetailRow = document.getElementById('prod-detail-condition-detail-row');
-    const condDetailEl = document.getElementById('prod-detail-condition-detail');
-    if (prod.conditionDetail && condDetailRow && condDetailEl) {
-        condDetailEl.textContent = prod.conditionDetail;
-        condDetailRow.classList.remove('hidden');
-    } else if (condDetailRow) {
-        condDetailRow.classList.add('hidden');
-    }
-
-    const mediaContainer = document.getElementById('prod-detail-media-container');
-    const imagesListEl = document.getElementById('prod-detail-images-list');
-    const videoContainer = document.getElementById('prod-detail-video-container');
-    const videoPlayer = document.getElementById('prod-detail-video-player');
-    const videoLink = document.getElementById('prod-detail-video-link');
     const hasImages = Array.isArray(prod.images) && prod.images.length > 0;
-    prod = { ...prod, videoUrl: safeMediaUrl(prod.videoUrl) };
-    const hasVideo = Boolean(prod.videoUrl);
+    const videoUrl = safeMediaUrl(prod.videoUrl || '');
+    const hasVideo = Boolean(videoUrl);
+    const mediaContainerHidden = hasImages || hasVideo ? '' : 'hidden';
 
-    if (mediaContainer) {
-        if (hasImages || hasVideo) {
-            mediaContainer.classList.remove('hidden');
-            if (imagesListEl) {
-                renderMediaImages(imagesListEl, prod.images);
-            }
-            if (videoContainer) {
-                if (hasVideo) {
-                    videoContainer.classList.remove('hidden');
-                    if (
-                        prod.videoUrl.endsWith('.mp4') ||
-                        prod.videoUrl.endsWith('.webm') ||
-                        prod.videoUrl.startsWith('/uploads/')
-                    ) {
-                        if (videoPlayer) {
-                            videoPlayer.src = prod.videoUrl;
-                            videoPlayer.classList.remove('hidden');
-                        }
-                        if (videoLink) videoLink.classList.add('hidden');
-                    } else {
-                        if (videoPlayer) videoPlayer.classList.add('hidden');
-                        if (videoLink) {
-                            videoLink.href = prod.videoUrl;
-                            videoLink.textContent = `Xem video: ${prod.videoUrl}`;
-                            videoLink.classList.remove('hidden');
-                        }
-                    }
-                } else {
-                    videoContainer.classList.add('hidden');
-                }
-            }
+    let videoPlayerHtml = '';
+    let videoLinkHtml = '';
+    if (hasVideo) {
+        if (
+            videoUrl.endsWith('.mp4') ||
+            videoUrl.endsWith('.webm') ||
+            videoUrl.startsWith('/uploads/')
+        ) {
+            videoPlayerHtml = `<video id="prod-detail-video-player" src="${escapeHTML(videoUrl)}" controls preload="none" class="w-full max-h-48 rounded-lg border border-gray-200 mt-2"></video>`;
         } else {
-            mediaContainer.classList.add('hidden');
+            videoLinkHtml = `<a id="prod-detail-video-link" href="${escapeHTML(videoUrl)}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline text-xs mt-2 inline-block">Xem video: ${escapeHTML(videoUrl)}</a>`;
         }
     }
 
-    const descContainer = document.getElementById('prod-detail-desc-container');
-    const descEl = document.getElementById('prod-detail-description');
-    if (prod.description && descContainer && descEl) {
-        descEl.textContent = prod.description;
-        descContainer.classList.remove('hidden');
-    } else if (descContainer) {
-        descContainer.classList.add('hidden');
-    }
+    const descHtml = prod.description
+        ? `
+        <div id="prod-detail-desc-container" class="bg-gray-50/80 p-3 rounded-xl border border-gray-200/60 text-xs">
+            <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Mô tả sản phẩm</div>
+            <p id="prod-detail-description" class="text-gray-800 whitespace-pre-wrap">${escapeHTML(prod.description)}</p>
+        </div>`
+        : `
+        <div id="prod-detail-desc-container" class="hidden">
+            <p id="prod-detail-description" class="whitespace-pre-wrap"></p>
+        </div>`;
 
-    const shareBtn = document.getElementById('prod-detail-share-btn');
-    if (shareBtn) {
-        const isShared = (KVStore.data.shared_products || []).some(
-            (sp) =>
-                (sp.sourceProductId === prod.id || sp.code === prod.code) && sp.status === 'active'
-        );
-        if (isShared) {
-            shareBtn.innerHTML = '<span> Đã chia sẻ (Sửa/Gỡ)</span>';
-            shareBtn.className =
-                'px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[12.5px] font-semibold transition shadow-2xs flex items-center space-x-1';
-        } else {
-            shareBtn.innerHTML = '<span> Kho chung</span>';
-            shareBtn.className =
-                'px-3 py-1.5 bg-amber-50 hover:bg-amber-600 text-amber-800 hover:text-white rounded-xl text-[12.5px] font-semibold transition shadow-2xs flex items-center space-x-1';
-        }
-    }
+    return `
+        <div class="bg-white rounded-xl border border-blue-200 shadow-sm p-3.5 sm:p-4 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-gray-100">
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <span class="text-sm sm:text-base font-bold font-mono text-[#0066cc]" id="prod-detail-code">${escapeHTML(prod.code)}</span>
+                    <span class="text-sm sm:text-base font-bold text-gray-900" id="prod-detail-name-title">${escapeHTML(prod.name)}</span>
+                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-[#0066cc] font-medium" id="prod-detail-category">${escapeHTML(prod.category || 'Chung')}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium" id="prod-detail-unit">ĐVT: ${escapeHTML(prod.unit || 'Chiếc')}</span>
+                    <span id="prod-detail-condition-badge">${getConditionBadge(prod.condition || 'new')}</span>
+                    ${isShared ? '<span class="text-[10.5px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold border border-amber-200">📦 Kho chung</span>' : ''}
+                </div>
+                <button type="button" onclick="collapseExpandedRow(this)" class="self-end sm:self-auto text-xs text-gray-500 hover:text-gray-800 font-medium px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 flex items-center gap-1 transition">
+                    ✕ Thu gọn
+                </button>
+            </div>
 
-    if (prod.hasImei && prod.imeis && prod.imeis.length > 0) {
-        selectProductDetailImei(prod.imeis[0], prod.id);
-    }
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+                <!-- Cột 1: Thông tin cơ bản & mã -->
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1.5">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Thông tin cơ bản</div>
+                    <div class="flex justify-between"><span class="text-gray-600">Mã hàng (SKU):</span><span class="font-mono font-bold text-gray-900">${escapeHTML(prod.code)}</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Mã vạch (Barcode):</span><span class="font-mono text-gray-800" id="prod-detail-barcode">${escapeHTML(prod.barcode || '—')}</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Nhóm hàng:</span><span class="font-medium text-gray-800">${escapeHTML(prod.category || 'Chung')}</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Quản lý IMEI:</span><span class="font-medium ${prod.hasImei ? 'text-purple-700 font-bold' : 'text-gray-600'}">${prod.hasImei ? 'Có (' + imeis.length + ' máy)' : 'Không'}</span></div>
+                </div>
 
-    modal.classList.remove('hidden');
+                <!-- Cột 2: Giá vốn, giá bán, tồn tổng -->
+                <div class="bg-blue-50/40 p-3 rounded-xl border border-blue-100 space-y-1.5">
+                    <div class="text-[10.5px] font-bold text-blue-800 uppercase tracking-wider mb-1">Giá cả & Tồn kho</div>
+                    <div class="flex justify-between"><span class="text-gray-600">Giá vốn bình quân:</span><span class="font-mono font-medium text-gray-900" id="prod-detail-cost">${formatVND(prod.costPrice)} đ</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Giá bán niêm yết:</span><span class="font-mono font-bold text-[#0066cc]" id="prod-detail-price">${formatVND(prod.price)} đ</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Tổng tồn hệ thống:</span><span class="font-mono font-bold ${isLow ? 'text-rose-600' : 'text-emerald-700'}" id="prod-detail-stock">${prod.stock} ${escapeHTML(prod.unit || 'Chiếc')}</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Định mức tối thiểu:</span><span class="text-gray-700" id="prod-detail-min-stock-info">${minStock > 0 ? minStock + ' ' + (prod.unit || 'Chiếc') : 'Không cài đặt'}</span></div>
+                </div>
+
+                <!-- Cột 3: Phân bổ theo chi nhánh -->
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1.5">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Tồn kho theo chi nhánh</div>
+                    <div id="prod-detail-branch-list" class="space-y-1">
+                        ${branchListHtml || '<div class="text-gray-400 italic">Chưa có thông tin chi nhánh</div>'}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Khung IMEI nếu có -->
+            ${imeiContainerHtml}
+
+            <!-- Tình trạng chi tiết của IMEI đã chọn -->
+            <div id="prod-detail-condition-detail-row" class="hidden bg-amber-50/80 p-2.5 rounded-lg border border-amber-200/70 text-xs text-amber-900">
+                <span class="font-bold">Tình trạng máy: </span>
+                <span id="prod-detail-condition-detail"></span>
+            </div>
+
+            <!-- Media ảnh & video nếu có -->
+            <section id="prod-detail-media-container" class="${mediaContainerHidden} bg-slate-50/60 p-3 rounded-xl border border-slate-200/60 space-y-2" aria-label="Ảnh và video sản phẩm">
+                <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider">Hình ảnh & Video sản phẩm</div>
+                <div id="prod-detail-images-list" class="flex flex-wrap gap-2"></div>
+                <div id="prod-detail-video-container" class="${hasVideo ? '' : 'hidden'}">
+                    ${videoPlayerHtml}
+                    ${videoLinkHtml}
+                </div>
+            </section>
+
+            <!-- Mô tả -->
+            ${descHtml}
+
+            <!-- Thanh công cụ hành động -->
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-gray-100">
+                <div class="text-[11.5px] text-gray-400">
+                    Mã SKU: <span class="font-mono font-semibold text-gray-600">${escapeHTML(prod.code)}</span>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button type="button" onclick="printBarcodeFromDetail('${escapeHTML(prod.code)}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition" title="In tem mã vạch">
+                        <span>🖨️ In mã</span>
+                    </button>
+                    <button type="button" onclick="editProductFromDetail('${escapeHTML(prod.code)}')" class="px-3 py-1.5 bg-[#0066cc] hover:bg-blue-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition" title="Chỉnh sửa hàng hóa">
+                        <span>✏️ Chỉnh sửa</span>
+                    </button>
+                    <button type="button" onclick="deleteProductFromDetail('${escapeHTML(prod.code)}')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition" title="Xóa hàng hóa">
+                        <span>🗑️ Xóa</span>
+                    </button>
+                    <button type="button" id="prod-detail-share-btn" onclick="openShareFromProductDetail('${escapeHTML(prod.code)}')" class="px-3 py-1.5 ${isShared ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-amber-50 hover:bg-amber-600 text-amber-800 hover:text-white'} rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition" title="Chia sẻ hoặc quản lý trên kho chung">
+                        <span>📦 Kho chung</span>
+                    </button>
+                    <button type="button" onclick="collapseExpandedRow(this)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold text-xs transition">
+                        Thu gọn
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 function selectProductDetailImei(imei, prodId) {
-    const prod = (KVStore.data.products || []).find((p) => p.id === prodId);
+    const prod = (KVStore.data.products || []).find(
+        (p) =>
+            p.id === prodId ||
+            p.code === currentDetailProductCode ||
+            (Array.isArray(p.imeis) && p.imeis.includes(imei))
+    );
     if (!prod) return;
     document.querySelectorAll('.prod-detail-imei-btn').forEach((btn) => {
         const isMatch = btn.dataset.imei === imei;
@@ -5353,24 +5685,25 @@ function selectProductDetailImei(imei, prodId) {
     }
 }
 
-function printBarcodeFromDetail() {
-    if (!currentDetailProductCode) return;
+function printBarcodeFromDetail(code) {
+    const c = code || currentDetailProductCode;
+    if (!c) return;
     document.getElementById('product-detail-modal')?.classList.add('hidden');
-    openBarcodeModal(currentDetailProductCode);
+    openBarcodeModal(c);
 }
 
-function editProductFromDetail() {
-    if (!currentDetailProductCode) return;
-    const code = currentDetailProductCode;
+function editProductFromDetail(code) {
+    const c = code || currentDetailProductCode;
+    if (!c) return;
     document.getElementById('product-detail-modal')?.classList.add('hidden');
-    editProduct(code);
+    editProduct(c);
 }
 
-function deleteProductFromDetail() {
-    if (!currentDetailProductCode) return;
-    const code = currentDetailProductCode;
+function deleteProductFromDetail(code) {
+    const c = code || currentDetailProductCode;
+    if (!c) return;
     document.getElementById('product-detail-modal')?.classList.add('hidden');
-    deleteProduct(code);
+    deleteProduct(c);
 }
 
 // Helper: Parse IMEI/Serial strings from multiline or delimited input
@@ -5728,11 +6061,75 @@ function openAddProductModal(editCode = null, callback = null) {
     updateProductModalPriceColor();
     const costInput = document.getElementById('prod-cost');
     const priceInput = document.getElementById('prod-price');
-    // The client may not have permission to read all historical documents.
-    // Keep existing cost read-only; the server enforces the history invariant.
-    costInput.readOnly = Boolean(editCode);
+    const stockInput = document.getElementById('prod-stock');
+    const stockLabel = document.getElementById('prod-stock-label');
+    const imeiCheck = document.getElementById('prod-has-imei');
+    let stockNote = document.getElementById('prod-stock-note');
+    let costNote = document.getElementById('prod-cost-note');
+    let priceNote = document.getElementById('prod-price-note');
+    let imeiNote = document.getElementById('prod-imei-note');
+
+    if (editCode) {
+        if (stockLabel) stockLabel.textContent = 'Tồn kho hiện tại';
+        if (stockInput) {
+            if (!stockNote) {
+                stockNote = document.createElement('div');
+                stockNote.id = 'prod-stock-note';
+                stockNote.className = 'text-[11px] text-gray-500 mt-1';
+                stockInput.parentNode.appendChild(stockNote);
+            }
+            stockNote.textContent =
+                'Để điều chỉnh tồn kho, vui lòng dùng chức năng Nhập hàng hoặc Kiểm kho.';
+        }
+        if (costInput) {
+            costInput.readOnly = true;
+            if (!costNote) {
+                costNote = document.createElement('div');
+                costNote.id = 'prod-cost-note';
+                costNote.className = 'text-[11px] text-gray-500 mt-1';
+                costInput.parentNode.appendChild(costNote);
+            }
+            costNote.textContent =
+                'Giá vốn được cập nhật tự động khi Nhập hàng (bình quân gia quyền).';
+        }
+        const canEditPrice = hasPermission('posPrice');
+        if (priceInput) {
+            priceInput.readOnly = !canEditPrice;
+            if (!canEditPrice) {
+                if (!priceNote) {
+                    priceNote = document.createElement('div');
+                    priceNote.id = 'prod-price-note';
+                    priceNote.className = 'text-[11px] text-amber-700 mt-1';
+                    priceInput.parentNode.appendChild(priceNote);
+                }
+                priceNote.textContent =
+                    'Bạn không có quyền sửa giá bán. Vui lòng liên hệ Quản trị viên.';
+            } else if (priceNote) {
+                priceNote.remove();
+            }
+        }
+        if (imeiCheck) {
+            imeiCheck.disabled = true;
+            if (!imeiNote) {
+                imeiNote = document.createElement('div');
+                imeiNote.id = 'prod-imei-note';
+                imeiNote.className = 'text-[11px] text-gray-500 mt-1';
+                imeiCheck.closest('div').appendChild(imeiNote);
+            }
+            imeiNote.textContent =
+                'Không thể thay đổi chế độ quản lý IMEI của hàng hóa đã lưu trong hệ thống.';
+        }
+    } else {
+        if (stockLabel) stockLabel.textContent = 'Tồn kho ban đầu';
+        if (stockNote) stockNote.remove();
+        if (costNote) costNote.remove();
+        if (priceNote) priceNote.remove();
+        if (imeiNote) imeiNote.remove();
+        if (costInput) costInput.readOnly = false;
+        if (priceInput) priceInput.readOnly = false;
+        if (imeiCheck) imeiCheck.disabled = false;
+    }
     costInput.title = editCode ? 'Giá vốn được cập nhật qua nghiệp vụ nhập/trả/chuyển kho.' : '';
-    priceInput.readOnly = Boolean(editCode) && !hasPermission('posPrice');
     priceInput.title = priceInput.readOnly ? 'Cần quyền sửa giá bán.' : '';
     if (costInput && !costInput.dataset.warnBound) {
         costInput.dataset.warnBound = 'true';
@@ -5743,6 +6140,7 @@ function openAddProductModal(editCode = null, callback = null) {
         priceInput.addEventListener('input', updateProductModalPriceColor);
     }
     modal.classList.remove('hidden');
+    captureModalSnapshot('product-modal');
 }
 
 function updateProductModalPriceColor(e) {
@@ -5797,7 +6195,14 @@ async function saveProductFromModal(e) {
         currentProductVideoUrl || document.getElementById('prod-video-url')?.value?.trim() || '';
     const images = Array.isArray(currentProductImages) ? [...currentProductImages] : [];
 
-    if (!code || !name) {
+    clearFormValidationErrors(document.getElementById('product-form'));
+    if (!code) {
+        setFieldValidationError(document.getElementById('prod-code'), 'Vui lòng nhập mã hàng');
+        showToast('Vui lòng nhập mã và tên hàng hóa!', 'error');
+        return;
+    }
+    if (!name) {
+        setFieldValidationError(document.getElementById('prod-name'), 'Vui lòng nhập tên hàng hóa');
         showToast('Vui lòng nhập mã và tên hàng hóa!', 'error');
         return;
     }
@@ -5872,9 +6277,15 @@ async function saveProductFromModal(e) {
         showToast(`Đã thêm mới hàng hóa ${code}!`, 'success');
     }
 
-    await KVStore.save();
-    renderProducts();
-    document.getElementById('product-modal').classList.add('hidden');
+    try {
+        setModalSubmitting('product-modal', true);
+        await KVStore.save();
+        renderProducts();
+        clearModalSnapshot('product-modal');
+        document.getElementById('product-modal').classList.add('hidden');
+    } finally {
+        setModalSubmitting('product-modal', false);
+    }
 
     if (productModalCallback) {
         productModalCallback(savedProduct);
@@ -5959,6 +6370,7 @@ function openAddCategoryModal() {
     }
 
     modal.classList.remove('hidden');
+    captureModalSnapshot('category-modal');
     setTimeout(() => document.getElementById('cat-name-input')?.focus(), 50);
 }
 
@@ -5985,11 +6397,57 @@ async function saveCategoryFromModal(e) {
     const newId = makeCode('CAT');
     const newCat = { id: newId, name, parentId };
     KVStore.data.categories.push(newCat);
-    await KVStore.save();
 
-    document.getElementById('category-modal')?.classList.add('hidden');
-    renderCategorySelectOptions(name);
-    showToast(`Đã thêm nhóm hàng "${name}" thành công!`, 'success');
+    try {
+        setModalSubmitting('category-modal', true);
+        await KVStore.save();
+        clearModalSnapshot('category-modal');
+        document.getElementById('category-modal')?.classList.add('hidden');
+        renderCategorySelectOptions(name);
+        showToast(`Đã thêm nhóm hàng "${name}" thành công!`, 'success');
+    } finally {
+        setModalSubmitting('category-modal', false);
+    }
+}
+
+// ==========================================
+// MASTER-DETAIL ACCORDION (INLINE EXPAND ROWS)
+// ==========================================
+let expandedInvoiceCode = null;
+let expandedImportCode = null;
+let expandedStocktakeId = null;
+let expandedTransferId = null;
+let expandedProductCode = null;
+
+function collapseExpandedRow(el) {
+    const expandRow = el && el.closest ? el.closest('tr.expand-detail-row') : el;
+    if (!expandRow) return;
+    const key = expandRow.dataset.detailKey;
+    if (expandedInvoiceCode && String(expandedInvoiceCode) === String(key))
+        expandedInvoiceCode = null;
+    if (expandedImportCode && String(expandedImportCode) === String(key)) expandedImportCode = null;
+    if (expandedStocktakeId && String(expandedStocktakeId) === String(key))
+        expandedStocktakeId = null;
+    if (expandedTransferId && String(expandedTransferId) === String(key)) expandedTransferId = null;
+    if (expandedProductCode && String(expandedProductCode) === String(key))
+        expandedProductCode = null;
+
+    const prevTr = expandRow.previousElementSibling;
+    if (prevTr) {
+        prevTr.classList.remove('bg-blue-50/70', 'font-medium', 'border-l-4', 'border-l-[#0066cc]');
+        prevTr.setAttribute('aria-expanded', 'false');
+        const chevron = prevTr.querySelector('.row-expand-chevron');
+        if (chevron) {
+            chevron.textContent = '▼';
+            chevron.textContent = '▶';
+            chevron.setAttribute('aria-expanded', 'false');
+            if (chevron.id) {
+                const code = chevron.id.replace(/^(inv|st|tf|imp|prod)-trigger-/, '');
+                chevron.setAttribute('aria-label', `Mở rộng chi tiết ${code}`);
+            }
+        }
+    }
+    expandRow.remove();
 }
 
 // --- 3B. STOCKTAKES (KIỂM KHO) ---
@@ -5999,6 +6457,7 @@ let stocktakeSortField = null;
 let stocktakeSortAsc = true;
 
 function sortStocktakesBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (stocktakeSortField === field) {
         stocktakeSortAsc = !stocktakeSortAsc;
     } else {
@@ -6006,6 +6465,9 @@ function sortStocktakesBy(field) {
         stocktakeSortAsc = true;
     }
     renderStocktakes();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function renderStocktakes() {
@@ -6050,12 +6512,19 @@ function renderStocktakes() {
 
     ['code', 'totalActual', 'totalVariance'].forEach((f) => {
         const ind = document.getElementById(`sort-st-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = stocktakeSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (stocktakeSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = stocktakeSortField === f ? (stocktakeSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                stocktakeSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (stocktakeSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
@@ -6085,11 +6554,25 @@ function renderStocktakes() {
                       ? 'text-emerald-600 font-bold'
                       : 'text-rose-600 font-bold';
             const varPrefix = varianceVal > 0 ? '+' : '';
+            const isExpanded = expandedStocktakeId === st.id;
+            const expandRowHtml = isExpanded
+                ? renderHTML`
+                <tr id="st-detail-${st.id}" aria-labelledby="st-trigger-${st.id}" class="expand-detail-row bg-slate-50/70 border-b border-blue-200" data-detail-key="${st.id}">
+                    <td colspan="10" class="p-3 sm:p-4 text-left">
+                        ${trustedHTML(renderStocktakeDetailHtml(st))}
+                    </td>
+                </tr>`
+                : '';
 
             return renderHTML`
-            <tr data-export-key="${st.code}" class="border-b border-gray-100 hover:bg-blue-50/40 text-[12.5px] transition group">
-                <td class="py-2.5 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox"></td>
-                <td class="py-2.5 px-3 font-mono font-bold text-[#0066cc] cursor-pointer hover:underline" onclick="viewStocktakeDetail('${st.id}')">${st.code}</td>
+            <tr data-export-key="${st.code}" tabindex="0" role="row" aria-expanded="${isExpanded}" class="border-b border-gray-100 hover:bg-blue-50/40 text-[12.5px] transition group cursor-pointer ${isExpanded ? 'bg-blue-50/70 font-medium border-l-4 border-l-[#0066cc]' : ''}" onclick="if (!event.target.closest('input') && !event.target.closest('button')) toggleStocktakeRowDetail('${st.id}')" onkeydown="if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('input') && !event.target.closest('button')) { event.preventDefault(); toggleStocktakeRowDetail('${st.id}'); }">
+                <td class="py-2.5 pl-3 pr-2 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="kv-checkbox" aria-label="Chọn phiếu kiểm kho ${st.code}"></td>
+                <td class="py-2.5 px-3 font-mono font-bold text-[#0066cc] cursor-pointer hover:underline" onclick="event.stopPropagation(); toggleStocktakeRowDetail('${st.id}')">
+                    <div class="flex items-center space-x-1.5">
+                        <button type="button" id="st-trigger-${st.id}" aria-expanded="${isExpanded}" aria-controls="st-detail-${st.id}" aria-label="${isExpanded ? 'Thu gọn chi tiết ' + st.code : 'Mở rộng chi tiết ' + st.code}" class="row-expand-chevron text-[10px] text-gray-400 hover:text-[#0066cc] font-normal select-none cursor-pointer p-0.5" onclick="event.stopPropagation(); toggleStocktakeRowDetail('${st.id}')">${isExpanded ? '▼' : '▶'}</button>
+                        <span>${st.code}</span>
+                    </div>
+                </td>
                 <td class="py-2.5 px-3 text-gray-600">${st.time || ''}</td>
                 <td class="py-2.5 px-3 text-gray-800 font-medium">${st.branch || FALLBACK_BRANCH}</td>
                 <td class="py-2.5 px-3 text-gray-700">${st.cashier || ''}</td>
@@ -6097,9 +6580,9 @@ function renderStocktakes() {
                 <td class="py-2.5 px-3 text-right ${varColor}">${varPrefix}${varianceVal}</td>
                 <td class="py-2.5 px-3 text-center">${statusBadge}</td>
                 <td class="py-2.5 px-3 text-gray-500 max-w-[220px] truncate" title="${(st.note || '').replace(/"/g, '&quot;')}">${st.note || ''}</td>
-                <td class="py-2.5 pr-3 text-right">
+                <td class="py-2.5 pr-3 text-right" onclick="event.stopPropagation()">
                     <div class="flex items-center justify-end space-x-1.5">
-                        <button onclick="viewStocktakeDetail('${st.id}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition" title="Xem chi tiết">
+                        <button onclick="toggleStocktakeRowDetail('${st.id}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition" title="Xem chi tiết">
                             Chi tiết
                         </button>
                         ${trustedHTML(
@@ -6113,9 +6596,20 @@ function renderStocktakes() {
                     </div>
                 </td>
             </tr>
+            ${trustedHTML(expandRowHtml)}
         `;
         })
         .join('');
+
+    tbody.querySelectorAll('tr[data-export-key]').forEach((tr) => {
+        const code = tr.getAttribute('data-export-key');
+        const st = list.find((item) => item.code === code);
+        if (!st) return;
+        tr.onclick = (e) => {
+            if (e.target.closest('input') || e.target.closest('button')) return;
+            toggleStocktakeRowDetail(st.id);
+        };
+    });
 
     updateTableBulkSelectionUI(tbody.closest('table'));
 }
@@ -6408,6 +6902,123 @@ function printStocktakeDetail() {
     printRegion('stocktake-detail-modal', false);
 }
 
+function toggleStocktakeRowDetail(id) {
+    if (expandedStocktakeId === id) {
+        expandedStocktakeId = null;
+    } else {
+        expandedStocktakeId = id;
+    }
+    renderStocktakes();
+}
+
+function printStocktakeReceipt(id) {
+    viewStocktakeDetail(id);
+    document.getElementById('stocktake-detail-modal')?.classList.add('hidden');
+    printStocktakeDetail();
+}
+
+function renderStocktakeDetailHtml(st) {
+    const isBalanced = st.status === 'balanced';
+    const statusBadge = isBalanced
+        ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Đã cân bằng kho</span>'
+        : '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">Phiếu tạm</span>';
+
+    const items = st.items || [];
+    const itemsHtml = items
+        .map((item) => {
+            const varColor =
+                item.variance === 0
+                    ? 'text-gray-500'
+                    : item.variance > 0
+                      ? 'text-emerald-600 font-bold'
+                      : 'text-rose-600 font-bold';
+            const varPrefix = item.variance > 0 ? '+' : '';
+            return `
+                <tr class="border-b border-gray-100 hover:bg-gray-50/60 text-[12.5px]">
+                    <td class="py-2 px-3 font-mono font-semibold text-[#0066cc]">${escapeHTML(item.code)}</td>
+                    <td class="py-2 px-3 font-medium text-gray-800">${escapeHTML(item.name)}</td>
+                    <td class="py-2 px-3 text-right font-semibold text-gray-700">${item.systemStock}</td>
+                    <td class="py-2 px-3 text-right font-bold text-[#0066cc]">${item.actualStock}</td>
+                    <td class="py-2 px-3 text-right ${varColor}">${varPrefix}${item.variance}</td>
+                    <td class="py-2 px-3 text-gray-600 text-[12px]">${escapeHTML(item.reason || '-')}</td>
+                </tr>
+            `;
+        })
+        .join('');
+
+    return `
+        <div class="bg-white rounded-xl border border-blue-200 shadow-sm p-3.5 sm:p-4 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-gray-100">
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <span class="text-sm sm:text-base font-bold font-mono text-[#0066cc]">Phiếu kiểm: ${escapeHTML(st.code)}</span>
+                    <span class="text-xs text-gray-500 font-mono">🕒 ${escapeHTML(st.time || '')}</span>
+                    ${statusBadge}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">Chi nhánh: ${escapeHTML(st.branch || FALLBACK_BRANCH)}</span>
+                </div>
+                <button type="button" onclick="collapseExpandedRow(this)" class="self-end sm:self-auto text-xs text-gray-500 hover:text-gray-800 font-medium px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 flex items-center gap-1 transition">
+                    ✕ Thu gọn
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div>Người kiểm: <span class="font-bold text-gray-900">${escapeHTML(st.cashier || 'Admin')}</span></div>
+                    <div>Ghi chú: <span class="text-gray-700 italic">${escapeHTML(st.note || '(Không có ghi chú)')}</span></div>
+                </div>
+                <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100 flex items-center justify-around text-center">
+                    <div>
+                        <div class="text-[11px] text-gray-500 font-medium">Tổng thực tế</div>
+                        <div class="text-base font-bold text-[#0066cc] font-mono">${st.totalActual ?? 0}</div>
+                    </div>
+                    <div class="border-l border-blue-200 h-8"></div>
+                    <div>
+                        <div class="text-[11px] text-gray-500 font-medium">Tổng chênh lệch</div>
+                        <div class="text-base font-bold font-mono ${(st.totalVariance || 0) !== 0 ? 'text-rose-600' : 'text-emerald-600'}">
+                            ${(st.totalVariance || 0) > 0 ? '+' : ''}${st.totalVariance ?? 0}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                        <tr>
+                            <th class="py-2 px-3">Mã hàng</th>
+                            <th class="py-2 px-3">Tên hàng</th>
+                            <th class="py-2 px-3 text-right">Tồn hệ thống</th>
+                            <th class="py-2 px-3 text-right">Thực kiểm</th>
+                            <th class="py-2 px-3 text-right">Chênh lệch</th>
+                            <th class="py-2 px-3">Lý do</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml || '<tr><td colspan="6" class="py-3 text-center text-gray-400 italic">Không có mặt hàng nào</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                ${
+                    !isBalanced
+                        ? `
+                    <button type="button" onclick="balanceDraftStocktake('${escapeHTML(st.id)}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                        <span>⚖️ Cân bằng kho</span>
+                    </button>
+                `
+                        : ''
+                }
+                <button type="button" onclick="printStocktakeReceipt('${escapeHTML(st.id)}')" class="px-3 py-1.5 bg-[#0066cc] hover:bg-blue-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                    <span>🖨️ In phiếu kiểm</span>
+                </button>
+                <button type="button" onclick="collapseExpandedRow(this)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold text-xs transition">
+                    Thu gọn
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 // --- 3C. TRANSFERS (CHUYỂN HÀNG CHI NHÁNH) ---
 let activeTransferItems = [];
 
@@ -6415,6 +7026,7 @@ let transferSortField = null;
 let transferSortAsc = true;
 
 function sortTransfersBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (transferSortField === field) {
         transferSortAsc = !transferSortAsc;
     } else {
@@ -6422,6 +7034,9 @@ function sortTransfersBy(field) {
         transferSortAsc = true;
     }
     renderTransfers();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function renderTransfers() {
@@ -6471,12 +7086,19 @@ function renderTransfers() {
 
     ['code', 'fromBranch', 'toBranch', 'totalQty', 'totalValue'].forEach((f) => {
         const ind = document.getElementById(`sort-tf-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = transferSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (transferSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = transferSortField === f ? (transferSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                transferSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (transferSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
@@ -6507,11 +7129,25 @@ function renderTransfers() {
                     '<span class="kv-badge kv-badge-secondary">Đã hủy</span>'
                 );
             }
+            const isExpanded = expandedTransferId === tf.id;
+            const expandRowHtml = isExpanded
+                ? renderHTML`
+                <tr id="tf-detail-${tf.id}" aria-labelledby="tf-trigger-${tf.id}" class="expand-detail-row bg-slate-50/70 border-b border-blue-200" data-detail-key="${tf.id}">
+                    <td colspan="10" class="p-3 sm:p-4 text-left">
+                        ${trustedHTML(renderTransferDetailHtml(tf))}
+                    </td>
+                </tr>`
+                : '';
 
             return renderHTML`
-            <tr data-export-key="${tf.code}" class="border-b border-gray-100 hover:bg-blue-50/40 text-[12.5px] transition group">
-                <td class="py-2.5 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox"></td>
-                <td class="py-2.5 px-3 font-mono font-bold text-slate-700 cursor-pointer hover:underline" onclick="viewTransferDetail('${tf.id}')">${tf.code}</td>
+            <tr data-export-key="${tf.code}" tabindex="0" role="row" aria-expanded="${isExpanded}" class="border-b border-gray-100 hover:bg-blue-50/40 text-[12.5px] transition group cursor-pointer ${isExpanded ? 'bg-blue-50/70 font-medium border-l-4 border-l-[#0066cc]' : ''}" onclick="if (!event.target.closest('input') && !event.target.closest('button')) toggleTransferRowDetail('${tf.id}')" onkeydown="if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('input') && !event.target.closest('button')) { event.preventDefault(); toggleTransferRowDetail('${tf.id}'); }">
+                <td class="py-2.5 pl-3 pr-2 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="kv-checkbox" aria-label="Chọn phiếu chuyển ${tf.code}"></td>
+                <td class="py-2.5 px-3 font-mono font-bold text-slate-700 cursor-pointer hover:underline" onclick="event.stopPropagation(); toggleTransferRowDetail('${tf.id}')">
+                    <div class="flex items-center space-x-1.5">
+                        <button type="button" id="tf-trigger-${tf.id}" aria-expanded="${isExpanded}" aria-controls="tf-detail-${tf.id}" aria-label="${isExpanded ? 'Thu gọn chi tiết ' + tf.code : 'Mở rộng chi tiết ' + tf.code}" class="row-expand-chevron text-[10px] text-gray-400 hover:text-[#0066cc] font-normal select-none cursor-pointer p-0.5" onclick="event.stopPropagation(); toggleTransferRowDetail('${tf.id}')">${isExpanded ? '▼' : '▶'}</button>
+                        <span>${tf.code}</span>
+                    </div>
+                </td>
                 <td class="py-2.5 px-3 text-gray-600">${tf.time || ''}</td>
                 <td class="py-2.5 px-3 text-gray-800 font-medium">${tf.fromBranch || ''}</td>
                 <td class="py-2.5 px-3 text-gray-800 font-medium">${tf.toBranch || ''}</td>
@@ -6519,9 +7155,9 @@ function renderTransfers() {
                 <td class="py-2.5 px-3 text-right font-bold text-slate-700">${tf.totalQty || 0}</td>
                 <td class="py-2.5 px-3 text-right font-bold text-gray-900">${formatVND(tf.totalValue || 0)} đ</td>
                 <td class="py-2.5 px-3 text-center">${statusBadge}</td>
-                <td class="py-2.5 pr-3 text-right">
+                <td class="py-2.5 pr-3 text-right" onclick="event.stopPropagation()">
                     <div class="flex items-center justify-end space-x-1.5">
-                        <button onclick="viewTransferDetail('${tf.id}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition" title="Xem chi tiết">
+                        <button onclick="toggleTransferRowDetail('${tf.id}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition" title="Xem chi tiết">
                             Chi tiết
                         </button>
                         ${trustedHTML(
@@ -6541,9 +7177,20 @@ function renderTransfers() {
                     </div>
                 </td>
             </tr>
+            ${trustedHTML(expandRowHtml)}
         `;
         })
         .join('');
+
+    tbody.querySelectorAll('tr[data-export-key]').forEach((tr) => {
+        const code = tr.getAttribute('data-export-key');
+        const tf = list.find((item) => item.code === code);
+        if (!tf) return;
+        tr.onclick = (e) => {
+            if (e.target.closest('input') || e.target.closest('button')) return;
+            toggleTransferRowDetail(tf.id);
+        };
+    });
 
     updateTableBulkSelectionUI(tbody.closest('table'));
 }
@@ -6849,6 +7496,145 @@ function viewTransferDetail(id) {
 
 function printTransferDetail() {
     printRegion('transfer-detail-modal', false);
+}
+
+function toggleTransferRowDetail(id) {
+    if (expandedTransferId === id) {
+        expandedTransferId = null;
+    } else {
+        expandedTransferId = id;
+    }
+    renderTransfers();
+}
+
+function printTransferReceipt(id) {
+    viewTransferDetail(id);
+    document.getElementById('transfer-detail-modal')?.classList.add('hidden');
+    printTransferDetail();
+}
+
+function renderTransferDetailHtml(tf) {
+    const currentBranch = getCurrentBranch();
+    const isCompleted = tf.status === 'completed';
+    const isShipping = tf.status === 'shipping';
+    const statusBadge = isCompleted
+        ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Đã nhận hàng</span>'
+        : isShipping
+          ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-[#0066cc] border border-blue-200">Đang chuyển</span>'
+          : '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-700">Đã hủy</span>';
+
+    const items = tf.items || [];
+    const itemsHtml = items
+        .map(
+            (item) => `
+        <tr class="border-b border-gray-100 hover:bg-gray-50/60 text-[12.5px]">
+            <td class="py-2 px-3 font-mono font-semibold text-slate-700">${escapeHTML(item.code)}</td>
+            <td class="py-2 px-3 font-medium text-gray-800">${escapeHTML(item.name)}</td>
+            <td class="py-2 px-3 text-center text-gray-600">${escapeHTML(item.unit || 'Chiếc')}</td>
+            <td class="py-2 px-3 text-right font-bold text-slate-700">${item.qty}</td>
+            <td class="py-2 px-3 text-right text-gray-700 tabular-nums">${formatVND(item.price || 0)} đ</td>
+            <td class="py-2 px-3 text-right font-bold text-gray-900 tabular-nums">${formatVND(item.total || 0)} đ</td>
+        </tr>
+    `
+        )
+        .join('');
+
+    let receiveAction = '';
+    if (isShipping) {
+        if (currentBranch === tf.toBranch) {
+            receiveAction = `
+                <button type="button" onclick="confirmReceiveTransfer('${escapeHTML(tf.id)}')" class="glass-btn-primary px-3.5 py-1.5 text-white rounded-lg font-bold text-xs flex items-center space-x-1.5 shadow-xs">
+                    <span>📥 Xác nhận đã nhận đủ hàng</span>
+                </button>
+            `;
+        } else {
+            receiveAction = `
+                <div class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-blue-50 text-[#0066cc] border border-blue-200 text-xs font-medium">
+                    <span class="w-2 h-2 rounded-full bg-[#0066cc]"></span>
+                    <span>Đang vận chuyển sang <b>${escapeHTML(tf.toBranch)}</b></span>
+                </div>
+            `;
+        }
+    } else if (isCompleted) {
+        receiveAction = `
+            <div class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                <span>✓ Đã nhận đủ hàng tại <b>${escapeHTML(tf.toBranch)}</b></span>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="bg-white rounded-xl border border-blue-200 shadow-sm p-3.5 sm:p-4 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-gray-100">
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <span class="text-sm sm:text-base font-bold font-mono text-[#0066cc]">Phiếu chuyển: ${escapeHTML(tf.code)}</span>
+                    <span class="text-xs text-gray-500 font-mono">🕒 ${escapeHTML(tf.time || '')}</span>
+                    ${statusBadge}
+                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-blue-50 text-[#0066cc] font-medium border border-blue-200">
+                        Từ <b>${escapeHTML(tf.fromBranch || '')}</b> ➔ Đến <b>${escapeHTML(tf.toBranch || '')}</b>
+                    </span>
+                </div>
+                <button type="button" onclick="collapseExpandedRow(this)" class="self-end sm:self-auto text-xs text-gray-500 hover:text-gray-800 font-medium px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 flex items-center gap-1 transition">
+                    ✕ Thu gọn
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div>Người chuyển: <span class="font-bold text-gray-900">${escapeHTML(tf.cashier || 'Admin')}</span></div>
+                    <div>Ghi chú: <span class="text-gray-700 italic">${escapeHTML(tf.note || '(Không có)')}</span></div>
+                </div>
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div>Tổng SL chuyển: <span class="font-bold font-mono text-gray-900">${tf.totalQty || 0}</span></div>
+                    <div>Tổng giá trị: <span class="font-bold font-mono text-gray-900">${formatVND(tf.totalValue || 0)} đ</span></div>
+                </div>
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    ${
+                        isCompleted
+                            ? `
+                        <div class="text-emerald-700 font-semibold">Đã nhận hàng</div>
+                        <div class="text-gray-600">Thời gian: <span class="font-mono text-gray-800">${escapeHTML(tf.receivedTime || 'Đã xác nhận')}</span></div>
+                        <div class="text-gray-600">Người nhận: <span class="font-medium text-gray-800">${escapeHTML(tf.receiver || tf.toBranch)}</span></div>
+                    `
+                            : `
+                        <div class="text-blue-700 font-semibold">Đang vận chuyển</div>
+                        <div class="text-gray-500 text-[11.5px]">Chờ chi nhánh nhận xác nhận</div>
+                    `
+                    }
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                        <tr>
+                            <th class="py-2 px-3">Mã hàng</th>
+                            <th class="py-2 px-3">Tên hàng</th>
+                            <th class="py-2 px-3 text-center">ĐVT</th>
+                            <th class="py-2 px-3 text-right">SL chuyển</th>
+                            <th class="py-2 px-3 text-right">Đơn giá</th>
+                            <th class="py-2 px-3 text-right">Thành tiền</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml || '<tr><td colspan="6" class="py-3 text-center text-gray-400 italic">Không có mặt hàng nào</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                <div>${receiveAction}</div>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="printTransferReceipt('${escapeHTML(tf.id)}')" class="px-3 py-1.5 bg-[#0066cc] hover:bg-blue-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                        <span>🖨️ In phiếu chuyển</span>
+                    </button>
+                    <button type="button" onclick="collapseExpandedRow(this)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold text-xs transition">
+                        Thu gọn
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 // ============================================================
@@ -7335,7 +8121,8 @@ async function handleShareProductSubmit(e) {
     }
 }
 
-function openShareFromProductDetail() {
+function openShareFromProductDetail(code) {
+    if (code) currentDetailProductCode = code;
     if (!currentDetailProductCode) return;
     const currentBranch = getCurrentBranch();
     const p =
@@ -8031,7 +8818,14 @@ async function renderInvoices(page = 1) {
     const [branch, status, q, date] = JSON.parse(key);
     if (status === 'starred') {
         const isAll = branch === ALL_BRANCHES;
-        const returnsSet = new Set((KVStore.data.returns || []).map((r) => r.invoiceCode));
+        const returnsMap = new Map(
+            (KVStore.data.returns || []).map((r) => [r.invoiceCode, r.code])
+        );
+        const customersMap = new Map();
+        (KVStore.data.customers || []).forEach((c) => {
+            if (c.phone) customersMap.set(c.phone, c.code);
+            if (c.name) customersMap.set(c.name, c.code);
+        });
         let starredList = (KVStore.data.invoices || [])
             .filter(
                 (inv) =>
@@ -8040,7 +8834,10 @@ async function renderInvoices(page = 1) {
             )
             .map((inv) => ({
                 ...inv,
-                hasReturned: returnsSet.has(inv.code),
+                hasReturned: returnsMap.has(inv.code),
+                returnCode: returnsMap.get(inv.code) || '',
+                customerCode: customersMap.get(inv.phone) || customersMap.get(inv.customer) || '',
+                discount: Number(inv.discount) || 0,
                 redPaid:
                     inv.status !== 'cancelled' && (Number(inv.paid) || 0) < (Number(inv.total) || 0)
             }));
@@ -8104,9 +8901,27 @@ function renderInvoiceRows(list, currentBranch) {
     if (!tbody) return;
     tbody.replaceChildren();
     const isAll = currentBranch === ALL_BRANCHES;
+
+    let sumTotal = 0;
+    let sumDiscount = 0;
+    let sumPaid = 0;
+    list.forEach((r) => {
+        if (r.status !== 'cancelled') {
+            sumTotal += Number(r.total) || 0;
+            sumDiscount += Number(r.discount) || 0;
+            sumPaid += Number(r.paid) || 0;
+        }
+    });
+    const sumTotalEl = document.getElementById('invoice-sum-total');
+    if (sumTotalEl) sumTotalEl.textContent = formatVND(sumTotal);
+    const sumDiscEl = document.getElementById('invoice-sum-discount');
+    if (sumDiscEl) sumDiscEl.textContent = formatVND(sumDiscount);
+    const sumPaidEl = document.getElementById('invoice-sum-paid');
+    if (sumPaidEl) sumPaidEl.textContent = formatVND(sumPaid);
+
     if (list.length === 0) {
         tbody.innerHTML = getEmptyStateRow(
-            9,
+            10,
             `Không tìm thấy hóa đơn phù hợp ${isAll ? 'toàn hệ thống' : 'tại ' + currentBranch}`
         );
         const countEl = document.getElementById('invoices-total-count');
@@ -8115,9 +8930,20 @@ function renderInvoiceRows(list, currentBranch) {
     }
 
     list.forEach((row) => {
+        const isExpanded = expandedInvoiceCode === row.code;
         const tr = document.createElement('tr');
         tr.dataset.exportKey = String(row.code);
-        tr.className = `table-row-hover transition cursor-pointer text-[13px] border-b border-gray-100/70 ${row.status === 'cancelled' ? 'bg-red-50/40 opacity-75' : ''}`;
+        tr.className = `table-row-hover transition cursor-pointer text-[13px] border-b border-gray-100/70 ${row.status === 'cancelled' ? 'bg-red-50/40 opacity-75' : ''} ${isExpanded ? 'bg-blue-50/70 font-medium border-l-4 border-l-[#0066cc]' : ''}`;
+        tr.setAttribute('tabindex', '0');
+        tr.setAttribute('role', 'row');
+        tr.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        tr.onkeydown = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                if (e.target.closest('input') || e.target.closest('button')) return;
+                e.preventDefault();
+                toggleInvoiceRowDetail(row.code);
+            }
+        };
 
         let statusBadge = '';
         if (row.status === 'cancelled') {
@@ -8131,33 +8957,277 @@ function renderInvoiceRows(list, currentBranch) {
         }
 
         const isStarred = isRecordStarred(`inv:${row.code}`);
+        const customerDisplay = row.customer || '-';
+        const phoneSuffix = row.phone ? ` ${row.phone}` : '';
+        const returnText = row.returnCode || (row.hasReturned ? 'Đã trả' : '');
+
         tr.innerHTML = renderHTML`
-            <td class="py-2.5 pl-3 pr-2 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="kv-checkbox"></td>
-            <td data-star-key="inv:${row.code}" class="py-2.5 px-2 text-center ${isStarred ? 'text-yellow-400' : 'text-gray-400'} hover:text-yellow-500" onclick="event.stopPropagation(); toggleStar(this, 'inv:${row.code}')">
-                <svg class="w-4 h-4 mx-auto" fill="${isStarred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+            <td class="py-2.5 pl-3 pr-2 text-center" onclick="event.stopPropagation()">
+                <input type="checkbox" class="kv-checkbox" aria-label="Chọn hóa đơn ${row.code}">
+            </td>
+            <td data-star-key="inv:${row.code}" class="py-2.5 px-2 text-center" onclick="event.stopPropagation()">
+                <button type="button" class="${isStarred ? 'text-yellow-400' : 'text-gray-300 hover:text-yellow-500'} transition cursor-pointer p-1"
+                    aria-label="${isStarred ? 'Bỏ đánh dấu sao hóa đơn ' + row.code : 'Đánh dấu sao hóa đơn ' + row.code}"
+                    aria-pressed="${isStarred}"
+                    onclick="toggleStar(this.closest('td'), 'inv:${row.code}')">
+                    <svg class="w-4 h-4 mx-auto" fill="${isStarred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+                </button>
             </td>
             <td class="py-2.5 px-3 font-semibold text-[#0066cc] font-mono">
                 <div class="flex items-center space-x-1.5">
+                    <button type="button"
+                        id="inv-trigger-${row.code}"
+                        aria-expanded="${isExpanded}"
+                        aria-controls="inv-detail-${row.code}"
+                        class="row-expand-chevron text-[10px] text-gray-400 hover:text-[#0066cc] font-normal select-none cursor-pointer p-0.5"
+                        aria-label="${isExpanded ? 'Thu gọn chi tiết ' + row.code : 'Mở rộng chi tiết ' + row.code}"
+                        onclick="event.stopPropagation(); toggleInvoiceRowDetail('${row.code}')">
+                        ${isExpanded ? '▼' : '▶'}
+                    </button>
                     <span class="${row.status === 'cancelled' ? 'line-through text-gray-500' : ''}">${row.code}</span>
                     ${statusBadge}
                     ${trustedHTML(isAll && row.branch ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-gray-100 text-gray-700">${row.branch}</span>` : '')}
                 </div>
             </td>
             <td class="py-2.5 px-3 text-gray-600 font-mono text-[12px]">${row.time}</td>
-            <td class="py-2.5 px-3 text-gray-800 font-medium">${row.customer}</td>
-            <td class="py-2.5 px-3 text-gray-600 font-mono">${row.phone}</td>
+            <td class="py-2.5 px-3 text-gray-600 font-mono text-[12px]">${returnText}</td>
+            <td class="py-2.5 px-3 text-gray-600 font-mono text-[12px]">${row.customerCode || row.customerId || '-'}</td>
+            <td class="py-2.5 px-3 text-gray-800 font-medium">${customerDisplay}${phoneSuffix}</td>
             <td class="py-2.5 px-3 text-right font-medium text-gray-800 tabular-nums ${row.status === 'cancelled' ? 'line-through text-gray-400' : ''}">${formatVND(row.total)}</td>
-            <td class="py-2.5 px-3 text-right font-bold tabular-nums ${row.status === 'cancelled' ? 'text-gray-400' : row.redPaid ? 'text-red-500' : 'text-gray-900'}">${formatVND(row.paid)}</td>
-            <td class="py-2.5 px-3 text-center" onclick="event.stopPropagation()">
-                <button onclick="openInvoiceDetailByCode('${row.code}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs">Chi tiết</button>
-            </td>
+            <td class="py-2.5 px-3 text-right font-medium text-gray-600 tabular-nums">${formatVND(row.discount || 0)}</td>
+            <td class="py-2.5 pr-4 text-right font-bold tabular-nums ${row.status === 'cancelled' ? 'text-gray-400' : row.redPaid ? 'text-red-500' : 'text-gray-900'}">${formatVND(row.paid)}</td>
         `;
-        tr.onclick = () => openInvoiceDetailByCode(row.code);
+        tr.onclick = (e) => {
+            if (e.target.closest('input') || e.target.closest('button')) return;
+            toggleInvoiceRowDetail(row.code);
+        };
         tbody.appendChild(tr);
+
+        if (isExpanded) {
+            const inv = (KVStore.data.invoices || []).find((i) => i.code === row.code);
+            if (inv) {
+                const expandTr = document.createElement('tr');
+                expandTr.id = `inv-detail-${inv.code}`;
+                expandTr.setAttribute('role', 'region');
+                expandTr.setAttribute('aria-labelledby', `inv-trigger-${inv.code}`);
+                expandTr.className = 'expand-detail-row bg-slate-50/70 border-b border-blue-200';
+                expandTr.dataset.detailKey = String(inv.code);
+                const td = document.createElement('td');
+                td.colSpan = 10;
+                td.className = 'p-3 sm:p-4 text-left';
+                td.innerHTML = renderInvoiceDetailHtml(inv);
+                expandTr.appendChild(td);
+                tbody.appendChild(expandTr);
+            }
+        }
     });
 
     const countEl = document.getElementById('invoices-total-count');
     if (countEl) countEl.textContent = `Hiển thị ${list.length} hóa đơn`;
+}
+
+function toggleInvoiceRowDetail(code) {
+    const tbody = document.getElementById('invoice-tbody');
+    if (!tbody) return;
+    const existing = tbody.querySelector(`tr.expand-detail-row[data-detail-key="${code}"]`);
+    if (existing) {
+        collapseExpandedRow(existing);
+        expandedInvoiceCode = null;
+        return;
+    }
+    tbody.querySelectorAll('tr.expand-detail-row').forEach(collapseExpandedRow);
+    expandedInvoiceCode = null;
+
+    const parentTr = tbody.querySelector(`tr[data-export-key="${code}"]`);
+    if (!parentTr) return;
+
+    const inv = (KVStore.data.invoices || []).find((i) => i.code === code);
+    if (!inv) {
+        showToast('Hóa đơn không còn trong phạm vi dữ liệu hiện tại.', 'warning');
+        return;
+    }
+
+    state.selectedInvoice = inv;
+    expandedInvoiceCode = code;
+    parentTr.classList.add('bg-blue-50/70', 'font-medium', 'border-l-4', 'border-l-[#0066cc]');
+    parentTr.setAttribute('aria-expanded', 'true');
+    const chevron = parentTr.querySelector('.row-expand-chevron');
+    if (chevron) {
+        chevron.textContent = '▼';
+        chevron.setAttribute('aria-expanded', 'true');
+        chevron.setAttribute('aria-label', `Thu gọn chi tiết ${code}`);
+    }
+
+    const expandTr = document.createElement('tr');
+    expandTr.id = `inv-detail-${code}`;
+    expandTr.setAttribute('role', 'region');
+    expandTr.setAttribute('aria-labelledby', `inv-trigger-${code}`);
+    expandTr.className = 'expand-detail-row bg-slate-50/70 border-b border-blue-200';
+    expandTr.dataset.detailKey = String(code);
+    const td = document.createElement('td');
+    td.colSpan = 10;
+    td.className = 'p-3 sm:p-4 text-left';
+    td.innerHTML = renderInvoiceDetailHtml(inv);
+    expandTr.appendChild(td);
+    parentTr.after(expandTr);
+}
+
+function renderInvoiceDetailHtml(inv) {
+    const isCancelled = inv.status === 'cancelled';
+    const isReturned = Boolean(inv.hasReturned);
+    const statusBadge = isCancelled
+        ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200">Đã hủy</span>'
+        : isReturned
+          ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">Có trả hàng</span>'
+          : '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Hoàn thành</span>';
+
+    const payments = Array.isArray(inv.payments) ? inv.payments.filter((p) => p.amount > 0) : [];
+    const methodNames = {
+        transfer: 'Chuyển khoản (VietQR)',
+        cash: 'Tiền mặt',
+        card: 'Quẹt thẻ',
+        debt: 'Ghi nợ'
+    };
+    let paymentMethodLabel = methodNames[inv.paymentMethod] || inv.paymentMethod || 'Tiền mặt';
+    if (payments.length > 1 || inv.paymentMethod === 'multi') {
+        paymentMethodLabel = `Kết hợp (${payments.length} hình thức)`;
+    }
+
+    const remainingDebt = Math.max(
+        0,
+        (inv.total || 0) - (inv.returnedTotal || 0) - (inv.paid || 0)
+    );
+
+    const itemsHtml = (inv.items || [])
+        .map((item, idx) => {
+            const imeisHtml =
+                Array.isArray(item.imeis) && item.imeis.length
+                    ? `<div class="text-[11px] text-gray-500 font-mono mt-0.5 leading-tight">IMEI: ${escapeHTML(item.imeis.join(', '))}</div>`
+                    : '';
+            const noteHtml =
+                item.note && typeof item.note === 'string'
+                    ? `<div class="text-[11px] text-gray-500 italic mt-0.5 leading-tight">Ghi chú: ${escapeHTML(item.note)}</div>`
+                    : '';
+            return `
+                <tr class="border-b border-gray-100 hover:bg-gray-50/60 text-[12.5px]">
+                    <td class="py-2 px-2.5 text-center text-gray-400">${idx + 1}</td>
+                    <td class="py-2 px-2.5 font-mono font-semibold text-[#0066cc]">${escapeHTML(item.code)}</td>
+                    <td class="py-2 px-2.5">
+                        <div class="font-medium text-gray-900">${escapeHTML(item.name)}</div>
+                        ${imeisHtml}
+                        ${noteHtml}
+                    </td>
+                    <td class="py-2 px-2.5 text-center font-bold text-gray-900">${item.qty}</td>
+                    <td class="py-2 px-2.5 text-right tabular-nums text-gray-700">${formatVND(item.price)} đ</td>
+                    <td class="py-2 px-2.5 text-right tabular-nums font-bold text-gray-900">${formatVND(item.qty * item.price)} đ</td>
+                </tr>
+            `;
+        })
+        .join('');
+
+    const paymentsBreakdownHtml =
+        payments.length > 1 || inv.paymentMethod === 'multi'
+            ? `
+            <div class="mt-1 pt-1 border-t border-gray-200/60 space-y-0.5">
+                ${payments
+                    .map((p) => {
+                        const lbl = methodNames[p.method] || p.method;
+                        return `<div class="flex justify-between text-[11.5px]"><span class="text-gray-500">• ${escapeHTML(lbl)}:</span><span class="font-mono font-medium text-gray-800">${formatVND(p.amount)} đ</span></div>`;
+                    })
+                    .join('')}
+            </div>`
+            : '';
+
+    const warningBanner = isCancelled
+        ? '<div class="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-lg text-center">HÓA ĐƠN NÀY ĐÃ BỊ HỦY — TỒN KHO & TIỀN ĐÃ HOÀN TRẢ</div>'
+        : isReturned
+          ? `<div class="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold rounded-lg text-center">HÓA ĐƠN NÀY ĐÃ CÓ PHIẾU ĐỔI TRẢ HÀNG (${formatVND(inv.returnedTotal || 0)} đ)</div>`
+          : '';
+
+    return `
+        <div class="bg-white rounded-xl border border-blue-200 shadow-sm p-3.5 sm:p-4 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-gray-100">
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <span class="text-sm sm:text-base font-bold font-mono text-[#0066cc]">Hóa đơn: ${escapeHTML(inv.code)}</span>
+                    <span class="text-xs text-gray-500 font-mono">🕒 ${escapeHTML(inv.time)}</span>
+                    ${statusBadge}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">Chi nhánh: ${escapeHTML(inv.branch || FALLBACK_BRANCH)}</span>
+                </div>
+                <button type="button" onclick="collapseExpandedRow(this)" class="self-end sm:self-auto text-xs text-gray-500 hover:text-gray-800 font-medium px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 flex items-center gap-1 transition">
+                    ✕ Thu gọn
+                </button>
+            </div>
+
+            ${warningBanner}
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Khách hàng & Thu ngân</div>
+                    <div class="font-bold text-gray-900">${escapeHTML(inv.customer || 'Khách lẻ')}</div>
+                    <div class="text-gray-600 font-mono">Điện thoại: ${escapeHTML(inv.phone || 'Chưa có')}</div>
+                    <div class="text-gray-600">Thu ngân: <span class="font-medium text-gray-800">${escapeHTML(inv.cashier || 'Admin')}</span></div>
+                </div>
+
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Thanh toán & Ghi chú</div>
+                    <div class="flex justify-between"><span class="text-gray-600">Hình thức:</span><span class="font-semibold text-gray-800">${escapeHTML(paymentMethodLabel)}</span></div>
+                    ${paymentsBreakdownHtml}
+                    <div class="text-gray-600 pt-0.5 truncate" title="${escapeHTML(inv.note || '')}">Ghi chú: <span class="text-gray-800 italic">${escapeHTML(inv.note || '(Không có)')}</span></div>
+                </div>
+
+                <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100 space-y-1">
+                    <div class="text-[10.5px] font-bold text-blue-800 uppercase tracking-wider mb-1">Tổng quan tiền hàng</div>
+                    <div class="flex justify-between"><span class="text-gray-600">Tổng tiền hàng:</span><span class="font-bold font-mono text-gray-900">${formatVND(inv.total)} đ</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Khách đã trả:</span><span class="font-bold font-mono text-emerald-600">${formatVND(inv.paid)} đ</span></div>
+                    ${remainingDebt > 0 ? `<div class="flex justify-between text-rose-600 font-bold"><span class="text-rose-600 font-normal">Còn nợ:</span><span class="font-mono">${formatVND(remainingDebt)} đ</span></div>` : ''}
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                        <tr>
+                            <th class="py-2 px-2.5 w-10 text-center">STT</th>
+                            <th class="py-2 px-2.5">Mã hàng</th>
+                            <th class="py-2 px-2.5">Tên hàng hóa</th>
+                            <th class="py-2 px-2.5 text-center w-16">SL</th>
+                            <th class="py-2 px-2.5 text-right">Đơn giá</th>
+                            <th class="py-2 px-2.5 text-right">Thành tiền</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml || '<tr><td colspan="6" class="py-3 text-center text-gray-400 italic">Không có mặt hàng nào</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                <div class="text-[11.5px] text-gray-400">
+                    Mã tra cứu: <span class="font-mono font-semibold text-gray-600">${escapeHTML(inv.code)}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    ${
+                        !isCancelled
+                            ? `
+                        <button type="button" onclick="openReturnModal('${escapeHTML(inv.code)}')" class="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>↩️ Đổi trả hàng</span>
+                        </button>
+                        <button type="button" onclick="cancelInvoice('${escapeHTML(inv.code)}')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>🚫 Hủy hóa đơn</span>
+                        </button>
+                        <button type="button" onclick="openReceiptModal((KVStore.data.invoices || []).find(i => i.code === '${escapeHTML(inv.code)}'))" class="px-3 py-1.5 bg-[#0066cc] hover:bg-blue-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>🖨️ In hóa đơn</span>
+                        </button>
+                    `
+                            : `<span class="text-rose-600 font-bold text-xs italic">Hóa đơn đã bị hủy</span>`
+                    }
+                    <button type="button" onclick="collapseExpandedRow(this)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold text-xs transition">
+                        Thu gọn
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 async function openInvoiceDetailByCode(code) {
@@ -8166,8 +9236,12 @@ async function openInvoiceDetailByCode(code) {
         if (invoicePage.revision !== null && invoicePage.revision !== KVStore.revision)
             await KVStore.fetchFromDatabase();
         const inv = (KVStore.data.invoices || []).find((i) => i.code === code);
-        if (inv) openInvoiceDetailModal(inv);
-        else showToast('Hóa đơn không còn trong phạm vi dữ liệu hiện tại.', 'warning');
+        if (inv) {
+            state.selectedInvoice = inv;
+            toggleInvoiceRowDetail(code);
+        } else {
+            showToast('Hóa đơn không còn trong phạm vi dữ liệu hiện tại.', 'warning');
+        }
     } catch (error) {
         showToast(error.message, 'error');
     }
@@ -8576,6 +9650,7 @@ function loadMoreImports() {
 }
 
 function sortImportsBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (importSortField === field) {
         importSortAsc = !importSortAsc;
     } else {
@@ -8583,6 +9658,9 @@ function sortImportsBy(field) {
         importSortAsc = true;
     }
     renderImports();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function renderImports() {
@@ -8645,12 +9723,19 @@ function renderImports() {
 
     ['code', 'nccName', 'needPay', 'paid'].forEach((f) => {
         const ind = document.getElementById(`sort-imp-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = importSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (importSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = importSortField === f ? (importSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                importSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (importSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
@@ -8684,16 +9769,41 @@ function renderImports() {
                     (i.imeiDetails &&
                         Object.values(i.imeiDetails).some((d) => d?.images?.length > 0))
             );
+        const isExpanded = expandedImportCode === row.code;
         const tr = document.createElement('tr');
         tr.dataset.exportKey = String(row.code);
-        tr.className = `table-row-hover transition cursor-pointer text-[13px] border-b border-gray-100/70 ${isCancelled ? 'bg-red-50/40 opacity-75' : ''}`;
+        tr.className = `table-row-hover transition cursor-pointer text-[13px] border-b border-gray-100/70 ${isCancelled ? 'bg-red-50/40 opacity-75' : ''} ${isExpanded ? 'bg-blue-50/70 font-medium border-l-4 border-l-[#0066cc]' : ''}`;
+        tr.setAttribute('tabindex', '0');
+        tr.setAttribute('role', 'row');
+        tr.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        tr.onkeydown = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                if (e.target.closest('input') || e.target.closest('button')) return;
+                e.preventDefault();
+                toggleImportRowDetail(row.code);
+            }
+        };
         tr.innerHTML = renderHTML`
-            <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox"></td>
-            <td data-star-key="imp:${row.code}" class="py-3 px-2 text-center ${isStarred ? 'text-yellow-400' : 'text-gray-400'} hover:text-yellow-500" onclick="event.stopPropagation(); toggleStar(this, 'imp:${row.code}')">
-                <svg class="w-4 h-4 mx-auto" fill="${isStarred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+            <td class="py-3 pl-3 pr-2 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="kv-checkbox" aria-label="Chọn phiếu nhập ${row.code}"></td>
+            <td data-star-key="imp:${row.code}" class="py-3 px-2 text-center ${isStarred ? 'text-yellow-400' : 'text-gray-400'} hover:text-yellow-500" onclick="event.stopPropagation()">
+                <button type="button" class="${isStarred ? 'text-yellow-400' : 'text-gray-300 hover:text-yellow-500'} transition cursor-pointer p-1"
+                    aria-label="${isStarred ? 'Bỏ đánh dấu sao phiếu nhập ' + row.code : 'Đánh dấu sao phiếu nhập ' + row.code}"
+                    aria-pressed="${isStarred}"
+                    onclick="toggleStar(this.closest('td'), 'imp:${row.code}')">
+                    <svg class="w-4 h-4 mx-auto" fill="${isStarred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+                </button>
             </td>
             <td class="py-3 px-3 font-semibold text-[#0066cc] font-mono">
                 <div class="flex items-center space-x-1">
+                    <button type="button"
+                        id="imp-trigger-${row.code}"
+                        aria-expanded="${isExpanded}"
+                        aria-controls="imp-detail-${row.code}"
+                        class="row-expand-chevron text-[10px] text-gray-400 hover:text-[#0066cc] font-normal select-none cursor-pointer p-0.5"
+                        aria-label="${isExpanded ? 'Thu gọn chi tiết ' + row.code : 'Mở rộng chi tiết ' + row.code}"
+                        onclick="event.stopPropagation(); toggleImportRowDetail('${row.code}')">
+                        ${isExpanded ? '▼' : '▶'}
+                    </button>
                     <span class="${isCancelled ? 'line-through text-gray-500' : ''}">${row.code}</span>
                     ${trustedHTML(hasPhotos ? renderHTML`<span class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-blue-50 text-[#0066cc] border border-blue-200/80 inline-flex items-center space-x-0.5" title="Phiếu nhập có ảnh sản phẩm"><svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Ảnh</span></span>` : '')}
                     ${trustedHTML(isCancelled ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-red-100 text-red-700">Đã hủy</span>` : '')}
@@ -8708,11 +9818,31 @@ function renderImports() {
             <td class="py-3 px-3 text-center">${methodBadge}</td>
             <td class="py-3 px-3 text-gray-600 truncate max-w-[200px]">${row.cancelReason ? `[Đã hủy: ${row.cancelReason}] ` : ''}${row.note || ''}</td>
             <td class="py-3 px-3 text-center" onclick="event.stopPropagation()">
-                <button onclick="viewImportDetail('${row.code}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs">Chi tiết</button>
+                <button onclick="toggleImportRowDetail('${row.code}')" class="px-2.5 py-1 bg-gray-100 hover:bg-[#0066cc] hover:text-white text-gray-700 rounded-lg text-[12px] font-medium transition shadow-2xs">Chi tiết</button>
             </td>
         `;
-        tr.onclick = () => viewImportDetail(row.code);
+        tr.onclick = (e) => {
+            if (e.target.closest('input') || e.target.closest('button')) return;
+            toggleImportRowDetail(row.code);
+        };
         tbody.appendChild(tr);
+
+        if (isExpanded) {
+            const imp = (KVStore.data.imports || []).find((i) => i.code === row.code);
+            if (imp) {
+                const expandTr = document.createElement('tr');
+                expandTr.id = `imp-detail-${imp.code}`;
+                expandTr.setAttribute('aria-labelledby', `imp-trigger-${imp.code}`);
+                expandTr.className = 'expand-detail-row bg-slate-50/70 border-b border-blue-200';
+                expandTr.dataset.detailKey = String(imp.code);
+                const td = document.createElement('td');
+                td.colSpan = 11;
+                td.className = 'p-3 sm:p-4 text-left';
+                td.innerHTML = renderImportDetailHtml(imp);
+                expandTr.appendChild(td);
+                tbody.appendChild(expandTr);
+            }
+        }
     });
 
     const countEl = document.getElementById('imports-total-count');
@@ -8732,6 +9862,210 @@ function renderImports() {
 }
 
 let selectedImportDetail = null;
+
+function toggleImportRowDetail(code) {
+    const tbody = document.getElementById('import-tbody');
+    if (!tbody) return;
+    const existing = tbody.querySelector(`tr.expand-detail-row[data-detail-key="${code}"]`);
+    if (existing) {
+        collapseExpandedRow(existing);
+        expandedImportCode = null;
+        return;
+    }
+    tbody.querySelectorAll('tr.expand-detail-row').forEach(collapseExpandedRow);
+    expandedImportCode = null;
+
+    const parentTr = tbody.querySelector(`tr[data-export-key="${code}"]`);
+    if (!parentTr) return;
+
+    const imp = (KVStore.data.imports || []).find((i) => i.code === code);
+    if (!imp) return;
+
+    selectedImportDetail = imp;
+    expandedImportCode = code;
+    parentTr.classList.add('bg-blue-50/70', 'font-medium', 'border-l-4', 'border-l-[#0066cc]');
+    const chevron = parentTr.querySelector('.row-expand-chevron');
+    if (chevron) chevron.textContent = '▼';
+
+    const expandTr = document.createElement('tr');
+    expandTr.className = 'expand-detail-row bg-slate-50/70 border-b border-blue-200';
+    expandTr.dataset.detailKey = String(code);
+    const td = document.createElement('td');
+    td.colSpan = 11;
+    td.className = 'p-3 sm:p-4 text-left';
+    td.innerHTML = renderImportDetailHtml(imp);
+    expandTr.appendChild(td);
+    parentTr.after(expandTr);
+}
+
+function printImportReceipt(code) {
+    viewImportDetail(code);
+    document.getElementById('import-detail-modal')?.classList.add('hidden');
+    printImportDetailReceipt();
+}
+
+function renderImportDetailHtml(imp) {
+    const isCancelled = imp.status === 'cancelled';
+    const statusBadge = isCancelled
+        ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200">Đã hủy</span>'
+        : '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Đã nhập hàng</span>';
+
+    const total = imp.needPay || 0;
+    const paid = imp.paid || 0;
+    const debt = Math.max(0, total - paid);
+
+    const items = imp.items || [];
+    const itemsHtml = items
+        .map((item, idx) => {
+            const hasImei = Boolean(item.hasImei || (item.imeis && item.imeis.length > 0));
+            const prod = (KVStore.data?.products || []).find((p) => p.code === item.code);
+            const rawImages =
+                Array.isArray(item.images) && item.images.length > 0
+                    ? item.images
+                    : prod && Array.isArray(prod.images) && prod.images.length > 0
+                      ? prod.images
+                      : (item.imeiDetails &&
+                            Object.values(item.imeiDetails).find((d) => d?.images?.length)
+                                ?.images) ||
+                        [];
+            const safeImages = rawImages.map(safeMediaUrl).filter(Boolean);
+            const mainThumb = safeImages[0] || '';
+            const thumbHtml = mainThumb
+                ? `
+                <div class="relative group w-10 h-10 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0 cursor-pointer shadow-2xs" onclick="event.stopPropagation(); openMediaPreview('${escapeHTML(mainThumb)}')" title="Bấm xem ảnh lớn">
+                    <img src="${escapeHTML(mainThumb)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" alt="${escapeHTML(item.name)}" />
+                    ${safeImages.length > 1 ? `<span class="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] font-bold px-1 rounded-tl">+${safeImages.length}</span>` : ''}
+                </div>`
+                : '';
+
+            const imeiPills =
+                hasImei && item.imeis && item.imeis.length > 0
+                    ? `
+                <div class="mt-1 bg-slate-100/70 p-1.5 rounded-lg border border-slate-200/60">
+                    <div class="text-[11px] font-bold text-slate-800 mb-0.5">Mã IMEI (${item.imeis.length}):</div>
+                    <div class="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                        ${item.imeis
+                            .map((m) => {
+                                const d = item.imeiDetails?.[m] || {};
+                                const count = (d.images || []).length;
+                                return `<span class="px-1.5 py-0.2 rounded bg-white text-slate-700 border border-slate-200 font-mono text-[10.5px] inline-flex items-center gap-1" title="${count ? `${count} ảnh riêng` : 'Chưa có ảnh'}">
+                                    ${escapeHTML(m)}
+                                    ${count ? `<span class="text-[9px] font-bold text-[#0066cc]">📷${count}</span>` : ''}
+                                </span>`;
+                            })
+                            .join('')}
+                    </div>
+                </div>`
+                    : '';
+
+            return `
+                <tr class="border-b border-gray-100 hover:bg-gray-50/60 text-[12.5px]">
+                    <td class="py-2.5 px-2.5 text-center text-gray-400">${idx + 1}</td>
+                    <td class="py-2.5 px-2.5">
+                        <div class="flex items-center space-x-2.5">
+                            ${thumbHtml}
+                            <div class="min-w-0 flex-1">
+                                <div class="font-semibold text-gray-900 leading-snug">${escapeHTML(item.name)}</div>
+                                <div class="text-gray-400 font-mono text-[11px]">${escapeHTML(item.code)}</div>
+                            </div>
+                        </div>
+                        ${imeiPills}
+                    </td>
+                    <td class="py-2.5 px-2.5 text-center font-bold text-gray-900">${item.qty}</td>
+                    <td class="py-2.5 px-2.5 text-right tabular-nums text-gray-700">${formatVND(item.price)} đ</td>
+                    <td class="py-2.5 px-2.5 text-right tabular-nums font-bold text-gray-900">${formatVND(item.total || item.qty * item.price)} đ</td>
+                </tr>
+            `;
+        })
+        .join('');
+
+    const cancelBanner = isCancelled
+        ? `
+        <div class="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-lg flex items-center justify-between">
+            <span>PHIẾU NHẬP NÀY ĐÃ BỊ HỦY ${imp.cancelReason ? `(Lý do: ${escapeHTML(imp.cancelReason)})` : ''}</span>
+            <span class="font-normal font-mono text-[11.5px]">${escapeHTML(imp.cancelTime || '')}</span>
+        </div>`
+        : '';
+
+    return `
+        <div class="bg-white rounded-xl border border-blue-200 shadow-sm p-3.5 sm:p-4 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-gray-100">
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <span class="text-sm sm:text-base font-bold font-mono text-[#0066cc]">Phiếu nhập: ${escapeHTML(imp.code)}</span>
+                    <span class="text-xs text-gray-500 font-mono">🕒 ${escapeHTML(imp.time)}</span>
+                    ${statusBadge}
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">Chi nhánh: ${escapeHTML(imp.branch || FALLBACK_BRANCH)}</span>
+                </div>
+                <button type="button" onclick="collapseExpandedRow(this)" class="self-end sm:self-auto text-xs text-gray-500 hover:text-gray-800 font-medium px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-100 flex items-center gap-1 transition">
+                    ✕ Thu gọn
+                </button>
+            </div>
+
+            ${cancelBanner}
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Nhà cung cấp</div>
+                    <div class="font-bold text-gray-900">${escapeHTML(imp.nccName || 'Nhà cung cấp')} (${escapeHTML(imp.nccCode || '')})</div>
+                    <div class="text-gray-600">Người nhập: <span class="font-medium text-gray-800">${escapeHTML(imp.creator || 'Quản lý kho')}</span></div>
+                </div>
+
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Thanh toán & Ghi chú</div>
+                    <div class="flex justify-between"><span class="text-gray-600">Hình thức:</span><span class="font-semibold text-gray-800">${escapeHTML(imp.method || 'Tiền mặt')}</span></div>
+                    <div class="text-gray-600 pt-0.5 truncate" title="${escapeHTML(imp.note || '')}">Ghi chú: <span class="text-gray-800 italic">${escapeHTML(imp.note || '(Không có)')}</span></div>
+                </div>
+
+                <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100 space-y-1">
+                    <div class="text-[10.5px] font-bold text-blue-800 uppercase tracking-wider mb-1">Chi phí nhập hàng</div>
+                    <div class="flex justify-between"><span class="text-gray-600">Cần trả NCC:</span><span class="font-bold font-mono text-gray-900">${formatVND(total)} đ</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Đã trả:</span><span class="font-bold font-mono text-emerald-600">${formatVND(paid)} đ</span></div>
+                    ${debt > 0 ? `<div class="flex justify-between text-rose-600 font-bold"><span class="text-rose-600 font-normal">Còn nợ NCC:</span><span class="font-mono">${formatVND(debt)} đ</span></div>` : ''}
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                        <tr>
+                            <th class="py-2 px-2.5 w-10 text-center">STT</th>
+                            <th class="py-2 px-2.5">Hàng hóa</th>
+                            <th class="py-2 px-2.5 text-center w-16">SL</th>
+                            <th class="py-2 px-2.5 text-right">Đơn giá nhập</th>
+                            <th class="py-2 px-2.5 text-right">Thành tiền</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml || '<tr><td colspan="5" class="py-3 text-center text-gray-400 italic">Không có chi tiết mặt hàng</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                <div class="text-[11.5px] text-gray-400">
+                    Mã phiếu: <span class="font-mono font-semibold text-gray-600">${escapeHTML(imp.code)}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    ${
+                        !isCancelled
+                            ? `
+                        <button type="button" onclick="cancelImport('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>🚫 Hủy phiếu nhập</span>
+                        </button>
+                    `
+                            : ''
+                    }
+                    <button type="button" onclick="printImportReceipt('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-[#0066cc] hover:bg-blue-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                        <span>🖨️ In phiếu nhập</span>
+                    </button>
+                    <button type="button" onclick="collapseExpandedRow(this)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold text-xs transition">
+                        Thu gọn
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
 
 function viewImportDetail(code) {
     const imp = (KVStore.data.imports || []).find((i) => i.code === code);
@@ -9947,7 +11281,7 @@ function finishImport(receipt) {
     document.getElementById('create-import-modal').classList.add('hidden');
     refreshCurrentView();
     showToast(`Đã lưu phiếu nhập ${receipt.code}.`, 'success');
-    viewImportDetail(receipt.code);
+    toggleImportRowDetail(receipt.code);
 }
 async function reconcileImport() {
     if (importSaving || !importRequestId) return;
@@ -10060,6 +11394,7 @@ function loadMoreCustomers() {
 }
 
 function sortCustomersBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (customerSortField === field) {
         customerSortAsc = !customerSortAsc;
     } else {
@@ -10067,6 +11402,9 @@ function sortCustomersBy(field) {
         customerSortAsc = true;
     }
     renderCustomers();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function renderCustomers() {
@@ -10115,12 +11453,19 @@ function renderCustomers() {
 
     ['code', 'name', 'totalSpent', 'debt'].forEach((f) => {
         const ind = document.getElementById(`sort-cust-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = customerSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (customerSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = customerSortField === f ? (customerSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                customerSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (customerSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
@@ -10130,7 +11475,7 @@ function renderCustomers() {
         tr.dataset.exportKey = String(c.code);
         tr.className = 'table-row-hover border-b border-gray-100/70 text-[13px] transition';
         tr.innerHTML = renderHTML`
-            <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox"></td>
+            <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox" aria-label="Chọn khách hàng ${c.name || c.code}"></td>
             <td class="py-3 px-3 font-semibold text-[#0066cc] font-mono">${c.code}</td>
             <td class="py-3 px-3 font-medium text-gray-900 leading-snug">${c.name}</td>
             <td class="py-3 px-3 text-gray-600 font-mono">${c.phone}</td>
@@ -10192,11 +11537,47 @@ function openAddCustomerModal(editCode = null, callback = null) {
         document.getElementById('cust-debt').value = '0';
         document.getElementById('cust-points').value = '0';
     }
+
+    const isAdmin = KVStore.user?.role === 'admin';
+    const debtInput = document.getElementById('cust-debt');
+    const pointsInput = document.getElementById('cust-points');
+    let debtNote = document.getElementById('cust-debt-note');
+    if (!isAdmin) {
+        if (debtInput) {
+            debtInput.readOnly = true;
+            debtInput.classList.add('bg-gray-100', 'cursor-not-allowed');
+            if (!debtNote) {
+                debtNote = document.createElement('div');
+                debtNote.id = 'cust-debt-note';
+                debtNote.className = 'text-[11px] text-gray-500 mt-1';
+                debtInput.parentNode.appendChild(debtNote);
+            }
+            debtNote.textContent =
+                'Chỉ Quản trị viên mới được điều chỉnh công nợ ban đầu. Thu nợ qua Sổ quỹ.';
+        }
+        if (pointsInput) {
+            pointsInput.readOnly = true;
+            pointsInput.classList.add('bg-gray-100', 'cursor-not-allowed');
+        }
+    } else {
+        if (debtInput) {
+            debtInput.readOnly = false;
+            debtInput.classList.remove('bg-gray-100', 'cursor-not-allowed');
+            if (debtNote) debtNote.remove();
+        }
+        if (pointsInput) {
+            pointsInput.readOnly = false;
+            pointsInput.classList.remove('bg-gray-100', 'cursor-not-allowed');
+        }
+    }
+
     modal.classList.remove('hidden');
+    captureModalSnapshot('customer-modal');
 }
 
 async function saveCustomerFromModal(e) {
     e.preventDefault();
+    clearFormValidationErrors(document.getElementById('customer-form'));
     const code = document.getElementById('cust-code').value.trim();
     const name = normalizeTitleCase(document.getElementById('cust-name').value);
     const phone = document.getElementById('cust-phone').value.trim();
@@ -10205,7 +11586,19 @@ async function saveCustomerFromModal(e) {
     const points = parseInt(document.getElementById('cust-points').value, 10) || 0;
     const note = document.getElementById('cust-note')?.value.trim() || '';
 
-    if (!code || !name) {
+    if (!code) {
+        setFieldValidationError(
+            document.getElementById('cust-code'),
+            'Vui lòng nhập mã khách hàng'
+        );
+        showToast('Vui lòng nhập mã và tên khách hàng!', 'error');
+        return;
+    }
+    if (!name) {
+        setFieldValidationError(
+            document.getElementById('cust-name'),
+            'Vui lòng nhập tên khách hàng'
+        );
         showToast('Vui lòng nhập mã và tên khách hàng!', 'error');
         return;
     }
@@ -10232,9 +11625,15 @@ async function saveCustomerFromModal(e) {
         showToast(`Đã thêm mới khách hàng ${name}!`, 'success');
     }
 
-    await KVStore.save();
-    renderCustomers();
-    document.getElementById('customer-modal').classList.add('hidden');
+    try {
+        setModalSubmitting('customer-modal', true);
+        await KVStore.save();
+        renderCustomers();
+        clearModalSnapshot('customer-modal');
+        document.getElementById('customer-modal').classList.add('hidden');
+    } finally {
+        setModalSubmitting('customer-modal', false);
+    }
 
     if (customerModalCallback) {
         customerModalCallback(savedCustomer);
@@ -10309,6 +11708,7 @@ let supplierSortField = null;
 let supplierSortAsc = true;
 
 function sortSuppliersBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (supplierSortField === field) {
         supplierSortAsc = !supplierSortAsc;
     } else {
@@ -10316,6 +11716,9 @@ function sortSuppliersBy(field) {
         supplierSortAsc = true;
     }
     renderSuppliers();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function renderSuppliers() {
@@ -10359,12 +11762,19 @@ function renderSuppliers() {
 
     ['code', 'name', 'totalBought', 'debt'].forEach((f) => {
         const ind = document.getElementById(`sort-sup-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = supplierSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (supplierSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = supplierSortField === f ? (supplierSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                supplierSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (supplierSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
@@ -10373,7 +11783,7 @@ function renderSuppliers() {
         tr.dataset.exportKey = String(s.code);
         tr.className = 'table-row-hover border-b border-gray-100/70 text-[13px] transition';
         tr.innerHTML = renderHTML`
-            <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox"></td>
+            <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox" aria-label="Chọn nhà cung cấp ${s.name || s.code}"></td>
             <td class="py-3 px-3 font-semibold text-[#0066cc] font-mono">${s.code}</td>
             <td class="py-3 px-3 font-medium text-gray-900 leading-snug">${s.name}</td>
             <td class="py-3 px-3 text-gray-600 font-mono">${s.phone}</td>
@@ -10419,11 +11829,38 @@ function openAddSupplierModal(editCode = null, callback = null) {
         document.getElementById('sup-code').value = makeCode('NCC');
         document.getElementById('sup-debt').value = '0';
     }
+
+    const isAdmin = KVStore.user?.role === 'admin';
+    const debtInput = document.getElementById('sup-debt');
+    let debtNote = document.getElementById('sup-debt-note');
+    if (!isAdmin) {
+        if (debtInput) {
+            debtInput.readOnly = true;
+            debtInput.classList.add('bg-gray-100', 'cursor-not-allowed');
+            if (!debtNote) {
+                debtNote = document.createElement('div');
+                debtNote.id = 'sup-debt-note';
+                debtNote.className = 'text-[11px] text-gray-500 mt-1';
+                debtInput.parentNode.appendChild(debtNote);
+            }
+            debtNote.textContent =
+                'Chỉ Quản trị viên mới được điều chỉnh công nợ ban đầu. Trả nợ qua Sổ quỹ.';
+        }
+    } else {
+        if (debtInput) {
+            debtInput.readOnly = false;
+            debtInput.classList.remove('bg-gray-100', 'cursor-not-allowed');
+            if (debtNote) debtNote.remove();
+        }
+    }
+
     modal.classList.remove('hidden');
+    captureModalSnapshot('supplier-modal');
 }
 
 async function saveSupplierFromModal(e) {
     e.preventDefault();
+    clearFormValidationErrors(document.getElementById('supplier-form'));
     const code = document.getElementById('sup-code').value.trim();
     const name = normalizeTitleCase(document.getElementById('sup-name').value);
     const phone = document.getElementById('sup-phone').value.trim();
@@ -10431,7 +11868,19 @@ async function saveSupplierFromModal(e) {
     const debt = parseVND(document.getElementById('sup-debt').value);
     const note = document.getElementById('sup-note')?.value.trim() || '';
 
-    if (!code || !name) {
+    if (!code) {
+        setFieldValidationError(
+            document.getElementById('sup-code'),
+            'Vui lòng nhập mã nhà cung cấp'
+        );
+        showToast('Vui lòng nhập mã và tên nhà cung cấp!', 'error');
+        return;
+    }
+    if (!name) {
+        setFieldValidationError(
+            document.getElementById('sup-name'),
+            'Vui lòng nhập tên nhà cung cấp'
+        );
         showToast('Vui lòng nhập mã và tên nhà cung cấp!', 'error');
         return;
     }
@@ -10457,9 +11906,15 @@ async function saveSupplierFromModal(e) {
         showToast(`Đã thêm mới nhà cung cấp ${name}!`, 'success');
     }
 
-    await KVStore.save();
-    renderSuppliers();
-    document.getElementById('supplier-modal').classList.add('hidden');
+    try {
+        setModalSubmitting('supplier-modal', true);
+        await KVStore.save();
+        renderSuppliers();
+        clearModalSnapshot('supplier-modal');
+        document.getElementById('supplier-modal').classList.add('hidden');
+    } finally {
+        setModalSubmitting('supplier-modal', false);
+    }
 
     if (supplierModalCallback) {
         supplierModalCallback(savedSupplier);
@@ -10493,6 +11948,7 @@ let cashbookSortField = null;
 let cashbookSortAsc = true;
 
 function sortCashbookBy(field) {
+    const activeBtnId = document.activeElement?.id;
     if (cashbookSortField === field) {
         cashbookSortAsc = !cashbookSortAsc;
     } else {
@@ -10500,6 +11956,9 @@ function sortCashbookBy(field) {
         cashbookSortAsc = true;
     }
     renderCashbook();
+    if (activeBtnId && document.getElementById(activeBtnId)) {
+        document.getElementById(activeBtnId).focus();
+    }
 }
 
 function loadMoreCashbook() {
@@ -10531,22 +11990,34 @@ function renderCashbook() {
         cashChi = 0;
     let bankThu = 0,
         bankChi = 0;
+    let cardThu = 0,
+        cardChi = 0;
+    let otherThu = 0,
+        otherChi = 0;
 
     branchCashbook.forEach((tx) => {
-        const isCash = (tx.method || '').toLowerCase().includes('tiền mặt');
-        if (isCash) {
-            if (tx.type === 'thu') cashThu += tx.amount;
-            else cashChi += tx.amount;
+        const norm = normalizePaymentMethod(tx.method);
+        const amt = Number(tx.amount) || 0;
+        if (norm === 'cash') {
+            if (tx.type === 'thu') cashThu += amt;
+            else cashChi += amt;
+        } else if (norm === 'transfer') {
+            if (tx.type === 'thu') bankThu += amt;
+            else bankChi += amt;
+        } else if (norm === 'card') {
+            if (tx.type === 'thu') cardThu += amt;
+            else cardChi += amt;
         } else {
-            // Chuyển khoản / Ngân hàng
-            if (tx.type === 'thu') bankThu += tx.amount;
-            else bankChi += tx.amount;
+            if (tx.type === 'thu') otherThu += amt;
+            else otherChi += amt;
         }
     });
 
     const cashFund = cashThu - cashChi;
     const bankFund = bankThu - bankChi;
-    const totalNetFund = cashFund + bankFund;
+    const cardFund = cardThu - cardChi;
+    const otherFund = otherThu - otherChi;
+    const totalNetFund = cashFund + bankFund + cardFund + otherFund;
 
     // Filter list
     let list = branchCashbook;
@@ -10554,9 +12025,11 @@ function renderCashbook() {
         list = list.filter((tx) => matchesDateFilter(tx.time, dateFilter));
     }
     if (fundFilter === 'cash') {
-        list = list.filter((tx) => (tx.method || '').toLowerCase().includes('tiền mặt'));
+        list = list.filter((tx) => normalizePaymentMethod(tx.method) === 'cash');
     } else if (fundFilter === 'bank') {
-        list = list.filter((tx) => !(tx.method || '').toLowerCase().includes('tiền mặt'));
+        list = list.filter((tx) => normalizePaymentMethod(tx.method) === 'transfer');
+    } else if (fundFilter === 'card') {
+        list = list.filter((tx) => normalizePaymentMethod(tx.method) === 'card');
     }
 
     let periodThu = 0;
@@ -10585,12 +12058,19 @@ function renderCashbook() {
 
     ['code', 'person', 'amount'].forEach((f) => {
         const ind = document.getElementById(`sort-cb-${f}`);
+        const th = ind ? ind.closest('th') : null;
+        const isSorted = cashbookSortField === f;
+        if (th) {
+            th.setAttribute(
+                'aria-sort',
+                isSorted ? (cashbookSortAsc ? 'ascending' : 'descending') : 'none'
+            );
+        }
         if (ind) {
-            ind.textContent = cashbookSortField === f ? (cashbookSortAsc ? '↑' : '↓') : '↕';
-            ind.className =
-                cashbookSortField === f
-                    ? 'text-[11px] font-bold text-[#0066cc]'
-                    : 'text-[10px] text-gray-400';
+            ind.textContent = isSorted ? (cashbookSortAsc ? '↑' : '↓') : '↕';
+            ind.className = isSorted
+                ? 'text-[11px] font-bold text-[#0066cc]'
+                : 'text-[10px] text-gray-400';
         }
     });
 
@@ -10605,12 +12085,24 @@ function renderCashbook() {
         document.getElementById('cashbook-load-more-btn')?.classList.add('hidden');
     } else {
         visibleCashbook.forEach((tx) => {
-            const isCash = (tx.method || '').toLowerCase().includes('tiền mặt');
+            const norm = normalizePaymentMethod(tx.method);
+            let badgeClass = 'kv-badge-info';
+            let badgeText = 'Chuyển khoản';
+            if (norm === 'cash') {
+                badgeClass = 'kv-badge-warning';
+                badgeText = 'Tiền mặt';
+            } else if (norm === 'card') {
+                badgeClass = 'bg-indigo-100 text-indigo-700 border border-indigo-200';
+                badgeText = 'Thẻ / POS';
+            } else if (norm === 'unknown') {
+                badgeClass = 'bg-gray-100 text-gray-700 border border-gray-200';
+                badgeText = tx.method || 'Không xác định';
+            }
             const tr = document.createElement('tr');
             tr.dataset.exportKey = String(tx.code);
             tr.className = 'table-row-hover border-b border-gray-100/70 text-[13px] transition';
             tr.innerHTML = renderHTML`
-                <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox"></td>
+                <td class="py-3 pl-3 pr-2 text-center"><input type="checkbox" class="kv-checkbox" aria-label="Chọn phiếu thu chi ${tx.code}"></td>
                 <td class="py-3 px-3 font-semibold text-[#0066cc] font-mono">
                     ${tx.code}
                     ${trustedHTML(isAll && tx.branch ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-gray-100 text-gray-700">${tx.branch}</span>` : '')}
@@ -10623,8 +12115,8 @@ function renderCashbook() {
                 </td>
                 <td class="py-3 px-3 text-gray-800 font-medium">${tx.person}</td>
                 <td class="py-3 px-3 text-center">
-                    <span class="kv-badge ${isCash ? 'kv-badge-warning' : 'kv-badge-info'}">
-                        ${isCash ? ' Tiền mặt' : ' Chuyển khoản'}
+                    <span class="kv-badge ${badgeClass}">
+                        ${badgeText}
                     </span>
                 </td>
                 <td class="py-3 px-3 text-right font-bold tabular-nums ${tx.type === 'thu' ? 'text-emerald-600' : 'text-red-500'}">
@@ -11017,6 +12509,7 @@ function openSettingsModal() {
 
     updateSettingsLogoPreview();
     modal.classList.remove('hidden');
+    captureModalSnapshot('settings-modal');
 }
 
 async function saveSettingsFromModal(e) {
@@ -11043,10 +12536,16 @@ async function saveSettingsFromModal(e) {
     const logoTextEl = document.getElementById('set-logo-text');
     if (logoTextEl) s.logoText = logoTextEl.value.trim();
 
-    await KVStore.save();
-    renderAppLogo();
-    document.getElementById('settings-modal').classList.add('hidden');
-    showToast('Đã lưu thiết lập cửa hàng & logo!', 'success');
+    try {
+        setModalSubmitting('settings-modal', true);
+        await KVStore.save();
+        renderAppLogo();
+        clearModalSnapshot('settings-modal');
+        document.getElementById('settings-modal').classList.add('hidden');
+        showToast('Đã lưu thiết lập cửa hàng & logo!', 'success');
+    } finally {
+        setModalSubmitting('settings-modal', false);
+    }
 }
 
 // --- PENDING TRANSACTION RECONCILIATION ---
@@ -11105,8 +12604,7 @@ function setupKeyboardShortcuts() {
                     const zb = parseInt(window.getComputedStyle(b).zIndex, 10) || 0;
                     return zb - za;
                 });
-                if (visibleModals[0].id === 'create-import-modal') closeCreateImport();
-                else visibleModals[0].classList.add('hidden');
+                closeModalWithCheck(visibleModals[0].id);
             }
         }
     });
@@ -11870,6 +13368,7 @@ function openStaffFormModal(staffId = null) {
     }
 
     modal.classList.remove('hidden');
+    captureModalSnapshot('staff-form-modal');
     setTimeout(() => nameInput?.focus(), 50);
 }
 
@@ -11900,6 +13399,7 @@ function onRolePresetChange(role) {
 
 async function saveStaffSubmit(e) {
     e.preventDefault();
+    clearFormValidationErrors(document.getElementById('staff-form-modal'));
     const id = document.getElementById('staff-form-id').value;
     const name = normalizeTitleCase(document.getElementById('staff-input-name').value);
     const phone = document.getElementById('staff-input-phone').value.trim();
@@ -11907,6 +13407,31 @@ async function saveStaffSubmit(e) {
     const password = document.getElementById('staff-input-password').value;
     const role = document.getElementById('staff-input-role').value;
     const status = document.querySelector('input[name="staff-status"]:checked')?.value || 'active';
+
+    if (!name) {
+        setFieldValidationError(
+            document.getElementById('staff-input-name'),
+            'Vui lòng nhập họ và tên'
+        );
+        showToast('Vui lòng nhập đầy đủ thông tin nhân viên!', 'error');
+        return;
+    }
+    if (!username) {
+        setFieldValidationError(
+            document.getElementById('staff-input-username'),
+            'Vui lòng nhập tên đăng nhập'
+        );
+        showToast('Vui lòng nhập đầy đủ thông tin nhân viên!', 'error');
+        return;
+    }
+    if (!id && !password) {
+        setFieldValidationError(
+            document.getElementById('staff-input-password'),
+            'Vui lòng nhập mật khẩu'
+        );
+        showToast('Vui lòng nhập mật khẩu cho nhân viên mới!', 'error');
+        return;
+    }
 
     const selectedBranches = Array.from(
         document.querySelectorAll('input[name="staff-branch-cb"]:checked')
@@ -11994,11 +13519,17 @@ async function saveStaffSubmit(e) {
         users.push(newStaff);
     }
 
-    await KVStore.save();
-    applyUserPermissionsToUI();
-    document.getElementById('staff-form-modal').classList.add('hidden');
-    renderStaffTable();
-    showToast(`Đã lưu nhân viên "${name}" thành công!`, 'success');
+    try {
+        setModalSubmitting('staff-form-modal', true);
+        await KVStore.save();
+        applyUserPermissionsToUI();
+        clearModalSnapshot('staff-form-modal');
+        document.getElementById('staff-form-modal').classList.add('hidden');
+        renderStaffTable();
+        showToast(`Đã lưu nhân viên "${name}" thành công!`, 'success');
+    } finally {
+        setModalSubmitting('staff-form-modal', false);
+    }
 }
 
 async function toggleStaffStatus(staffId) {

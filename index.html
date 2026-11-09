@@ -11,15 +11,22 @@
             html {
                 zoom: 1;
             }
-            #pos-layout,
-            #view-pos {
-                zoom: 1.1;
-            }
             @media (min-width: 1024px) {
                 #pos-layout,
                 #view-pos {
+                    zoom: 1.1;
                     width: calc(100vw / 1.1) !important;
                     height: calc(100dvh / 1.1) !important;
+                }
+            }
+            @media (max-width: 1023px) {
+                #pos-layout,
+                #view-pos {
+                    zoom: 1 !important;
+                    width: 100vw !important;
+                    max-width: 100vw !important;
+                    height: 100dvh !important;
+                    max-height: 100dvh !important;
                 }
             }
             html,
@@ -840,7 +847,22 @@
                     background: rgba(255, 255, 255, 0.98) !important;
                 }
             }
-
+            /* U9: Typography and Touch targets for mobile */
+            @media (max-width: 640px) {
+                .kv-modal input:not([type="checkbox"]):not([type="radio"]),
+                .kv-modal select,
+                .kv-modal textarea,
+                #settings-modal input,
+                #settings-modal select,
+                #settings-modal textarea {
+                    font-size: 16px !important;
+                }
+                .kv-modal button:not(.kv-badge):not(.row-expand-chevron),
+                .glass-btn-primary,
+                .glass-btn-secondary {
+                    min-height: 44px;
+                }
+            }
         </style>
     </head>
     <body class="h-full w-full overflow-hidden flex flex-col text-[13px]">
@@ -1155,15 +1177,15 @@
 
             <!-- 2. NAVIGATION BAR -->
             <nav
-                class="glass-nav h-10 px-3.5 sm:px-4 flex items-center justify-between text-white shadow-xs relative z-30 flex-shrink-0"
+                class="glass-nav h-10 px-2 sm:px-4 flex items-center justify-between text-white shadow-xs relative z-30 flex-shrink-0"
             >
                 <div
-                    class="flex items-center space-x-1 h-full overflow-visible flex-1 min-w-0 pr-3 sm:pr-1.5 py-0.5"
+                    class="flex items-center space-x-0.5 sm:space-x-1 h-full overflow-visible flex-1 min-w-0 pr-1 sm:pr-1.5 py-0.5"
                 >
                     <button
                         id="nav-dashboard"
                         onclick="switchView('dashboard')"
-                        class="nav-btn px-3 h-7.5 rounded-full font-medium text-[13px] hover:bg-white/10 transition nav-item-active flex-shrink-0"
+                        class="nav-btn px-2 sm:px-3 h-7.5 rounded-full font-medium text-[12px] sm:text-[13px] hover:bg-white/10 transition nav-item-active flex-shrink-0"
                     >
                         Tổng quan
                     </button>
@@ -1179,7 +1201,7 @@
                             aria-haspopup="true"
                             aria-expanded="false"
                             aria-controls="hanghoa-mega-menu"
-                            class="nav-btn px-2.5 sm:px-3 h-7.5 rounded-full font-medium text-[13px] hover:bg-white/10 transition inline-flex items-center space-x-1"
+                            class="nav-btn px-2 sm:px-3 h-7.5 rounded-full font-medium text-[12px] sm:text-[13px] hover:bg-white/10 transition inline-flex items-center space-x-1"
                         >
                             <span>Hàng hóa</span>
                             <svg
@@ -1289,7 +1311,7 @@
 
                     <!-- Mega Dropdown Mua hàng -->
                     <div
-                        class="group relative h-full flex items-center flex-shrink-0"
+                        class="group relative h-full hidden sm:flex items-center flex-shrink-0"
                         id="muahang-dropdown-wrapper"
                     >
                         <button
@@ -1405,7 +1427,7 @@
                             aria-haspopup="true"
                             aria-expanded="false"
                             aria-controls="nav-more-menu"
-                            class="nav-btn px-2 h-7.5 rounded-full font-medium text-[12.5px] hover:bg-white/10 transition inline-flex items-center space-x-1"
+                            class="nav-btn px-2 sm:px-2.5 h-7.5 rounded-full font-medium text-[12px] sm:text-[12.5px] hover:bg-white/10 transition inline-flex items-center space-x-1"
                         >
                             <span>Khác</span>
                             <svg
@@ -1430,6 +1452,18 @@
                             <div
                                 class="w-[160px] bg-white text-gray-800 rounded-lg shadow-xl border border-slate-200 py-1.5 px-1.5"
                             >
+                                <button
+                                    onclick="switchView('imports')"
+                                    class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc] sm:hidden"
+                                >
+                                    Nhập hàng
+                                </button>
+                                <button
+                                    onclick="switchView('suppliers')"
+                                    class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc] sm:hidden"
+                                >
+                                    Nhà cung cấp
+                                </button>
                                 <button
                                     onclick="switchView('invoices')"
                                     class="w-full text-left py-1.5 px-2.5 rounded-md text-[12.5px] font-medium text-slate-800 hover:bg-blue-50 hover:text-[#0066cc] md:hidden"
@@ -1469,7 +1503,7 @@
                         border: 1px solid rgba(255, 255, 255, 0.9) !important;
                         box-shadow: none !important;
                     "
-                    class="hover:bg-slate-50 font-bold px-2.5 sm:px-3 h-7.5 rounded-xl inline-flex items-center space-x-1 sm:space-x-1.5 transition text-[12px] sm:text-[12.5px] whitespace-nowrap flex-shrink-0 ml-1.5"
+                    class="hover:bg-slate-50 font-bold px-2 sm:px-3 h-7.5 rounded-xl inline-flex items-center space-x-1 sm:space-x-1.5 transition text-[11.5px] sm:text-[12.5px] whitespace-nowrap flex-shrink-0 ml-1 sm:ml-1.5"
                     title="Bán hàng"
                 >
                     <svg
@@ -1779,6 +1813,7 @@
                                 id="product-search-input"
                                 oninput="renderProducts()"
                                 type="text"
+                                aria-label="Tìm kiếm sản phẩm theo mã hàng, tên sản phẩm, barcode"
                                 placeholder="Tìm theo mã hàng, tên sản phẩm, barcode..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -1824,46 +1859,45 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả sản phẩm" />
                                     </th>
-                                    <th class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortProductsBy('code')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-prod-code" onclick="sortProductsBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã hàng">
                                             <span>Mã hàng</span>
-                                            <span id="sort-prod-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-prod-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortProductsBy('name')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-prod-name" onclick="sortProductsBy('name')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tên hàng">
                                             <span>Tên hàng hóa</span>
-                                            <span id="sort-prod-name" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-prod-name" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortProductsBy('category')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-prod-category" onclick="sortProductsBy('category')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo nhóm hàng">
                                             <span>Nhóm hàng</span>
-                                            <span id="sort-prod-category" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-prod-category" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortProductsBy('costPrice')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center justify-end space-x-1 w-full">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-prod-costPrice" onclick="sortProductsBy('costPrice')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo giá vốn">
                                             <span>Giá vốn</span>
-                                            <span id="sort-prod-costPrice" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-prod-costPrice" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortProductsBy('price')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center justify-end space-x-1 w-full">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-prod-price" onclick="sortProductsBy('price')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo giá bán">
                                             <span>Giá bán</span>
-                                            <span id="sort-prod-price" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-prod-price" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 text-center cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortProductsBy('stock')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center justify-center space-x-1 w-full">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-center select-none">
+                                        <button type="button" id="btn-sort-prod-stock" onclick="sortProductsBy('stock')" class="inline-flex items-center justify-center space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tồn kho">
                                             <span>Tồn kho</span>
-                                            <span id="sort-prod-stock" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-prod-stock" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 text-center">Kinh doanh</th>
-                                    <th class="py-2.5 pr-3 text-right">Thao tác</th>
+                                    <th class="py-2.5 pr-3 text-center w-24">Thao tác</th>
                                 </tr>
                             </thead>
                             <tbody id="products-tbody"></tbody>
@@ -1911,6 +1945,7 @@
                                 id="stocktake-search-input"
                                 oninput="renderStocktakes()"
                                 type="text"
+                                aria-label="Tìm kiếm theo mã phiếu kiểm, người kiểm, ghi chú"
                                 placeholder="Tìm theo mã phiếu kiểm, người kiểm, ghi chú..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -1938,40 +1973,28 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả phiếu kiểm kho" />
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortStocktakesBy('code')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-st-code" onclick="sortStocktakesBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã kiểm kho">
                                             <span>Mã kiểm kho</span>
-                                            <span id="sort-st-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-st-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Thời gian</th>
                                     <th class="py-2.5 px-3">Chi nhánh</th>
                                     <th class="py-2.5 px-3">Người kiểm</th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortStocktakesBy('totalActual')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-st-totalActual" onclick="sortStocktakesBy('totalActual')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tổng thực tế">
                                             <span>Tổng thực tế</span>
-                                            <span id="sort-st-totalActual" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-st-totalActual" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortStocktakesBy('totalVariance')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-st-totalVariance" onclick="sortStocktakesBy('totalVariance')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tổng chênh lệch">
                                             <span>Tổng chênh lệch</span>
-                                            <span id="sort-st-totalVariance" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-st-totalVariance" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3 text-center">Trạng thái</th>
                                     <th class="py-2.5 px-3">Ghi chú</th>
@@ -2014,6 +2037,7 @@
                                 id="transfer-search-input"
                                 oninput="renderTransfers()"
                                 type="text"
+                                aria-label="Tìm kiếm theo mã phiếu chuyển, chi nhánh, ghi chú"
                                 placeholder="Tìm theo mã phiếu chuyển, chi nhánh, ghi chú..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -2050,59 +2074,39 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả phiếu chuyển" />
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortTransfersBy('code')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-tf-code" onclick="sortTransfersBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã chuyển hàng">
                                             <span>Mã chuyển hàng</span>
-                                            <span id="sort-tf-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-tf-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Thời gian</th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortTransfersBy('fromBranch')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-tf-fromBranch" onclick="sortTransfersBy('fromBranch')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo chi nhánh gửi">
                                             <span>Chi nhánh gửi</span>
-                                            <span id="sort-tf-fromBranch" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-tf-fromBranch" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortTransfersBy('toBranch')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-tf-toBranch" onclick="sortTransfersBy('toBranch')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo chi nhánh nhận">
                                             <span>Chi nhánh nhận</span>
-                                            <span id="sort-tf-toBranch" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-tf-toBranch" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Người chuyển</th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortTransfersBy('totalQty')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-tf-totalQty" onclick="sortTransfersBy('totalQty')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tổng SL chuyển">
                                             <span>Tổng SL chuyển</span>
-                                            <span id="sort-tf-totalQty" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-tf-totalQty" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortTransfersBy('totalValue')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-tf-totalValue" onclick="sortTransfersBy('totalValue')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tổng giá trị">
                                             <span>Tổng giá trị</span>
-                                            <span id="sort-tf-totalValue" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-tf-totalValue" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3 text-center">Trạng thái</th>
                                     <th class="py-2.5 pr-3 text-right">Thao tác</th>
@@ -2150,6 +2154,7 @@
                                 id="shared-search-input"
                                 oninput="renderSharedWarehouse()"
                                 type="text"
+                                aria-label="Tìm tên hàng, mã SKU, đối tác, số điện thoại"
                                 placeholder="Tìm tên hàng, mã SKU, đối tác, SĐT..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -2298,6 +2303,7 @@
                                 id="invoice-search-input"
                                 oninput="scheduleInvoiceSearch()"
                                 type="text"
+                                aria-label="Tìm theo mã hóa đơn, tên khách, số điện thoại"
                                 placeholder="Theo mã hóa đơn, tên khách, số điện thoại..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -2425,18 +2431,27 @@
                     <div class="overflow-auto flex-1 min-h-0">
                         <table class="w-full min-w-[760px] text-left border-collapse">
                             <thead>
-                                <tr class="sticky-th">
-                                    <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                <tr class="sticky-th bg-blue-50/60 border-b border-gray-200 text-gray-700 font-bold text-left text-[12px]">
+                                    <th class="py-2.5 pl-3 pr-2 w-8 text-center" scope="col">
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả hóa đơn" onchange="toggleSelectAllRows(this)" />
                                     </th>
-                                    <th class="py-2.5 px-2 w-8 text-center text-gray-400"></th>
-                                    <th class="py-2.5 px-3">Mã hóa đơn</th>
-                                    <th class="py-2.5 px-3">Thời gian</th>
-                                    <th class="py-2.5 px-3">Khách hàng</th>
-                                    <th class="py-2.5 px-3">Điện thoại</th>
-                                    <th class="py-2.5 px-3 text-right">Tổng tiền hàng</th>
-                                    <th class="py-2.5 px-3 text-right">Khách đã trả</th>
-                                    <th class="py-2.5 pr-4 text-right">Thao tác</th>
+                                    <th class="py-2.5 px-2 w-8 text-center text-gray-400 select-none" scope="col" aria-label="Đánh dấu sao">
+                                        ★
+                                    </th>
+                                    <th class="py-2.5 px-3" scope="col">Mã hóa đơn</th>
+                                    <th class="py-2.5 px-3" scope="col">Thời gian</th>
+                                    <th class="py-2.5 px-3" scope="col">Mã trả hàng</th>
+                                    <th class="py-2.5 px-3" scope="col">Mã KH</th>
+                                    <th class="py-2.5 px-3" scope="col">Khách hàng</th>
+                                    <th class="py-2.5 px-3 text-right" scope="col">Tổng tiền hàng</th>
+                                    <th class="py-2.5 px-3 text-right" scope="col">Giảm giá</th>
+                                    <th class="py-2.5 pr-4 text-right" scope="col">Khách đã trả</th>
+                                </tr>
+                                <tr class="bg-gray-50/90 border-b border-gray-200 text-[12.5px] font-bold text-gray-900" id="invoice-summary-row">
+                                    <th class="py-2 pl-3 pr-2" colspan="7" scope="row"></th>
+                                    <th id="invoice-sum-total" class="py-2 px-3 text-right tabular-nums">0</th>
+                                    <th id="invoice-sum-discount" class="py-2 px-3 text-right tabular-nums">0</th>
+                                    <th id="invoice-sum-paid" class="py-2 pr-4 text-right tabular-nums">0</th>
                                 </tr>
                             </thead>
                             <tbody id="invoice-tbody"></tbody>
@@ -2501,6 +2516,7 @@
                                 id="import-search-input"
                                 oninput="renderImports()"
                                 type="text"
+                                aria-label="Tìm theo mã phiếu nhập, nhà cung cấp"
                                 placeholder="Theo mã phiếu nhập, nhà cung cấp..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -2553,50 +2569,34 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả phiếu nhập" />
                                     </th>
-                                    <th class="py-2.5 px-2 w-8 text-center text-gray-400"></th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortImportsBy('code')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th class="py-2.5 px-2 w-8 text-center text-gray-400" aria-label="Đánh dấu sao">★</th>
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-imp-code" onclick="sortImportsBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã phiếu">
                                             <span>Mã phiếu</span>
-                                            <span id="sort-imp-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-imp-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Thời gian</th>
                                     <th class="py-2.5 px-3">Mã NCC</th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortImportsBy('nccName')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-imp-nccName" onclick="sortImportsBy('nccName')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo nhà cung cấp">
                                             <span>Nhà cung cấp</span>
-                                            <span id="sort-imp-nccName" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-imp-nccName" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortImportsBy('needPay')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-imp-needPay" onclick="sortImportsBy('needPay')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tiền cần trả NCC">
                                             <span>Cần trả NCC</span>
-                                            <span id="sort-imp-needPay" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-imp-needPay" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortImportsBy('paid')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-imp-paid" onclick="sortImportsBy('paid')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tiền đã trả">
                                             <span>Tiền đã trả</span>
-                                            <span id="sort-imp-paid" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-imp-paid" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3 text-center">Hình thức</th>
                                     <th class="py-2.5 px-3 w-[220px]">Ghi chú</th>
@@ -2649,6 +2649,7 @@
                                 id="customer-search-input"
                                 oninput="renderCustomers()"
                                 type="text"
+                                aria-label="Tìm theo tên, số điện thoại khách hàng"
                                 placeholder="Tìm theo tên, số điện thoại..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -2675,33 +2676,33 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả khách hàng" />
                                     </th>
-                                    <th class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortCustomersBy('code')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-cust-code" onclick="sortCustomersBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã khách hàng">
                                             <span>Mã KH</span>
-                                            <span id="sort-cust-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cust-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortCustomersBy('name')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-cust-name" onclick="sortCustomersBy('name')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tên khách hàng">
                                             <span>Tên khách hàng</span>
-                                            <span id="sort-cust-name" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cust-name" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Điện thoại</th>
                                     <th class="py-2.5 px-3">Địa chỉ</th>
-                                    <th class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortCustomersBy('totalSpent')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center justify-end space-x-1 w-full">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-cust-totalSpent" onclick="sortCustomersBy('totalSpent')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tổng chi tiêu">
                                             <span>Tổng chi tiêu</span>
-                                            <span id="sort-cust-totalSpent" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cust-totalSpent" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition" onclick="sortCustomersBy('debt')" title="Bấm để sắp xếp">
-                                        <div class="inline-flex items-center justify-end space-x-1 w-full">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-cust-debt" onclick="sortCustomersBy('debt')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo nợ hiện tại">
                                             <span>Nợ hiện tại</span>
-                                            <span id="sort-cust-debt" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cust-debt" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 pr-3 text-right">Thao tác</th>
                                 </tr>
@@ -2751,6 +2752,7 @@
                                 id="supplier-search-input"
                                 oninput="renderSuppliers()"
                                 type="text"
+                                aria-label="Tìm theo tên, mã NCC, số điện thoại"
                                 placeholder="Tìm theo tên, mã NCC, số điện thoại..."
                                 class="w-full bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 pl-3 pr-8 text-[13px] focus:outline-none focus:bg-white focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 shadow-xs transition-all"
                             />
@@ -2777,49 +2779,33 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả nhà cung cấp" />
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortSuppliersBy('code')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-sup-code" onclick="sortSuppliersBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã nhà cung cấp">
                                             <span>Mã NCC</span>
-                                            <span id="sort-sup-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-sup-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortSuppliersBy('name')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-sup-name" onclick="sortSuppliersBy('name')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tên nhà cung cấp">
                                             <span>Tên Nhà cung cấp</span>
-                                            <span id="sort-sup-name" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-sup-name" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Số điện thoại</th>
                                     <th class="py-2.5 px-3">Địa chỉ</th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortSuppliersBy('totalBought')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-sup-totalBought" onclick="sortSuppliersBy('totalBought')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo tổng tiền mua">
                                             <span>Tổng tiền mua</span>
-                                            <span id="sort-sup-totalBought" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-sup-totalBought" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortSuppliersBy('debt')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-sup-debt" onclick="sortSuppliersBy('debt')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo nợ cần trả">
                                             <span>Nợ cần trả</span>
-                                            <span id="sort-sup-debt" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-sup-debt" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 pr-3 text-right">Thao tác</th>
                                 </tr>
@@ -2863,6 +2849,7 @@
                             <option value="all" selected>Tất cả quỹ</option>
                             <option value="cash">Quỹ tiền mặt</option>
                             <option value="bank">Quỹ tài khoản ngân hàng</option>
+                            <option value="card">Quỹ thẻ / POS</option>
                         </select>
                     </div>
                     <div
@@ -3020,40 +3007,28 @@
                             <thead>
                                 <tr class="sticky-th">
                                     <th class="py-2.5 pl-3 pr-2 w-8">
-                                        <input type="checkbox" class="kv-checkbox" />
+                                        <input type="checkbox" class="kv-checkbox" aria-label="Chọn tất cả phiếu thu chi" />
                                     </th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortCashbookBy('code')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-cb-code" onclick="sortCashbookBy('code')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo mã phiếu">
                                             <span>Mã phiếu</span>
-                                            <span id="sort-cb-code" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cb-code" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3">Thời gian</th>
                                     <th class="py-2.5 px-3 text-center">Loại giao dịch</th>
-                                    <th
-                                        class="py-2.5 px-3 cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortCashbookBy('person')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 select-none">
+                                        <button type="button" id="btn-sort-cb-person" onclick="sortCashbookBy('person')" class="inline-flex items-center space-x-1 font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo người nộp hoặc nhận">
                                             <span>Người nộp / nhận</span>
-                                            <span id="sort-cb-person" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cb-person" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 px-3 text-center">Hình thức</th>
-                                    <th
-                                        class="py-2.5 px-3 text-right cursor-pointer hover:text-[#0066cc] select-none transition"
-                                        onclick="sortCashbookBy('amount')"
-                                        title="Bấm để sắp xếp"
-                                    >
-                                        <div class="inline-flex items-center justify-end space-x-1">
+                                    <th scope="col" aria-sort="none" class="py-2.5 px-3 text-right select-none">
+                                        <button type="button" id="btn-sort-cb-amount" onclick="sortCashbookBy('amount')" class="inline-flex items-center justify-end space-x-1 w-full font-semibold text-inherit hover:text-[#0066cc] focus:outline-none focus-visible:underline transition" title="Bấm để sắp xếp theo số tiền">
                                             <span>Số tiền</span>
-                                            <span id="sort-cb-amount" class="text-[10px] text-gray-400">↕</span>
-                                        </div>
+                                            <span id="sort-cb-amount" aria-hidden="true" class="text-[10px] text-gray-400">↕</span>
+                                        </button>
                                     </th>
                                     <th class="py-2.5 pl-3 pr-4">Ghi chú</th>
                                 </tr>
@@ -3718,6 +3693,7 @@
                             <input
                                 id="pos-order-note"
                                 type="text"
+                                aria-label="Ghi chú đơn hàng"
                                 placeholder="Ghi chú đơn hàng (nếu có)..."
                                 class="w-full text-[12.5px] sm:text-[13px] text-gray-700 bg-transparent focus:outline-none placeholder-gray-400"
                             />
@@ -3760,6 +3736,7 @@
                                             oninput="searchPosCustomers(this.value)"
                                             onkeydown="handlePosCustomerKeydown(event)"
                                             type="text"
+                                            aria-label="Tìm kiếm hoặc chọn khách hàng"
                                             placeholder="Tìm khách hàng - Mặc định Khách lẻ"
                                             class="w-full bg-white/80 focus:bg-white border border-gray-200/80 rounded-xl py-1.5 pl-3 pr-8 text-[13px] leading-normal focus:outline-none focus:border-[#0066cc] focus:ring-2 focus:ring-[#0066cc]/15 transition"
                                         />
@@ -3851,6 +3828,7 @@
                                             id="pos-discount-input"
                                             type="number"
                                             min="0"
+                                            aria-label="Số tiền hoặc phần trăm giảm giá"
                                             oninput="handlePosDiscountInput(this.value)"
                                             placeholder="0"
                                             class="w-20 text-right bg-white border border-gray-200/80 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums"
@@ -4727,7 +4705,7 @@
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-2 gap-3">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <label class="block font-semibold text-gray-700 mb-1"
                                         >Cỡ chữ hóa đơn</label
@@ -5289,7 +5267,8 @@
                     <button
                         type="button"
                         onclick="document.getElementById('product-modal').classList.add('hidden')"
-                        class="w-8 h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
+                        aria-label="Đóng"
+                        class="w-10 h-10 sm:w-8 sm:h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
                     >
                         <svg
                             class="w-4 h-4"
@@ -5307,7 +5286,7 @@
                     onsubmit="saveProductFromModal(event)"
                     class="space-y-3.5 text-[13px]"
                 >
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Mã hàng (*)</label>
                             <input
@@ -5337,7 +5316,7 @@
                             class="w-full border border-gray-200/85 rounded-xl px-3 py-2 focus:border-[#0066cc] focus:outline-none"
                         />
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <div class="flex items-center justify-between mb-1">
                                 <label class="font-medium text-gray-700">Nhóm hàng</label>
@@ -5364,7 +5343,7 @@
                             />
                         </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Giá vốn</label>
                             <input
@@ -5386,9 +5365,9 @@
                             />
                         </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
-                            <label class="block font-medium text-gray-700 mb-1"
+                            <label id="prod-stock-label" for="prod-stock" class="block font-medium text-gray-700 mb-1"
                                 >Tồn kho ban đầu</label
                             >
                             <input
@@ -5846,7 +5825,8 @@
                     <button
                         type="button"
                         onclick="document.getElementById('supplier-modal').classList.add('hidden')"
-                        class="w-8 h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
+                        aria-label="Đóng"
+                        class="w-10 h-10 sm:w-8 sm:h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
                     >
                         <svg
                             class="w-4 h-4"
@@ -5864,7 +5844,7 @@
                     onsubmit="saveSupplierFromModal(event)"
                     class="space-y-3.5 text-[13px]"
                 >
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Mã NCC (*)</label>
                             <input
@@ -5969,7 +5949,8 @@
                     <button
                         type="button"
                         onclick="document.getElementById('customer-modal').classList.add('hidden')"
-                        class="w-8 h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
+                        aria-label="Đóng"
+                        class="w-10 h-10 sm:w-8 sm:h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
                     >
                         <svg
                             class="w-4 h-4"
@@ -5987,7 +5968,7 @@
                     onsubmit="saveCustomerFromModal(event)"
                     class="space-y-3.5 text-[13px]"
                 >
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Mã KH (*)</label>
                             <input
@@ -6031,7 +6012,7 @@
                             class="w-full border border-gray-200/85 rounded-xl px-3 py-2 capitalize-input focus:border-[#0066cc] focus:outline-none"
                         />
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Nợ ban đầu (nếu có)</label
@@ -6949,7 +6930,7 @@
                             class="w-full border border-gray-200/85 rounded-xl px-3 py-2 capitalize-input focus:outline-none"
                         />
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <div class="flex items-center justify-between mb-1">
                                 <label class="block font-medium text-gray-700">Chi nhánh</label>
@@ -7394,7 +7375,7 @@
                 </div>
                 <form onsubmit="saveBranchFromModal(event)" class="space-y-3.5 text-[13px]">
                     <input type="hidden" id="branch-edit-id" value="" />
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1">Mã chi nhánh</label>
                             <input
@@ -8116,7 +8097,7 @@
                     </button>
                 </div>
                 <form onsubmit="saveNewReceipt(event)" class="space-y-3 text-[12.5px]">
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Mã phiếu thu dự kiến</label
@@ -8138,7 +8119,7 @@
                             />
                         </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Quỹ nhận / Hình thức (*)</label
@@ -8276,7 +8257,7 @@
                     </button>
                 </div>
                 <form onsubmit="saveNewPayment(event)" class="space-y-3 text-[12.5px]">
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Mã phiếu chi dự kiến</label
@@ -8298,7 +8279,7 @@
                             />
                         </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Quỹ chi / Hình thức (*)</label
@@ -8469,7 +8450,7 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Giá sỉ / Giá chia sẻ (*)</label
@@ -8732,7 +8713,7 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="block font-medium text-gray-700 mb-1"
                                 >Giá sỉ / chia sẻ (*)</label

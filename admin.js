@@ -38,6 +38,7 @@
         if (!modal) {
             return Promise.resolve(typeof confirm === 'function' ? confirm(msg) : true);
         }
+        const opener = document.activeElement;
         $('confirm-modal-title').textContent = title;
         $('confirm-modal-message').textContent = msg;
         const acceptBtn = $('btn-accept-confirm-modal');
@@ -47,7 +48,8 @@
 
         modal.hidden = false;
         modal.classList.add('show');
-        setTimeout(() => acceptBtn?.focus(), 30);
+        // U10: Focus cancel (safe) button by default instead of dangerous action button
+        setTimeout(() => cancelBtn?.focus(), 30);
 
         return new Promise((resolve) => {
             const cleanup = (result) => {
@@ -57,6 +59,8 @@
                 cancelBtn?.removeEventListener('click', onCancel);
                 closeBtn?.removeEventListener('click', onCancel);
                 modal.removeEventListener('click', onBackdrop);
+                modal.removeEventListener('keydown', onKeydown);
+                if (opener && typeof opener.focus === 'function') opener.focus();
                 resolve(result);
             };
             const onAccept = () => cleanup(true);
@@ -64,10 +68,26 @@
             const onBackdrop = (e) => {
                 if (e.target === modal) cleanup(false);
             };
+            const onKeydown = (e) => {
+                if (e.key === 'Tab') {
+                    const focusables = [closeBtn, cancelBtn, acceptBtn].filter(Boolean);
+                    if (focusables.length === 0) return;
+                    const first = focusables[0];
+                    const last = focusables[focusables.length - 1];
+                    if (e.shiftKey && document.activeElement === first) {
+                        e.preventDefault();
+                        last.focus();
+                    } else if (!e.shiftKey && document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
+                    }
+                }
+            };
             acceptBtn?.addEventListener('click', onAccept);
             cancelBtn?.addEventListener('click', onCancel);
             closeBtn?.addEventListener('click', onCancel);
             modal.addEventListener('click', onBackdrop);
+            modal.addEventListener('keydown', onKeydown);
         });
     }
 
@@ -627,7 +647,9 @@
     });
 
     // Reset Password Modal
+    let lastResetPwdOpener = null;
     function openResetPwdModal(tenant) {
+        lastResetPwdOpener = document.activeElement;
         const modal = $('modal-reset-pwd');
         if (!modal) return;
         $('reset-pwd-tenant-id').value = tenant.id;
@@ -646,6 +668,10 @@
         }
         const input = $('reset-pwd-input');
         if (input) input.value = '';
+        if (lastResetPwdOpener && typeof lastResetPwdOpener.focus === 'function') {
+            lastResetPwdOpener.focus();
+            lastResetPwdOpener = null;
+        }
     }
 
     closeResetPwdModal();
@@ -654,6 +680,27 @@
     $('btn-cancel-pwd')?.addEventListener('click', closeResetPwdModal);
     $('modal-reset-pwd')?.addEventListener('click', (e) => {
         if (e.target === $('modal-reset-pwd')) closeResetPwdModal();
+    });
+    $('modal-reset-pwd')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+            const modal = $('modal-reset-pwd');
+            if (!modal || modal.hidden) return;
+            const focusables = Array.from(
+                modal.querySelectorAll(
+                    'button:not([disabled]), input:not([type="hidden"]):not([disabled])'
+                )
+            ).filter((el) => el.offsetParent !== null);
+            if (focusables.length === 0) return;
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
     });
 
     $('form-reset-pwd')?.addEventListener('submit', (e) => {

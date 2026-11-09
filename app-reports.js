@@ -61,35 +61,108 @@ function renderDualBarChart(containerId, items, label1, color1, label2, color2) 
         return;
     }
 
-    const maxVal = Math.max(
-        ...items.map((it) => Math.max(Math.abs(it.val1 || 0), Math.abs(it.val2 || 0))),
-        1000000
-    );
+    const allVals = [];
+    items.forEach((it) => {
+        if (it.val1 != null && !isNaN(it.val1)) allVals.push(Number(it.val1));
+        if (it.val2 != null && !isNaN(it.val2)) allVals.push(Number(it.val2));
+    });
+
+    const maxPositive = Math.max(0, ...allVals.filter((v) => v > 0));
+    const maxNegative = Math.max(0, ...allVals.filter((v) => v < 0).map((v) => Math.abs(v)));
+    const hasNegative = maxNegative > 0;
+    const hasPositive = maxPositive > 0;
+
+    let scalePos = maxPositive || 1000000;
+    let scaleNeg = maxNegative || 1000000;
+    let posZonePct = 50;
+    let negZonePct = 50;
+
+    if (hasPositive && hasNegative) {
+        const totalSpan = maxPositive + maxNegative;
+        posZonePct = Math.max(25, Math.min(75, Math.round((maxPositive / totalSpan) * 100)));
+        negZonePct = 100 - posZonePct;
+    }
 
     container.innerHTML = items
         .map((it) => {
-            const h1 = Math.max(
-                6,
-                Math.min(100, Math.round((Math.abs(it.val1 || 0) / maxVal) * 100))
-            );
-            const h2 =
+            const v1 = it.val1 != null && !isNaN(it.val1) ? Number(it.val1) : null;
+            const v2 = it.val2 != null && !isNaN(it.val2) ? Number(it.val2) : null;
+
+            const v1Tip =
+                v1 == null ? 'Không có số liệu' : `${formatVND(v1)} đ${v1 < 0 ? ' (Âm)' : ''}`;
+            const v2Tip =
                 it.val2 == null
-                    ? 0
-                    : Math.max(
-                          6,
-                          Math.min(100, Math.round((Math.abs(it.val2 || 0) / maxVal) * 100))
-                      );
+                    ? 'Thiếu giá vốn lịch sử'
+                    : `${formatVND(v2)} đ${v2 != null && v2 < 0 ? ' (Lỗ)' : ''}`;
+
+            let barsHtml = '';
+            if (hasPositive && hasNegative) {
+                const h1Pos =
+                    v1 != null && v1 > 0 ? Math.min(100, Math.round((v1 / maxPositive) * 100)) : 0;
+                const h2Pos =
+                    v2 != null && v2 > 0 ? Math.min(100, Math.round((v2 / maxPositive) * 100)) : 0;
+
+                const h1Neg =
+                    v1 != null && v1 < 0
+                        ? Math.min(100, Math.round((Math.abs(v1) / maxNegative) * 100))
+                        : 0;
+                const h2Neg =
+                    v2 != null && v2 < 0
+                        ? Math.min(100, Math.round((Math.abs(v2) / maxNegative) * 100))
+                        : 0;
+
+                barsHtml = renderHTML`
+                    <div class="w-full flex flex-col h-[132px] pb-1">
+                        <div class="w-full flex items-end justify-center space-x-1.5" style="height: ${posZonePct}%;">
+                            <div style="height: ${h1Pos}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color1} ${h1Pos === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${h2Pos}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color2} ${h2Pos === 0 ? 'opacity-0' : ''}"></div>
+                        </div>
+                        <div class="w-full border-t border-gray-300 relative flex items-center justify-center my-0" title="Mốc 0"></div>
+                        <div class="w-full flex items-start justify-center space-x-1.5" style="height: ${negZonePct}%;">
+                            <div style="height: ${h1Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h1Neg === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${h2Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h2Neg === 0 ? 'opacity-0' : ''}"></div>
+                        </div>
+                    </div>
+                `;
+            } else if (hasNegative && !hasPositive) {
+                const h1Neg =
+                    v1 != null && v1 < 0
+                        ? Math.min(100, Math.round((Math.abs(v1) / scaleNeg) * 100))
+                        : 0;
+                const h2Neg =
+                    v2 != null && v2 < 0
+                        ? Math.min(100, Math.round((Math.abs(v2) / scaleNeg) * 100))
+                        : 0;
+                barsHtml = renderHTML`
+                    <div class="w-full flex flex-col h-[132px] pb-1">
+                        <div class="w-full border-t border-gray-300 relative" title="Mốc 0"></div>
+                        <div class="w-full flex items-start justify-center space-x-1.5 h-full pt-0.5">
+                            <div style="height: ${h1Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h1Neg === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${h2Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h2Neg === 0 ? 'opacity-0' : ''}"></div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                const h1 =
+                    v1 != null && v1 > 0 ? Math.min(100, Math.round((v1 / scalePos) * 100)) : 0;
+                const h2 =
+                    v2 != null && v2 > 0 ? Math.min(100, Math.round((v2 / scalePos) * 100)) : 0;
+                barsHtml = renderHTML`
+                    <div class="w-full flex items-end justify-center space-x-1.5 h-[132px] pb-1 border-b border-gray-200">
+                        <div style="height: ${h1}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color1} ${h1 === 0 ? 'opacity-0' : ''}"></div>
+                        <div style="height: ${h2}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color2} ${h2 === 0 ? 'opacity-0' : ''}"></div>
+                    </div>
+                `;
+            }
+
             return renderHTML`
-            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[42px] max-w-[70px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${label1}: ${formatVND(it.val1)} đ\n${label2}: ${it.val2 == null ? 'Thiếu giá vốn lịch sử' : formatVND(it.val2) + ' đ'}">
+            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[42px] max-w-[70px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${label1}: ${v1Tip}\n${label2}: ${v2Tip}">
                 <div class="hidden group-hover:block group-focus:block absolute -top-12 left-1/2 -translate-x-1/2 bg-gray-900/95 text-white text-[10.5px] leading-snug px-2 py-1 rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
                     <div class="font-bold">${it.fullName || it.label}</div>
-                    <div>${label1}: ${formatVND(it.val1)} đ</div>
-                    <div>${label2}: ${it.val2 == null ? 'Thiếu giá vốn lịch sử' : formatVND(it.val2) + ' đ'}</div>
+                    <div>${label1}: ${v1Tip}</div>
+                    <div>${label2}: ${v2Tip}</div>
                 </div>
-                <div class="w-full flex items-end justify-center space-x-1.5 h-[132px] pb-1">
-                    <div style="height: ${h1}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color1}"></div>
-                    <div style="height: ${h2}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color2}"></div>
-                </div>
+                ${trustedHTML(barsHtml)}
                 <div class="text-[10.5px] font-semibold text-gray-500 group-hover:text-[#0066cc] truncate max-w-full text-center tracking-tighter pt-1 border-t border-gray-100 w-full" title="${it.fullName || it.label}">${it.label}</div>
             </div>
         `;
@@ -110,20 +183,72 @@ function renderSingleBarChart(containerId, items, barColor) {
         return;
     }
 
-    const maxVal = Math.max(...items.map((it) => it.value || 0), 1000000);
+    const allVals = items.map((it) =>
+        it.value != null && !isNaN(it.value) ? Number(it.value) : 0
+    );
+    const maxPositive = Math.max(0, ...allVals.filter((v) => v > 0));
+    const maxNegative = Math.max(0, ...allVals.filter((v) => v < 0).map((v) => Math.abs(v)));
+    const hasNegative = maxNegative > 0;
+    const hasPositive = maxPositive > 0;
+
+    let scalePos = maxPositive || 1000000;
+    let scaleNeg = maxNegative || 1000000;
+    let posZonePct = 50;
+    let negZonePct = 50;
+    if (hasPositive && hasNegative) {
+        const totalSpan = maxPositive + maxNegative;
+        posZonePct = Math.max(25, Math.min(75, Math.round((maxPositive / totalSpan) * 100)));
+        negZonePct = 100 - posZonePct;
+    }
 
     container.innerHTML = items
         .map((it) => {
-            const h = Math.max(8, Math.min(100, Math.round(((it.value || 0) / maxVal) * 100)));
+            const val = it.value != null && !isNaN(it.value) ? Number(it.value) : 0;
+            const valTip = `${formatVND(val)} đ${val < 0 ? ' (Âm)' : ''}`;
+
+            let barHtml = '';
+            if (hasPositive && hasNegative) {
+                const hPos = val > 0 ? Math.min(100, Math.round((val / maxPositive) * 100)) : 0;
+                const hNeg =
+                    val < 0 ? Math.min(100, Math.round((Math.abs(val) / maxNegative) * 100)) : 0;
+                barHtml = renderHTML`
+                    <div class="w-full flex flex-col h-[132px] pb-1">
+                        <div class="w-full flex items-end justify-center" style="height: ${posZonePct}%;">
+                            <div style="height: ${hPos}%;" class="w-6 sm:w-8 rounded-t-lg transition-all duration-300 group-hover:brightness-110 shadow-xs ${barColor || 'bg-[#0066cc]'} ${hPos === 0 ? 'opacity-0' : ''}"></div>
+                        </div>
+                        <div class="w-full border-t border-gray-300 relative" title="Mốc 0"></div>
+                        <div class="w-full flex items-start justify-center" style="height: ${negZonePct}%;">
+                            <div style="height: ${hNeg}%;" class="w-6 sm:w-8 rounded-b-lg transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${hNeg === 0 ? 'opacity-0' : ''}"></div>
+                        </div>
+                    </div>
+                `;
+            } else if (hasNegative && !hasPositive) {
+                const hNeg =
+                    val < 0 ? Math.min(100, Math.round((Math.abs(val) / scaleNeg) * 100)) : 0;
+                barHtml = renderHTML`
+                    <div class="w-full flex flex-col h-[132px] pb-1">
+                        <div class="w-full border-t border-gray-300 relative" title="Mốc 0"></div>
+                        <div class="w-full flex items-start justify-center h-full pt-0.5">
+                            <div style="height: ${hNeg}%;" class="w-6 sm:w-8 rounded-b-lg transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${hNeg === 0 ? 'opacity-0' : ''}"></div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                const h = val > 0 ? Math.min(100, Math.round((val / scalePos) * 100)) : 0;
+                barHtml = renderHTML`
+                    <div class="w-full flex items-end justify-center h-[132px] pb-1 border-b border-gray-200">
+                        <div style="height: ${h}%;" class="w-6 sm:w-8 rounded-t-lg transition-all duration-300 group-hover:brightness-110 shadow-xs ${barColor || 'bg-[#0066cc]'} ${h === 0 ? 'opacity-0' : ''}"></div>
+                    </div>
+                `;
+            }
+
             return renderHTML`
-            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[50px] max-w-[85px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${it.subLabel || ''}\n${formatVND(it.value)} đ">
+            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[50px] max-w-[85px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${it.subLabel || ''}\n${valTip}">
                 <div class="hidden group-hover:block group-focus:block absolute -top-11 left-1/2 -translate-x-1/2 bg-gray-900/95 text-white text-[10.5px] leading-snug px-2 py-1 rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
                     <div class="font-bold">${it.fullName || it.label}</div>
-                    <div>${formatVND(it.value)} đ</div>
+                    <div>${valTip}</div>
                 </div>
-                <div class="w-full flex items-end justify-center h-[132px] pb-1">
-                    <div style="height: ${h}%;" class="w-6 sm:w-8 rounded-t-lg transition-all duration-300 group-hover:brightness-110 shadow-xs ${barColor || 'bg-[#0066cc]'}"></div>
-                </div>
+                ${trustedHTML(barHtml)}
                 <div class="text-[10.5px] font-semibold text-gray-600 group-hover:text-[#0066cc] truncate max-w-full text-center tracking-tight pt-1 border-t border-gray-100 w-full" title="${it.fullName || it.label}">${it.label}</div>
             </div>
         `;
@@ -568,14 +693,16 @@ function renderSalesReportTab(
     let debtTotal = 0;
     validInvoices.forEach((inv) => {
         debtTotal += Math.max(0, inv.total - (inv.returnedTotal || 0) - inv.paid);
-        const payments = inv.payments || [
-            { amount: inv.paid, method: inv.paymentMethod || 'unknown' }
-        ];
+        const payments =
+            inv.payments && inv.payments.length > 0
+                ? inv.payments
+                : [{ amount: inv.paid, method: inv.paymentMethod || 'unknown' }];
         payments.forEach((p) => {
-            methods[Object.hasOwn(methods, p.method) ? p.method : 'unknown'] += p.amount;
+            const key = normalizePaymentMethod(p.method);
+            methods[key] = (methods[key] || 0) + (Number(p.amount) || 0);
         });
     });
-    renderBreakdownBars('rep-breakdown-container', [
+    const revBreakdown = [
         {
             label: 'Chuyển khoản (VietQR)',
             value: methods.transfer,
@@ -588,14 +715,28 @@ function renderSalesReportTab(
             dotClass: 'bg-emerald-500',
             barClass: 'bg-emerald-500'
         },
-        { label: 'Thẻ', value: methods.card, dotClass: 'bg-indigo-600', barClass: 'bg-indigo-600' },
         {
-            label: 'Khách nợ / Chưa trả',
-            value: debtTotal,
-            dotClass: 'bg-amber-500',
-            barClass: 'bg-amber-500'
+            label: 'Thẻ / POS',
+            value: methods.card,
+            dotClass: 'bg-indigo-600',
+            barClass: 'bg-indigo-600'
         }
-    ]);
+    ];
+    if (methods.unknown > 0) {
+        revBreakdown.push({
+            label: 'Phương thức khác / Chưa xác định',
+            value: methods.unknown,
+            dotClass: 'bg-gray-400',
+            barClass: 'bg-gray-400'
+        });
+    }
+    revBreakdown.push({
+        label: 'Khách nợ / Chưa trả',
+        value: debtTotal,
+        dotClass: 'bg-amber-500',
+        barClass: 'bg-amber-500'
+    });
+    renderBreakdownBars('rep-breakdown-container', revBreakdown);
 
     // 5. Table Rendering
     const tableTitleEl = document.getElementById('rep-table-title');
@@ -995,9 +1136,13 @@ function renderCashflowReportTab(
     }
 
     const sideTitleEl = document.getElementById('rep-side-chart-title');
-    if (sideTitleEl) sideTitleEl.textContent = 'Cơ cấu Thu - Chi';
+    if (sideTitleEl) {
+        sideTitleEl.textContent = 'Phát sinh theo phương thức (Thu + Chi)';
+        sideTitleEl.title =
+            'Tổng giá trị giao dịch phát sinh (cả Thu và Chi) phân loại theo phương thức';
+    }
     const sideBadgeEl = document.getElementById('rep-side-chart-badge');
-    if (sideBadgeEl) sideBadgeEl.textContent = 'Hình thức';
+    if (sideBadgeEl) sideBadgeEl.textContent = 'Tổng phát sinh';
 
     // 3. Main Chart: Group cashflow by day
     const dayMap = Object.create(null);
@@ -1032,16 +1177,18 @@ function renderCashflowReportTab(
     // 4. Side Chart: Method / Category
     let transferAmount = 0;
     let cashAmount = 0;
+    let cardAmount = 0;
+    let unknownAmount = 0;
     validCashbook.forEach((c) => {
-        const m = (c.method || '').toLowerCase();
-        if (m.includes('khoản') || m.includes('vietqr') || m.includes('bank')) {
-            transferAmount += c.amount || 0;
-        } else {
-            cashAmount += c.amount || 0;
-        }
+        const norm = normalizePaymentMethod(c.method);
+        const amt = Number(c.amount) || 0;
+        if (norm === 'transfer') transferAmount += amt;
+        else if (norm === 'cash') cashAmount += amt;
+        else if (norm === 'card') cardAmount += amt;
+        else unknownAmount += amt;
     });
 
-    renderBreakdownBars('rep-breakdown-container', [
+    const cashbookBreakdown = [
         {
             label: 'Chuyển khoản ngân hàng',
             value: transferAmount,
@@ -1053,8 +1200,24 @@ function renderCashflowReportTab(
             value: cashAmount,
             dotClass: 'bg-emerald-500',
             barClass: 'bg-emerald-500'
+        },
+        {
+            label: 'Thẻ / POS',
+            value: cardAmount,
+            dotClass: 'bg-indigo-600',
+            barClass: 'bg-indigo-600'
         }
-    ]);
+    ];
+    if (unknownAmount > 0) {
+        cashbookBreakdown.push({
+            label: 'Phương thức khác / Chưa xác định',
+            value: unknownAmount,
+            dotClass: 'bg-gray-400',
+            barClass: 'bg-gray-400'
+        });
+    }
+
+    renderBreakdownBars('rep-breakdown-container', cashbookBreakdown);
 
     // 5. Table Rendering
     const tableTitleEl = document.getElementById('rep-table-title');

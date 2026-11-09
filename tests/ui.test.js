@@ -1013,7 +1013,7 @@ test('Toàn bộ chi nhánh aggregates products with same SKU across branches an
     dom.window.close();
 });
 
-test('Product table renders Chi tiết button and opens product detail modal with actions', async () => {
+test('Product table renders Chi tiết button and expands product detail inline without popup', async () => {
     const dom = browser(),
         w = dom.window;
     w.eval('KVStore.save = async () => {}');
@@ -1023,15 +1023,21 @@ test('Product table renders Chi tiết button and opens product detail modal wit
     assert.ok(actionBtn);
     assert.equal(actionBtn.textContent.trim(), 'Chi tiết');
 
-    // Open detail modal
-    w.viewProductDetail('SP001');
+    // Click Chi tiết button -> expands inline accordion downward without popup
+    actionBtn.click();
+    const detailRow = w.document.querySelector(
+        '#products-tbody tr.expand-detail-row[data-detail-key="SP001"]'
+    );
+    assert.ok(detailRow, 'Product SP001 detail row must expand inline');
     const modal = w.document.getElementById('product-detail-modal');
-    assert.ok(modal);
-    assert.ok(!modal.classList.contains('hidden'));
-    assert.equal(w.document.getElementById('prod-detail-code').textContent, 'SP001');
-    assert.ok(modal.textContent.includes('In mã'));
-    assert.ok(modal.textContent.includes('Sửa'));
-    assert.ok(modal.textContent.includes('Xóa'));
+    assert.ok(
+        modal && modal.classList.contains('hidden'),
+        'Product detail popup modal must remain hidden'
+    );
+    assert.equal(detailRow.querySelector('#prod-detail-code').textContent, 'SP001');
+    assert.ok(detailRow.textContent.includes('In mã'));
+    assert.ok(detailRow.textContent.includes('Chỉnh sửa'));
+    assert.ok(detailRow.textContent.includes('Xóa'));
 
     dom.window.close();
 });
@@ -3097,6 +3103,839 @@ test('UX/UI comprehensive fixes: DOM elements, tablet navigation, stocktake focu
         const catNext = doc.getElementById('catalog-page-next');
         assert.ok(catPrev.classList.contains('glass-btn-secondary'));
         assert.ok(catNext.classList.contains('glass-btn-secondary'));
+    } finally {
+        w.close();
+    }
+});
+
+test('Inline expandable rows (Accordion) for slips: Invoices, Imports, Stocktakes, and Transfers expand downward without popups', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+
+        // 1. INVOICE ROW EXPANSION
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'INV_001',
+                code: 'HD000100',
+                customer: 'Nguyễn Văn Nam',
+                phone: '0988776655',
+                time: '09/11/2026 10:00',
+                cashier: 'Nhất Trần',
+                branch: 'Kalo HCM',
+                total: 15000000,
+                paid: 15000000,
+                status: 'completed',
+                items: [{ code: 'SP01', name: 'MacBook Air M2', qty: 1, price: 15000000, imeis: ['MBA123456'] }]
+            }, {
+                id: 'INV_002',
+                code: 'HD000101',
+                customer: 'Trần Thị Mai',
+                phone: '0911223344',
+                time: '09/11/2026 11:30',
+                cashier: 'Nhất Trần',
+                branch: 'Kalo HCM',
+                total: 2000000,
+                paid: 2000000,
+                status: 'completed',
+                items: [{ code: 'SP02', name: 'Tai nghe AirPods 3', qty: 1, price: 2000000 }]
+            }];
+            renderInvoiceRows(KVStore.data.invoices, 'Chi nhánh chính');
+        `);
+
+        const invTbody = doc.getElementById('invoice-tbody');
+        assert.equal(invTbody.querySelectorAll('tr.expand-detail-row').length, 0);
+
+        // Click row HD000100 -> expands inline
+        const invRow1 = invTbody.querySelector('tr[data-export-key="HD000100"]');
+        assert.ok(invRow1);
+        invRow1.click();
+
+        let detailRow = invTbody.querySelector('tr.expand-detail-row[data-detail-key="HD000100"]');
+        assert.ok(detailRow, 'Invoice HD000100 should expand inline');
+        assert.ok(detailRow.textContent.includes('MacBook Air M2'));
+        assert.ok(detailRow.textContent.includes('MBA123456'));
+        assert.ok(detailRow.textContent.includes('Nguyễn Văn Nam'));
+        assert.ok(detailRow.querySelector('button[onclick*="collapseExpandedRow"]'));
+
+        // Modal should NOT be opened
+        assert.ok(doc.getElementById('invoice-detail-modal').classList.contains('hidden'));
+
+        // Click row HD000101 -> collapses HD000100 and expands HD000101
+        const invRow2 = invTbody.querySelector('tr[data-export-key="HD000101"]');
+        invRow2.click();
+        assert.equal(
+            invTbody.querySelector('tr.expand-detail-row[data-detail-key="HD000100"]'),
+            null
+        );
+        detailRow = invTbody.querySelector('tr.expand-detail-row[data-detail-key="HD000101"]');
+        assert.ok(detailRow, 'Invoice HD000101 should expand inline');
+        assert.ok(detailRow.textContent.includes('Tai nghe AirPods 3'));
+
+        // Click row HD000101 again -> collapses
+        invRow2.click();
+        assert.equal(invTbody.querySelectorAll('tr.expand-detail-row').length, 0);
+
+        // 2. IMPORT ROW EXPANSION
+        w.eval(`
+            KVStore.data.imports = [{
+                id: 'IMP_001',
+                code: 'PN000099',
+                nccName: 'Apple VN',
+                nccCode: 'NCC01',
+                time: '09/11/2026 09:00',
+                creator: 'Quản lý kho',
+                branch: 'Kalo HCM',
+                needPay: 50000000,
+                paid: 30000000,
+                status: 'completed',
+                items: [{ code: 'SP01', name: 'MacBook Air M2', qty: 2, price: 25000000, imeis: ['MBA01', 'MBA02'] }]
+            }];
+            renderImports();
+        `);
+        const impTbody = doc.getElementById('import-tbody');
+        const impRow = impTbody.querySelector('tr[data-export-key="PN000099"]');
+        assert.ok(impRow);
+        impRow.click();
+
+        const impDetail = impTbody.querySelector(
+            'tr.expand-detail-row[data-detail-key="PN000099"]'
+        );
+        assert.ok(impDetail, 'Import PN000099 should expand inline');
+        assert.ok(impDetail.textContent.includes('Apple VN'));
+        assert.ok(impDetail.textContent.includes('Còn nợ NCC:'));
+        assert.ok(impDetail.textContent.includes('20.000.000 đ'));
+        assert.ok(doc.getElementById('import-detail-modal').classList.contains('hidden'));
+
+        // 3. STOCKTAKE ROW EXPANSION
+        w.eval(`
+            KVStore.data.stocktakes = [{
+                id: 'ST_001',
+                code: 'KK00001',
+                time: '09/11/2026 08:30',
+                branch: 'Kalo HCM',
+                cashier: 'Admin',
+                status: 'draft',
+                totalActual: 10,
+                totalVariance: -2,
+                items: [{ code: 'SP01', name: 'MacBook Air M2', systemStock: 12, actualStock: 10, variance: -2, reason: 'Thất lạc' }]
+            }];
+            renderStocktakes();
+        `);
+        const stTbody = doc.getElementById('stocktakes-tbody');
+        const stRow = stTbody.querySelector('tr[data-export-key="KK00001"]');
+        assert.ok(stRow);
+        stRow.click();
+
+        const stDetail = stTbody.querySelector('tr.expand-detail-row[data-detail-key="ST_001"]');
+        assert.ok(stDetail, 'Stocktake KK00001 should expand inline');
+        assert.ok(stDetail.textContent.includes('Thất lạc'));
+        assert.ok(stDetail.textContent.includes('Cân bằng kho'));
+        assert.ok(doc.getElementById('stocktake-detail-modal').classList.contains('hidden'));
+
+        // 4. TRANSFER ROW EXPANSION
+        w.eval(`
+            KVStore.data.transfers = [{
+                id: 'TF_001',
+                code: 'CK00001',
+                time: '09/11/2026 08:00',
+                fromBranch: 'Kalo HCM',
+                toBranch: 'Chi nhánh 2',
+                cashier: 'Admin',
+                status: 'shipping',
+                totalQty: 3,
+                totalValue: 45000000,
+                items: [{ code: 'SP01', name: 'MacBook Air M2', qty: 3, price: 15000000, total: 45000000 }]
+            }];
+            renderTransfers();
+        `);
+        const tfTbody = doc.getElementById('transfers-tbody');
+        const tfRow = tfTbody.querySelector('tr[data-export-key="CK00001"]');
+        assert.ok(tfRow);
+        tfRow.click();
+
+        const tfDetail = tfTbody.querySelector('tr.expand-detail-row[data-detail-key="TF_001"]');
+        assert.ok(tfDetail, 'Transfer CK00001 should expand inline');
+        assert.ok(tfDetail.textContent.includes('Đang vận chuyển'));
+        assert.ok(doc.getElementById('transfer-detail-modal').classList.contains('hidden'));
+
+        // 5. PRODUCT ROW EXPANSION (Accordions without popup)
+        w.eval(`
+            KVStore.data.products = [{
+                id: 'PROD_ACC_01',
+                code: 'SP_ACC_01',
+                name: 'iPhone 15 Pro Max',
+                category: 'Điện thoại',
+                costPrice: 25000000,
+                price: 30000000,
+                stock: 5,
+                branch: 'Kalo HCM',
+                hasImei: true,
+                imeis: ['IMEI_998811', 'IMEI_998822']
+            }];
+            renderProducts();
+        `);
+        const prodTbody = doc.getElementById('products-tbody');
+        const prodRow = prodTbody.querySelector('tr[data-export-key="SP_ACC_01"]');
+        assert.ok(prodRow, 'Product row must exist');
+        prodRow.click();
+
+        const prodDetail = prodTbody.querySelector(
+            'tr.expand-detail-row[data-detail-key="SP_ACC_01"]'
+        );
+        assert.ok(prodDetail, 'Product SP_ACC_01 should expand inline');
+        assert.ok(prodDetail.textContent.includes('iPhone 15 Pro Max'));
+        assert.ok(prodDetail.textContent.includes('IMEI_998811'));
+        assert.ok(prodDetail.textContent.includes('In mã'));
+        assert.ok(prodDetail.textContent.includes('Chỉnh sửa'));
+        assert.ok(doc.getElementById('product-detail-modal').classList.contains('hidden'));
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 1 UX/UI: U1 POS viewport zoom, U2 Nav More on 320px & keyboard, U3 Form dirty protection', async () => {
+    const dom = browser(),
+        w = dom.window,
+        doc = w.document;
+    try {
+        // U1: Verify mobile/tablet POS layout CSS rules in index.html
+        const rawHtml = fs.readFileSync('index.html', 'utf8');
+        assert.ok(rawHtml.includes('@media (max-width: 1023px)'));
+        assert.ok(rawHtml.includes('zoom: 1 !important'));
+
+        // U2: Verify #nav-more and keyboard interaction
+        w.eval(`
+            setupNavigation();
+            setupKeyboardShortcuts();
+            showLoginScreen(false);
+            switchView('dashboard');
+        `);
+        const navMoreBtn = doc.getElementById('nav-more');
+        const navMoreMenu = doc.getElementById('nav-more-menu');
+        assert.ok(navMoreBtn);
+        assert.ok(navMoreMenu);
+        assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'false');
+        assert.ok(navMoreMenu.classList.contains('hidden'));
+
+        // Check imports and suppliers are inside nav-more-menu for mobile
+        assert.ok(navMoreMenu.querySelector('button[onclick*="imports"]'));
+        assert.ok(navMoreMenu.querySelector('button[onclick*="suppliers"]'));
+
+        // Keyboard ArrowDown on nav-more button opens menu
+        navMoreBtn.dispatchEvent(
+            new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
+        );
+        assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'true');
+        assert.ok(!navMoreMenu.classList.contains('hidden'));
+
+        // Keyboard Escape on menu closes menu and returns aria-expanded=false
+        navMoreMenu.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'false');
+        assert.ok(navMoreMenu.classList.contains('hidden'));
+
+        // U3: Form dirty protection
+        let confirmCalled = false;
+        let confirmReturnValue = false;
+        w.confirm = () => {
+            confirmCalled = true;
+            return confirmReturnValue;
+        };
+
+        // 1. Open customer modal and close immediately without editing -> No confirm prompt
+        confirmCalled = false;
+        w.openAddCustomerModal();
+        const custModal = doc.getElementById('customer-modal');
+        assert.ok(!custModal.classList.contains('hidden'));
+        w.closeModalWithCheck('customer-modal');
+        assert.ok(!confirmCalled, 'Clean modal should close without confirm prompt');
+        assert.ok(custModal.classList.contains('hidden'));
+
+        // 2. Open customer modal, edit a field, attempt to close -> Prompts confirm
+        confirmCalled = false;
+        confirmReturnValue = false; // User selects "Tiếp tục chỉnh sửa"
+        w.openAddCustomerModal();
+        doc.getElementById('cust-name').value = 'Khách Hàng Mới Chưa Lưu';
+        w.closeModalWithCheck('customer-modal');
+        assert.ok(confirmCalled, 'Dirty modal must prompt confirm before discarding');
+        assert.ok(
+            !custModal.classList.contains('hidden'),
+            'Modal must stay open if user declines discard'
+        );
+        assert.equal(
+            doc.getElementById('cust-name').value,
+            'Khách Hàng Mới Chưa Lưu',
+            'Form data must be preserved'
+        );
+
+        // 3. User hits Escape on dirty modal -> Also prompts confirm
+        confirmCalled = false;
+        confirmReturnValue = false;
+        w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        assert.ok(confirmCalled, 'Escape key on dirty modal must prompt confirm');
+        assert.ok(!custModal.classList.contains('hidden'));
+
+        // 4. User accepts discard -> Modal closes
+        confirmCalled = false;
+        confirmReturnValue = true;
+        w.closeModalWithCheck('customer-modal');
+        assert.ok(confirmCalled);
+        assert.ok(custModal.classList.contains('hidden'));
+
+        // 5. While submitting, modal cannot be closed
+        w.openAddCustomerModal();
+        w.setModalSubmitting('customer-modal', true);
+        const closed = w.closeModalWithCheck('customer-modal');
+        assert.equal(closed, false, 'Modal cannot be closed while save is in flight');
+        assert.ok(!custModal.classList.contains('hidden'));
+        w.setModalSubmitting('customer-modal', false);
+        w.closeModalWithCheck('customer-modal', true); // Force close
+        assert.ok(custModal.classList.contains('hidden'));
+    } finally {
+        w.close();
+    }
+});
+test('Phase 2 UX/UI: U4 Chart negative/zero representation and U5 payment classification', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const { document: doc } = w;
+
+        // --- U5 normalizePaymentMethod unit tests ---
+        assert.strictEqual(w.normalizePaymentMethod('cash'), 'cash');
+        assert.strictEqual(w.normalizePaymentMethod('Tiền mặt'), 'cash');
+        assert.strictEqual(w.normalizePaymentMethod('tien mat'), 'cash');
+        assert.strictEqual(w.normalizePaymentMethod('transfer'), 'transfer');
+        assert.strictEqual(w.normalizePaymentMethod('Chuyển khoản'), 'transfer');
+        assert.strictEqual(w.normalizePaymentMethod('vietqr'), 'transfer');
+        assert.strictEqual(w.normalizePaymentMethod('ngân hàng'), 'transfer');
+        assert.strictEqual(w.normalizePaymentMethod('card'), 'card');
+        assert.strictEqual(w.normalizePaymentMethod('Thẻ'), 'card');
+        assert.strictEqual(w.normalizePaymentMethod('quẹt thẻ'), 'card');
+        assert.strictEqual(w.normalizePaymentMethod('pos'), 'card');
+        assert.strictEqual(w.normalizePaymentMethod('unknown_gateway'), 'unknown');
+        assert.strictEqual(w.normalizePaymentMethod(''), 'unknown');
+        assert.strictEqual(w.normalizePaymentMethod(null), 'unknown');
+
+        // --- U4 Chart rendering: zero, negative, positive, missing cost ---
+        const testContainer = doc.createElement('div');
+        testContainer.id = 'test-chart-container';
+        doc.body.appendChild(testContainer);
+
+        // 1. Dual bar with positive, negative, zero and missing cost
+        const testDualItems = [
+            { label: 'D1', fullName: 'Day 1', val1: 10000000, val2: 2000000 },
+            { label: 'D2', fullName: 'Day 2', val1: 5000000, val2: -1500000 },
+            { label: 'D3', fullName: 'Day 3', val1: 0, val2: 0 },
+            { label: 'D4', fullName: 'Day 4', val1: 8000000, val2: null }
+        ];
+        w.renderDualBarChart(
+            'test-chart-container',
+            testDualItems,
+            'Doanh thu',
+            'bg-[#0066cc]',
+            'Lợi nhuận',
+            'bg-emerald-500'
+        );
+
+        const chartHtml = testContainer.innerHTML;
+        assert.ok(
+            chartHtml.includes('bg-rose-500'),
+            'Negative values must render downward rose bar'
+        );
+        assert.ok(
+            chartHtml.includes('(Lỗ)'),
+            'Negative profit must display (Lỗ) text indicator, not just color'
+        );
+        assert.ok(chartHtml.includes('style="height: 0%;"'), 'Zero values must have 0% height');
+        assert.ok(
+            chartHtml.includes('Thiếu giá vốn lịch sử'),
+            'Missing historic cost must show explicit note'
+        );
+
+        // 2. Single bar with zero value
+        const testSingleItems = [
+            { label: 'Cat A', value: 5000000 },
+            { label: 'Cat B', value: 0 }
+        ];
+        w.renderSingleBarChart('test-chart-container', testSingleItems, 'bg-[#0066cc]');
+        const singleHtml = testContainer.innerHTML;
+        assert.ok(
+            singleHtml.includes('style="height: 0%;"'),
+            'Single bar with value 0 must have 0% height'
+        );
+
+        // --- U5 Reports payment method classification ---
+        w.eval(`
+            KVStore.data = fixtureData;
+            KVStore.user = { id: 'u1', username: 'admin', role: 'admin' };
+            KVStore.data.cashbook = [
+                {
+                    code: 'PT01',
+                    time: '09/11/2026 10:00',
+                    type: 'thu',
+                    amount: 1000000,
+                    method: 'Tiền mặt',
+                    category: 'Khác'
+                },
+                {
+                    code: 'PT02',
+                    time: '09/11/2026 10:10',
+                    type: 'thu',
+                    amount: 2000000,
+                    method: 'Chuyển khoản',
+                    category: 'Khác'
+                },
+                {
+                    code: 'PT03',
+                    time: '09/11/2026 10:20',
+                    type: 'thu',
+                    amount: 3000000,
+                    method: 'Thẻ',
+                    category: 'Khác'
+                },
+                {
+                    code: 'PT04',
+                    time: '09/11/2026 10:30',
+                    type: 'thu',
+                    amount: 500000,
+                    method: 'ví_điện_tử_lạ',
+                    category: 'Khác'
+                }
+            ];
+            renderCashflowReportTab(KVStore.data, 'Kalo HCM', KVStore.data.products, 'all');
+        `);
+
+        const sideTitle = doc.getElementById('rep-side-chart-title')?.textContent;
+        assert.ok(
+            sideTitle && sideTitle.includes('Thu + Chi'),
+            'Cashbook side chart title must clarify Thu + Chi gross volume'
+        );
+
+        const breakdownContainer = doc.getElementById('rep-breakdown-container');
+        assert.ok(breakdownContainer, 'Breakdown container must exist');
+        const breakdownText = breakdownContainer.textContent;
+
+        assert.ok(
+            breakdownText.includes('Thẻ / POS'),
+            'Breakdown must include separate Thẻ / POS item'
+        );
+        assert.ok(breakdownText.includes('3.000.000 đ'), 'Thẻ / POS must have exactly 3,000,000 đ');
+        assert.ok(
+            breakdownText.includes('Tiền mặt tại quầy') && breakdownText.includes('1.000.000 đ'),
+            'Tiền mặt must only have 1,000,000 đ'
+        );
+        assert.ok(
+            breakdownText.includes('Chuyển khoản ngân hàng') &&
+                breakdownText.includes('2.000.000 đ'),
+            'Chuyển khoản must only have 2,000,000 đ'
+        );
+        assert.ok(
+            breakdownText.includes('Phương thức khác / Chưa xác định') &&
+                breakdownText.includes('500.000 đ'),
+            'Unknown method must be listed under other/unknown'
+        );
+
+        const totalExpected = 1000000 + 2000000 + 3000000 + 500000;
+        const totalActual = w.eval('KVStore.data.cashbook.reduce((s, c) => s + c.amount, 0)');
+        assert.strictEqual(totalActual, totalExpected, 'Total of all inputs matches expected');
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 3 UX/UI: U6 Keyboard accessible table & accordion, U7 labels & form validation, U10 admin dialog focus trap', async () => {
+    const dom = browser();
+    const w = dom.window;
+    try {
+        const doc = w.document;
+        // 1. Sortable headers have <button type="button"> and update aria-sort
+        const btnSortCode = doc.getElementById('btn-sort-prod-code');
+        assert.ok(btnSortCode, 'Product code sort button must exist inside th');
+        const thProdCode = btnSortCode.closest('th');
+        assert.ok(thProdCode, 'Parent th must exist');
+        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'none');
+
+        // Click sort
+        w.eval(`
+            setupNavigation();
+            showLoginScreen(false);
+            switchView('products');
+            sortProductsBy('code');
+        `);
+        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'ascending');
+        w.eval(`sortProductsBy('code');`);
+        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'descending');
+
+        // 2. Table rows keyboard accordion & ARIA (U6)
+        w.eval(`
+            KVStore.data.stocktakes = [{ id: 'st1', code: 'PKK001', branch: 'Kalo HCM', cashier: 'Admin', totalActual: 5, totalVariance: 0, status: 'balanced', items: [] }];
+            renderStocktakes();
+        `);
+        const stRow = doc.querySelector('#stocktakes-tbody tr[data-export-key="PKK001"]');
+        assert.ok(stRow, 'Stocktake row must exist');
+        assert.strictEqual(stRow.getAttribute('tabindex'), '0');
+        assert.strictEqual(stRow.getAttribute('role'), 'row');
+        assert.strictEqual(stRow.getAttribute('aria-expanded'), 'false');
+        const stTrigger = doc.getElementById('st-trigger-st1');
+        assert.ok(stTrigger, 'Stocktake trigger button must exist');
+        assert.strictEqual(stTrigger.getAttribute('aria-controls'), 'st-detail-st1');
+
+        // Keydown Enter expands detail
+        w.eval(`toggleStocktakeRowDetail('st1')`);
+        const expandedStRow = doc.querySelector('#stocktakes-tbody tr[data-export-key="PKK001"]');
+        assert.ok(expandedStRow, 'Expanded stocktake row must exist');
+        assert.strictEqual(expandedStRow.getAttribute('aria-expanded'), 'true');
+        const stDetail = doc.getElementById('st-detail-st1');
+        assert.ok(stDetail, 'Expanded stocktake detail row must have id st-detail-st1');
+        assert.strictEqual(stDetail.getAttribute('aria-labelledby'), 'st-trigger-st1');
+
+        // 3. Form input labels & search controls (U7)
+        const prodSearch = doc.getElementById('product-search-input');
+        assert.ok(
+            prodSearch.getAttribute('aria-label'),
+            'Product search input must have aria-label'
+        );
+        const posNote = doc.getElementById('pos-order-note');
+        assert.ok(posNote.getAttribute('aria-label'), 'POS note input must have aria-label');
+
+        // 4. Form validation errors (U7)
+        const nameInput = doc.getElementById('prod-name');
+        w.setFieldValidationError(nameInput, 'Vui lòng nhập tên hàng hóa');
+        assert.strictEqual(nameInput.getAttribute('aria-invalid'), 'true');
+        assert.strictEqual(nameInput.getAttribute('aria-describedby'), 'prod-name-error');
+        const errEl = doc.getElementById('prod-name-error');
+        assert.ok(
+            errEl && errEl.textContent.includes('Vui lòng nhập tên'),
+            'Visible error message element must exist'
+        );
+
+        // Clear error
+        w.clearFieldValidationError(nameInput);
+        assert.strictEqual(nameInput.hasAttribute('aria-invalid'), false);
+        assert.strictEqual(doc.getElementById('prod-name-error'), null);
+
+        // 5. Admin modal accessibility (U10)
+        const adminHtml = fs.readFileSync('admin.html', 'utf8');
+        assert.ok(
+            adminHtml.includes('id="modal-reset-pwd"'),
+            'Admin reset password modal must exist'
+        );
+        assert.ok(
+            adminHtml.includes('role="dialog"'),
+            'Admin reset password modal must have role="dialog"'
+        );
+        assert.ok(
+            adminHtml.includes('aria-modal="true"'),
+            'Admin reset password modal must have aria-modal="true"'
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 4 UX/UI: U8 permission-aware forms & status, U9 typography and touch targets', async () => {
+    const dom = browser();
+    const w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            setupNavigation();
+            showLoginScreen(false);
+        `);
+
+        // 1. Non-admin customer debt locked with explanation (U8)
+        w.eval(`
+            KVStore.user = { id: 'u2', username: 'cashier1', role: 'cashier', permissions: { customers: true } };
+            openAddCustomerModal();
+        `);
+        const custDebt = doc.getElementById('cust-debt');
+        assert.strictEqual(custDebt.readOnly, true, 'Non-admin customer debt must be readonly');
+        assert.ok(
+            custDebt.classList.contains('cursor-not-allowed'),
+            'Non-admin debt must have disabled style'
+        );
+        const custDebtNote = doc.getElementById('cust-debt-note');
+        assert.ok(
+            custDebtNote && custDebtNote.textContent.includes('Quản trị viên'),
+            'Inline debt note must explain admin requirement'
+        );
+
+        // 2. Admin customer debt editable without note (U8)
+        w.eval(`
+            KVStore.user = { id: 'u1', username: 'admin', role: 'admin', permissions: {} };
+            openAddCustomerModal();
+        `);
+        assert.strictEqual(custDebt.readOnly, false, 'Admin customer debt must be editable');
+        assert.strictEqual(
+            doc.getElementById('cust-debt-note'),
+            null,
+            'Admin should not see debt restriction note'
+        );
+
+        // 3. Product edit mode reflects state: "Tồn kho hiện tại", locked stock, cost note, IMEI lock (U8)
+        w.eval(`
+            KVStore.user = { id: 'u2', username: 'cashier1', role: 'cashier', permissions: { products: true, posPrice: false } };
+            KVStore.data.products = [{ id: 'sp1', code: 'SP001', name: 'iPhone 15', branch: 'Kalo HCM', stock: 10, costPrice: 15000000, price: 20000000, hasImei: true, imeis: [] }];
+            openAddProductModal('SP001');
+        `);
+        const stockLabel = doc.getElementById('prod-stock-label');
+        assert.strictEqual(
+            stockLabel.textContent,
+            'Tồn kho hiện tại',
+            'Edit product must display "Tồn kho hiện tại"'
+        );
+        const prodStock = doc.getElementById('prod-stock');
+        assert.strictEqual(prodStock.readOnly, true, 'Existing product stock must be locked');
+        assert.ok(
+            doc.getElementById('prod-stock-note'),
+            'Stock adjustment note must direct to import/stocktake'
+        );
+        assert.ok(
+            doc.getElementById('prod-cost-note'),
+            'Cost note must explain automatic weighted cost'
+        );
+        const imeiCheck = doc.getElementById('prod-has-imei');
+        assert.strictEqual(
+            imeiCheck.disabled,
+            true,
+            'IMEI mode checkbox must be locked for existing product'
+        );
+        assert.ok(doc.getElementById('prod-imei-note'), 'IMEI lock note must be displayed');
+        const prodPrice = doc.getElementById('prod-price');
+        assert.strictEqual(
+            prodPrice.readOnly,
+            true,
+            'Price must be locked when user lacks posPrice permission'
+        );
+        assert.ok(
+            doc.getElementById('prod-price-note'),
+            'Price note must explain lack of posPrice permission'
+        );
+
+        // 4. Product add mode reflects clean initial state (U8)
+        w.eval(`openAddProductModal();`);
+        assert.strictEqual(
+            stockLabel.textContent,
+            'Tồn kho ban đầu',
+            'Add product must display "Tồn kho ban đầu"'
+        );
+        assert.strictEqual(prodStock.readOnly, false, 'New product stock must be editable');
+        assert.strictEqual(doc.getElementById('prod-stock-note'), null);
+        assert.strictEqual(doc.getElementById('prod-cost-note'), null);
+        assert.strictEqual(doc.getElementById('prod-price-note'), null);
+        assert.strictEqual(doc.getElementById('prod-imei-note'), null);
+        assert.strictEqual(imeiCheck.disabled, false, 'New product IMEI checkbox must be enabled');
+
+        // 5. U9 Mobile Typography and responsive form layout
+        const indexHtml = fs.readFileSync('index.html', 'utf8');
+        assert.ok(
+            indexHtml.includes('font-size: 16px !important;'),
+            'CSS must enforce 16px input font size on mobile to prevent iOS auto-zoom'
+        );
+        assert.ok(
+            indexHtml.includes('grid-cols-1 sm:grid-cols-2'),
+            'Forms must use grid-cols-1 on mobile and sm:grid-cols-2 on tablet/desktop'
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 3 UX/UI: U6 Keyboard accessible table & accordion, U7 labels & form validation, U10 admin dialog focus trap', async () => {
+    const dom = browser();
+    const w = dom.window;
+    try {
+        const doc = w.document;
+        // 1. Sortable headers have <button type="button"> and update aria-sort
+        const btnSortCode = doc.getElementById('btn-sort-prod-code');
+        assert.ok(btnSortCode, 'Product code sort button must exist inside th');
+        const thProdCode = btnSortCode.closest('th');
+        assert.ok(thProdCode, 'Parent th must exist');
+        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'none');
+
+        // Click sort
+        w.eval(`
+            setupNavigation();
+            showLoginScreen(false);
+            switchView('products');
+            sortProductsBy('code');
+        `);
+        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'ascending');
+        w.eval(`sortProductsBy('code');`);
+        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'descending');
+
+        // 2. Table rows keyboard accordion & ARIA (U6)
+        w.eval(`
+            KVStore.data.stocktakes = [{ id: 'st1', code: 'PKK001', branch: 'Kalo HCM', cashier: 'Admin', totalActual: 5, totalVariance: 0, status: 'balanced', items: [] }];
+            renderStocktakes();
+        `);
+        const stRow = doc.querySelector('#stocktakes-tbody tr[data-export-key="PKK001"]');
+        assert.ok(stRow, 'Stocktake row must exist');
+        assert.strictEqual(stRow.getAttribute('tabindex'), '0');
+        assert.strictEqual(stRow.getAttribute('role'), 'row');
+        assert.strictEqual(stRow.getAttribute('aria-expanded'), 'false');
+        const stTrigger = doc.getElementById('st-trigger-st1');
+        assert.ok(stTrigger, 'Stocktake trigger button must exist');
+        assert.strictEqual(stTrigger.getAttribute('aria-controls'), 'st-detail-st1');
+
+        // Keydown Enter expands detail
+        w.eval(`toggleStocktakeRowDetail('st1')`);
+        const expandedStRow = doc.querySelector('#stocktakes-tbody tr[data-export-key="PKK001"]');
+        assert.ok(expandedStRow, 'Expanded stocktake row must exist');
+        assert.strictEqual(expandedStRow.getAttribute('aria-expanded'), 'true');
+        const stDetail = doc.getElementById('st-detail-st1');
+        assert.ok(stDetail, 'Expanded stocktake detail row must have id st-detail-st1');
+        assert.strictEqual(stDetail.getAttribute('aria-labelledby'), 'st-trigger-st1');
+
+        // 3. Form input labels & search controls (U7)
+        const prodSearch = doc.getElementById('product-search-input');
+        assert.ok(
+            prodSearch.getAttribute('aria-label'),
+            'Product search input must have aria-label'
+        );
+        const posNote = doc.getElementById('pos-order-note');
+        assert.ok(posNote.getAttribute('aria-label'), 'POS note input must have aria-label');
+
+        // 4. Form validation errors (U7)
+        const nameInput = doc.getElementById('prod-name');
+        w.setFieldValidationError(nameInput, 'Vui lòng nhập tên hàng hóa');
+        assert.strictEqual(nameInput.getAttribute('aria-invalid'), 'true');
+        assert.strictEqual(nameInput.getAttribute('aria-describedby'), 'prod-name-error');
+        const errEl = doc.getElementById('prod-name-error');
+        assert.ok(
+            errEl && errEl.textContent.includes('Vui lòng nhập tên'),
+            'Visible error message element must exist'
+        );
+
+        // Clear error
+        w.clearFieldValidationError(nameInput);
+        assert.strictEqual(nameInput.hasAttribute('aria-invalid'), false);
+        assert.strictEqual(doc.getElementById('prod-name-error'), null);
+
+        // 5. Admin modal accessibility (U10)
+        const adminHtml = fs.readFileSync('admin.html', 'utf8');
+        assert.ok(
+            adminHtml.includes('id="modal-reset-pwd"'),
+            'Admin reset password modal must exist'
+        );
+        assert.ok(
+            adminHtml.includes('role="dialog"'),
+            'Admin reset password modal must have role="dialog"'
+        );
+        assert.ok(
+            adminHtml.includes('aria-modal="true"'),
+            'Admin reset password modal must have aria-modal="true"'
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('Phase 4 UX/UI: U8 permission-aware forms & status, U9 typography and touch targets', async () => {
+    const dom = browser();
+    const w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            setupNavigation();
+            showLoginScreen(false);
+        `);
+
+        // 1. Non-admin customer debt locked with explanation (U8)
+        w.eval(`
+            KVStore.user = { id: 'u2', username: 'cashier1', role: 'cashier', permissions: { customers: true } };
+            openAddCustomerModal();
+        `);
+        const custDebt = doc.getElementById('cust-debt');
+        assert.strictEqual(custDebt.readOnly, true, 'Non-admin customer debt must be readonly');
+        assert.ok(
+            custDebt.classList.contains('cursor-not-allowed'),
+            'Non-admin debt must have disabled style'
+        );
+        const custDebtNote = doc.getElementById('cust-debt-note');
+        assert.ok(
+            custDebtNote && custDebtNote.textContent.includes('Quản trị viên'),
+            'Inline debt note must explain admin requirement'
+        );
+
+        // 2. Admin customer debt editable without note (U8)
+        w.eval(`
+            KVStore.user = { id: 'u1', username: 'admin', role: 'admin', permissions: {} };
+            openAddCustomerModal();
+        `);
+        assert.strictEqual(custDebt.readOnly, false, 'Admin customer debt must be editable');
+        assert.strictEqual(
+            doc.getElementById('cust-debt-note'),
+            null,
+            'Admin should not see debt restriction note'
+        );
+
+        // 3. Product edit mode reflects state: "Tồn kho hiện tại", locked stock, cost note, IMEI lock (U8)
+        w.eval(`
+            KVStore.user = { id: 'u2', username: 'cashier1', role: 'cashier', permissions: { products: true, posPrice: false } };
+            KVStore.data.products = [{ id: 'sp1', code: 'SP001', name: 'iPhone 15', branch: 'Kalo HCM', stock: 10, costPrice: 15000000, price: 20000000, hasImei: true, imeis: [] }];
+            openAddProductModal('SP001');
+        `);
+        const stockLabel = doc.getElementById('prod-stock-label');
+        assert.strictEqual(
+            stockLabel.textContent,
+            'Tồn kho hiện tại',
+            'Edit product must display "Tồn kho hiện tại"'
+        );
+        const prodStock = doc.getElementById('prod-stock');
+        assert.strictEqual(prodStock.readOnly, true, 'Existing product stock must be locked');
+        assert.ok(
+            doc.getElementById('prod-stock-note'),
+            'Stock adjustment note must direct to import/stocktake'
+        );
+        assert.ok(
+            doc.getElementById('prod-cost-note'),
+            'Cost note must explain automatic weighted cost'
+        );
+        const imeiCheck = doc.getElementById('prod-has-imei');
+        assert.strictEqual(
+            imeiCheck.disabled,
+            true,
+            'IMEI mode checkbox must be locked for existing product'
+        );
+        assert.ok(doc.getElementById('prod-imei-note'), 'IMEI lock note must be displayed');
+        const prodPrice = doc.getElementById('prod-price');
+        assert.strictEqual(
+            prodPrice.readOnly,
+            true,
+            'Price must be locked when user lacks posPrice permission'
+        );
+        assert.ok(
+            doc.getElementById('prod-price-note'),
+            'Price note must explain lack of posPrice permission'
+        );
+
+        // 4. Product add mode reflects clean initial state (U8)
+        w.eval(`openAddProductModal();`);
+        assert.strictEqual(
+            stockLabel.textContent,
+            'Tồn kho ban đầu',
+            'Add product must display "Tồn kho ban đầu"'
+        );
+        assert.strictEqual(prodStock.readOnly, false, 'New product stock must be editable');
+        assert.strictEqual(doc.getElementById('prod-stock-note'), null);
+        assert.strictEqual(doc.getElementById('prod-cost-note'), null);
+        assert.strictEqual(doc.getElementById('prod-price-note'), null);
+        assert.strictEqual(doc.getElementById('prod-imei-note'), null);
+        assert.strictEqual(imeiCheck.disabled, false, 'New product IMEI checkbox must be enabled');
+
+        // 5. U9 Mobile Typography and responsive form layout
+        const indexHtml = fs.readFileSync('index.html', 'utf8');
+        assert.ok(
+            indexHtml.includes('font-size: 16px !important;'),
+            'CSS must enforce 16px input font size on mobile to prevent iOS auto-zoom'
+        );
+        assert.ok(
+            indexHtml.includes('grid-cols-1 sm:grid-cols-2'),
+            'Forms must use grid-cols-1 on mobile and sm:grid-cols-2 on tablet/desktop'
+        );
     } finally {
         w.close();
     }

@@ -94,8 +94,11 @@ function listInvoices(user, params) {
         const actualPage = Math.min(page, pages);
         const rows = d
             .prepare(
-                `SELECT i.id,i.code,i.time,i.customer,i.phone,i.total,i.paid,i.status,
-            i.branch,i.redPaid,${returned} AS hasReturned FROM invoices i
+                `SELECT i.id,i.code,i.time,i.customer,i.phone,i.total,i.paid,COALESCE(i.discount,0) AS discount,i.status,
+            i.branch,i.redPaid,
+            (SELECT r.code FROM returns r WHERE r.invoiceCode=i.code LIMIT 1) AS returnCode,
+            (SELECT c.code FROM customers c WHERE (c.phone IS NOT NULL AND c.phone != '' AND c.phone=i.phone) OR c.name=i.customer LIMIT 1) AS customerCode,
+            ${returned} AS hasReturned FROM invoices i
             WHERE ${clause} ORDER BY i.rowid LIMIT ? OFFSET ?`
             )
             .all(...args, pageSize, (actualPage - 1) * pageSize)
@@ -103,8 +106,11 @@ function listInvoices(user, params) {
                 ...row,
                 total: Number(row.total) || 0,
                 paid: Number(row.paid) || 0,
+                discount: Number(row.discount) || 0,
                 redPaid: !!row.redPaid,
-                hasReturned: !!row.hasReturned
+                hasReturned: !!row.hasReturned,
+                returnCode: row.returnCode || '',
+                customerCode: row.customerCode || ''
             }));
         d.exec('COMMIT');
         return { success: true, rows, total, page: actualPage, pageSize, pages, revision };
