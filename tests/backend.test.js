@@ -726,6 +726,40 @@ test('login session hides credentials, enforces origin and invalidates after pas
     assert.equal((await request('GET', '/api/data', undefined, cookie)).status, 401);
 });
 
+test('session survives a server restart because it is persisted to SQLite', async () => {
+    const login = await request('POST', '/api/login', {
+        username: 'admin',
+        password: 'Test-password-123',
+        remember: true
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const token = cookie.slice('minikiot_session='.length);
+    assert.ok(token, 'cookie phải chứa token phiên');
+
+    // Phiên đã được lưu vào SQLite ngay khi đăng nhập.
+    const stored = db.readSession(token);
+    assert.ok(stored, 'phiên phải được ghi xuống bảng sessions');
+    assert.equal(stored.userId, admin.id);
+    assert.equal(stored.csrfToken, login.json.csrfToken);
+    assert.ok(stored.expires > Date.now(), 'phiên remember phải có thời hạn trong tương lai');
+
+    // Mô phỏng "restart": xoá cache RAM toàn cục của server, chỉ còn dữ liệu SQLite.
+    require('../server').__resetSessionCacheForTest();
+    const again = await request('GET', '/api/data', undefined, cookie);
+    assert.equal(again.status, 200, 'sau restart, phiên vẫn được khôi phục từ SQLite');
+    assert.equal(again.json.user.username, 'admin');
+
+    // Đăng xuất xoá phiên khỏi SQLite; token cũ không còn hợp lệ.
+    const logout = await request('POST', '/api/logout', {}, cookie, {
+        'x-nkiot-csrf': login.json.csrfToken
+    });
+    assert.equal(logout.status, 200);
+    assert.equal(db.readSession(token), null);
+    require('../server').__resetSessionCacheForTest();
+    assert.equal((await request('GET', '/api/data', undefined, cookie)).status, 401);
+});
+
 test('branch permissions and revoked sessions are enforced by the server', async () => {
     const data = db.getAllData();
     const cashier = {
@@ -2076,6 +2110,92 @@ test('catalog price change is forbidden when posPrice is explicitly false (F1)',
     });
 });
 
+test('delivery order books COD without customer debt and enforces one active shipment', () => {
+    const data = db.getAllData();
+    data.products[0] = { ...data.products[0], hasImei: false, imeis: [], stock: 5 };
+    data.customers[0] = { ...data.customers[0], debt: 0 };
+    db.saveAllData(data);
+    const inv = command('sale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1 }],
+        given: 0,
+        paymentMethod: 'cash',
+        customerId: 'C',
+        cod: true
+    }).result;
+    assert.equal(inv.cod, true);
+    assert.equal(db.getAllData().customers[0].debt, 0, 'COD không ghi công nợ khách');
+    const delivery = command('delivery', {
+        branch: 'A',
+        invoiceId: inv.id,
+        receiverName: 'Người nhận',
+        receiverPhone: '0987654321',
+        receiverAddress: 'Địa chỉ nhận',
+        senderName: 'Cửa hàng',
+        senderPhone: '0912345678',
+        senderAddress: 'Địa chỉ gửi',
+        paymentType: 3,
+        weightGram: 500,
+        carrierFee: 30000
+    }).result;
+    assert.equal(delivery.codRequested, inv.total);
+    assert.equal(delivery.status, 'confirmed');
+    assert.equal(db.getAllData().delivery_cod_records[0].status, 'unpaid');
+    assert.equal(db.getAllData().delivery_tasks[0].action, 'create_order');
+    assert.throws(
+        () => command('delivery', { branch: 'A', invoiceId: inv.id, receiverPhone: '0987654321' }),
+        /đã tồn tại/
+    );
+});
+
+test('cancelDelivery only before handover and marks it cancelled', () => {
+    const data = db.getAllData();
+    data.products[0] = { ...data.products[0], hasImei: false, imeis: [], stock: 5 };
+    db.saveAllData(data);
+    const inv = command('sale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1 }],
+        given: 0,
+        cod: true
+    }).result;
+    const delivery = command('delivery', {
+        branch: 'A',
+        invoiceId: inv.id,
+        receiverPhone: '0987654321',
+        receiverName: 'Người nhận'
+    }).result;
+    const cancelled = command('cancelDelivery', { id: delivery.id }).result;
+    assert.equal(cancelled.status, 'cancelled');
+    assert.ok(cancelled.cancelledAt);
+    assert.throws(() => command('cancelDelivery', { id: delivery.id }), /đã hủy/);
+});
+
+test('delivery requires shipping permission and valid receiver phone', () => {
+    const data = db.getAllData();
+    const worker = {
+        ...admin,
+        id: 'SHIPLESS',
+        username: 'shipless',
+        role: 'custom',
+        branch: 'A',
+        branches: ['A'],
+        permissions: { pos: true }
+    };
+    data.users.push(worker);
+    db.saveAllData(data);
+    assert.throws(
+        () =>
+            command(
+                'delivery',
+                { branch: 'A', invoiceId: 'HDX', receiverPhone: '1' },
+                app.revision(),
+                crypto.randomUUID(),
+                worker
+            ),
+        { status: 403 }
+    );
+});
+
 test('catalog stock and cost edits on products with transaction history are rejected (F2)', () => {
     sell(); // creates an invoice history for product SP in branch A
     const data = db.getAllData();
@@ -2160,4 +2280,154 @@ test('transfer and receive into branch without existing product preserves metada
     assert.equal(received.condition, 'good');
     assert.equal(received.conditionDetail, 'Mặt kính xước nhẹ');
     assert.equal(received.description, 'Mô tả chi tiết sản phẩm');
+});
+
+test('deliverySale supports Viettel Post and self-delivery atomically and cancelDelivery restores IMEI & stock', () => {
+    const data = db.getAllData();
+    const shipStaff = {
+        ...admin,
+        id: 'SHIP_ONLY',
+        username: 'shiponly',
+        name: 'Nhân viên Ship',
+        role: 'custom',
+        branch: 'A',
+        branches: ['A'],
+        status: 'active',
+        permissions: { shipping: true }
+    };
+    data.users.push(shipStaff);
+    data.customers[0] = { ...data.customers[0], debt: 150000 };
+    db.saveAllData(data);
+
+    const projected = app.project(db.readSnapshot(), shipStaff);
+    assert.ok(projected.products.length > 0, 'shipping permission must read products');
+    assert.ok(projected.customers.length > 0, 'shipping permission must read customers');
+
+    const initialStock = db.getAllData().products[0].stock;
+    const targetImei = db.getAllData().products[0].imeis[0];
+    const vtpRes = command(
+        'deliverySale',
+        {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1, imeis: [targetImei] }],
+            customerId: 'C',
+            given: 40000,
+            paymentMethod: 'transfer',
+            shippingFeeToCustomer: 35000,
+            carrierType: 'viettelpost',
+            service: 'VCN',
+            paymentType: 3,
+            weightGram: 250,
+            receiverName: 'Nguyễn Văn Nhận',
+            receiverPhone: '0909111222',
+            receiverAddress: '123 Lê Lợi, Q1, TP.HCM'
+        },
+        app.revision(),
+        crypto.randomUUID(),
+        shipStaff
+    ).result;
+
+    assert.equal(vtpRes.invoice.channel, 'delivery');
+    assert.equal(vtpRes.invoice.cod, true);
+    assert.equal(vtpRes.invoice.status, 'completed');
+    assert.equal(vtpRes.invoice.paid, 40000);
+    assert.equal(vtpRes.delivery.carrierType, 'viettelpost');
+    assert.equal(vtpRes.delivery.codRequested, vtpRes.invoice.total + 35000 - 40000);
+    assert.equal(
+        db.getAllData().delivery_tasks.some((t) => t.deliveryId === vtpRes.delivery.id),
+        true
+    );
+    assert.equal(db.getAllData().customers[0].debt, 150000);
+
+    command(
+        'cancelDelivery',
+        { id: vtpRes.delivery.id, reason: 'Khách đổi ý' },
+        app.revision(),
+        crypto.randomUUID(),
+        shipStaff
+    );
+    const afterCancel = db.getAllData();
+    assert.equal(afterCancel.products[0].stock, initialStock);
+    assert.ok(afterCancel.products[0].imeis.includes(targetImei));
+    assert.equal(afterCancel.invoices.find((i) => i.id === vtpRes.invoice.id).status, 'cancelled');
+    assert.equal(afterCancel.customers[0].debt, 150000);
+});
+
+test('self-delivery lifecycle: no VTP task, COD settlement books cashbook receipt, returnDelivery restores IMEI, and /api/invoices filters channel', async () => {
+    const targetImei = db.getAllData().products[0].imeis[0];
+    const selfRes = command('deliverySale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1, imeis: [targetImei] }],
+        given: 0,
+        carrierType: 'self',
+        carrierName: 'Grab / Ahamove / XanhSM',
+        shipperName: 'Anh Tài Xế',
+        shipperPhone: '0911222333',
+        shipmentCode: 'GRAB-8899',
+        shippingFeeToCustomer: 25000,
+        receiverName: 'Trần Thị Khách',
+        receiverPhone: '0988777666',
+        receiverAddress: '45 Nguyễn Huệ, Q1'
+    }).result;
+
+    assert.equal(selfRes.delivery.carrierType, 'self');
+    assert.equal(selfRes.delivery.shipmentCode, 'GRAB-8899');
+    assert.equal(
+        db.getAllData().delivery_tasks.some((t) => t.deliveryId === selfRes.delivery.id),
+        false
+    );
+
+    command('updateDeliveryStatus', { id: selfRes.delivery.id, status: 'handed_over' });
+    const settled = command('settleDeliveryCod', {
+        id: selfRes.delivery.id,
+        method: 'transfer'
+    }).result;
+    assert.equal(settled.status, 'delivered');
+    assert.equal(settled.codStatus, 'settled');
+    const codVoucher = db
+        .getAllData()
+        .cashbook.find((c) => c.invoiceId === selfRes.invoice.id && c.category === 'Thu hộ COD');
+    assert.ok(codVoucher);
+    assert.equal(codVoucher.amount, selfRes.delivery.codRequested);
+
+    const secondImei = db.getAllData().products[0].imeis[0];
+    const retOrder = command('deliverySale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1, imeis: [secondImei] }],
+        given: 30000,
+        paymentMethod: 'cash',
+        carrierType: 'self',
+        receiverName: 'Khách Hoàn Hàng',
+        receiverPhone: '0977000111',
+        receiverAddress: 'Hà Nội'
+    }).result.delivery;
+    command('updateDeliveryStatus', { id: retOrder.id, status: 'returning' });
+    const returned = command('returnDelivery', { id: retOrder.id }).result;
+    assert.equal(returned.status, 'returned');
+    assert.ok(db.getAllData().products[0].imeis.includes(secondImei));
+
+    sell();
+    const login = await request('POST', '/api/login', {
+        username: 'admin',
+        password: 'Test-password-123'
+    });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const onlyCounter = await request(
+        'GET',
+        '/api/invoices?branch=A&channel=counter',
+        undefined,
+        cookie
+    );
+    const onlyDelivery = await request(
+        'GET',
+        '/api/invoices?branch=A&channel=delivery',
+        undefined,
+        cookie
+    );
+    assert.equal(onlyCounter.status, 200);
+    assert.equal(onlyDelivery.status, 200);
+    assert.ok(onlyCounter.json.rows.length >= 1);
+    assert.ok(onlyDelivery.json.rows.length >= 2);
+    assert.ok(onlyCounter.json.rows.every((r) => r.channel === 'counter'));
+    assert.ok(onlyDelivery.json.rows.every((r) => r.channel === 'delivery'));
 });

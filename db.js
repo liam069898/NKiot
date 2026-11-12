@@ -23,7 +23,8 @@ const ENTITY_TABLES = [
     'transfers',
     'users',
     'shared_products',
-    'share_orders'
+    'share_orders',
+    'delivery_orders'
 ];
 let db = null;
 const actualDbPath = DB_PATH;
@@ -624,6 +625,65 @@ function getAllData() {
             }));
     } catch {}
 
+    // 16. Delivery Orders
+    let delivery_orders = [];
+    try {
+        delivery_orders = d
+            .prepare('SELECT * FROM delivery_orders ORDER BY rowid')
+            .all()
+            .map((r) => ({
+                ...r,
+                paymentType: Number(r.paymentType) || 1,
+                weightGram: Number(r.weightGram) || 0,
+                productTotal: Number(r.productTotal) || 0,
+                prepaid: Number(r.prepaid) || 0,
+                codRequested: Number(r.codRequested) || 0,
+                carrierFee: Number(r.carrierFee) || 0,
+                shippingFeeToCustomer: Number(r.shippingFeeToCustomer) || 0,
+                printExpiresAt: r.printExpiresAt ? Number(r.printExpiresAt) : null
+            }));
+    } catch {}
+
+    // 17. Delivery status history (đọc phục vụ xem lịch sử, không ghi qua snapshot)
+    let delivery_status_history = [];
+    try {
+        delivery_status_history = d
+            .prepare('SELECT * FROM delivery_status_history ORDER BY rowid DESC LIMIT 2000')
+            .all()
+            .map((r) => ({
+                ...r,
+                statusCode: Number(r.statusCode) || 0
+            }));
+    } catch {}
+
+    // 18. Delivery tasks
+    let delivery_tasks = [];
+    try {
+        delivery_tasks = d
+            .prepare('SELECT * FROM delivery_tasks ORDER BY rowid')
+            .all()
+            .map((r) => ({
+                ...r,
+                attempt: Number(r.attempt) || 0,
+                nextAttemptAt: r.nextAttemptAt ? Number(r.nextAttemptAt) : null
+            }));
+    } catch {}
+
+    // 19. Delivery COD records
+    let delivery_cod_records = [];
+    try {
+        delivery_cod_records = d
+            .prepare('SELECT * FROM delivery_cod_records ORDER BY rowid')
+            .all()
+            .map((r) => ({
+                ...r,
+                codRequested: Number(r.codRequested) || 0,
+                codCollected: Number(r.codCollected) || 0,
+                carrierFee: Number(r.carrierFee) || 0,
+                settlementAmount: Number(r.settlementAmount) || 0
+            }));
+    } catch {}
+
     const result = {
         settings: Object.keys(settings).length
             ? { ...defaultData.settings, ...settings }
@@ -641,7 +701,11 @@ function getAllData() {
         transfers,
         users,
         shared_products,
-        share_orders
+        share_orders,
+        delivery_orders,
+        delivery_status_history,
+        delivery_tasks,
+        delivery_cod_records
     };
     for (const table of ENTITY_TABLES)
         result[table] = (result[table] || []).map((row) => {
@@ -759,6 +823,104 @@ function readSaleForWrite(input) {
 // `extra` (fields without a dedicated column) is appended by writeTable().
 const cols = (s) => s.split(' ');
 const items = (v) => (typeof v === 'string' ? v : JSON.stringify(v || []));
+// Persists delivery side tables that are not full entity snapshots (history/tasks/cod).
+function writeDeliverySideTables(d, data) {
+    const upsert = (table, rows, columns, toParams) => {
+        d.exec(`DELETE FROM ${table}`);
+        if (!Array.isArray(rows) || !rows.length) return;
+        const placeholders = columns.map(() => '?').join(',');
+        const insert = d.prepare(
+            `INSERT INTO ${table} (${columns.join(',')}) VALUES (${placeholders})`
+        );
+        for (const row of rows) insert.run(...toParams(row));
+    };
+    upsert(
+        'delivery_status_history',
+        data.delivery_status_history,
+        [
+            'id',
+            'deliveryId',
+            'orderNumber',
+            'statusCode',
+            'statusName',
+            'statusDate',
+            'reasonCode',
+            'note',
+            'receivedAt',
+            'processedAt'
+        ],
+        (r) => [
+            r.id || '',
+            r.deliveryId || '',
+            r.orderNumber || '',
+            Number(r.statusCode) || 0,
+            r.statusName || '',
+            r.statusDate || '',
+            r.reasonCode || null,
+            r.note || '',
+            r.receivedAt || '',
+            r.processedAt || null
+        ]
+    );
+    upsert(
+        'delivery_tasks',
+        data.delivery_tasks,
+        [
+            'id',
+            'deliveryId',
+            'action',
+            'payload',
+            'attempt',
+            'nextAttemptAt',
+            'status',
+            'lastError',
+            'createdAt',
+            'updatedAt'
+        ],
+        (r) => [
+            r.id || '',
+            r.deliveryId || '',
+            r.action || '',
+            typeof r.payload === 'string' ? r.payload : JSON.stringify(r.payload || {}),
+            Number(r.attempt) || 0,
+            r.nextAttemptAt ? Number(r.nextAttemptAt) : null,
+            r.status || 'pending',
+            r.lastError || '',
+            r.createdAt || '',
+            r.updatedAt || ''
+        ]
+    );
+    upsert(
+        'delivery_cod_records',
+        data.delivery_cod_records,
+        [
+            'id',
+            'deliveryId',
+            'codRequested',
+            'codCollected',
+            'carrierFee',
+            'settlementAmount',
+            'status',
+            'settledAt',
+            'note',
+            'createdAt',
+            'updatedAt'
+        ],
+        (r) => [
+            r.id || '',
+            r.deliveryId || '',
+            Number(r.codRequested) || 0,
+            Number(r.codCollected) || 0,
+            Number(r.carrierFee) || 0,
+            Number(r.settlementAmount) || 0,
+            r.status || 'unpaid',
+            r.settledAt || null,
+            r.note || '',
+            r.createdAt || '',
+            r.updatedAt || ''
+        ]
+    );
+}
 const ROW_WRITERS = {
     branches: [
         cols('id code name phone address isDefault note'),
@@ -1022,6 +1184,49 @@ const ROW_WRITERS = {
             o.respondedAt || null,
             o.completedAt || null
         ]
+    ],
+    delivery_orders: [
+        cols(
+            'id invoiceId branch code orderNumber senderName senderPhone senderAddress senderProvinceId senderDistrictId senderWardId receiverName receiverPhone receiverAddress receiverProvinceId receiverDistrictId receiverWardId service serviceAdd paymentType weightGram productType note productTotal prepaid codRequested carrierFee shippingFeeToCustomer shipmentReference shipmentCode printCode printExpiresAt status createdAt updatedAt cancelledAt'
+        ),
+        (o) => [
+            o.id || '',
+            o.invoiceId || '',
+            o.branch || FALLBACK_BRANCH,
+            o.code || '',
+            o.orderNumber || '',
+            o.senderName || '',
+            o.senderPhone || '',
+            o.senderAddress || '',
+            o.senderProvinceId || '',
+            o.senderDistrictId || '',
+            o.senderWardId || '',
+            o.receiverName || '',
+            o.receiverPhone || '',
+            o.receiverAddress || '',
+            o.receiverProvinceId || '',
+            o.receiverDistrictId || '',
+            o.receiverWardId || '',
+            o.service || '',
+            o.serviceAdd || '',
+            Number(o.paymentType) || 1,
+            Number(o.weightGram) || 0,
+            o.productType || 'HH',
+            o.note || '',
+            Number(o.productTotal) || 0,
+            Number(o.prepaid) || 0,
+            Number(o.codRequested) || 0,
+            Number(o.carrierFee) || 0,
+            Number(o.shippingFeeToCustomer) || 0,
+            o.shipmentReference || '',
+            o.shipmentCode || '',
+            o.printCode || '',
+            o.printExpiresAt ? Number(o.printExpiresAt) : null,
+            o.status || 'draft',
+            o.createdAt || '',
+            o.updatedAt || '',
+            o.cancelledAt || null
+        ]
     ]
 };
 
@@ -1182,6 +1387,7 @@ function saveAllData(data, withinTransaction = false, options = {}) {
         for (const table of ENTITY_TABLES)
             if (Array.isArray(data[table]))
                 writeTable(d, table, data[table], !!options.fullRewrite);
+        writeDeliverySideTables(d, data);
         if (data.recentActivities)
             d.prepare("INSERT OR REPLACE INTO app_meta VALUES ('recentActivities', ?)").run(
                 JSON.stringify(data.recentActivities)
@@ -1265,6 +1471,59 @@ function assertReadableRecords() {
     }
 }
 
+// Phiên đăng nhập bền vững: lưu xuống bảng `sessions` để khởi động lại máy chủ vẫn giữ
+// phiên. Token là khóa chính; expires lưu epoch milliseconds. Các hàm này dùng trực tiếp
+// kết nối SQLite, độc lập với snapshot dữ liệu nghiệp vụ.
+function readSession(token) {
+    if (!token) return null;
+    const d = getDb();
+    try {
+        const row = d.prepare('SELECT * FROM sessions WHERE token=?').get(token);
+        if (!row) return null;
+        return {
+            token: row.token,
+            userId: row.userId,
+            password: row.password,
+            csrfToken: row.csrfToken,
+            expires: Number(row.expires)
+        };
+    } catch {
+        return null;
+    }
+}
+function writeSession(session) {
+    const d = getDb();
+    d.prepare(
+        `INSERT INTO sessions (token, userId, password, csrfToken, expires)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(token) DO UPDATE SET
+           userId=excluded.userId, password=excluded.password,
+           csrfToken=excluded.csrfToken, expires=excluded.expires`
+    ).run(
+        session.token,
+        session.userId,
+        session.password,
+        session.csrfToken,
+        Number(session.expires)
+    );
+}
+function deleteSession(token) {
+    if (!token) return;
+    try {
+        getDb().prepare('DELETE FROM sessions WHERE token=?').run(token);
+    } catch {}
+}
+function deleteSessionsForUser(userId) {
+    try {
+        getDb().prepare('DELETE FROM sessions WHERE userId=?').run(userId);
+    } catch {}
+}
+function deleteExpiredSessions(now = Date.now()) {
+    try {
+        getDb().prepare('DELETE FROM sessions WHERE expires <= ?').run(now);
+    } catch {}
+}
+
 module.exports = {
     assertReadableRecords,
     ENTITY_TABLES,
@@ -1277,5 +1536,10 @@ module.exports = {
     readSaleForWrite,
     saveSaleData,
     saveAllData,
-    getStats
+    getStats,
+    readSession,
+    writeSession,
+    deleteSession,
+    deleteSessionsForUser,
+    deleteExpiredSessions
 };

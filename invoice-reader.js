@@ -20,11 +20,13 @@ function listInvoices(user, params) {
     const pageSize = integer(params.get('pageSize'), 50, 1, 100);
     const expectedRevision = integer(params.get('revision'), null, 0, Number.MAX_SAFE_INTEGER);
     const status = params.get('status') || 'all';
+    const channel = params.get('channel') || 'all';
     const date = params.get('date') || 'all';
     const q = (params.get('q') || '').trim().toLowerCase();
     if (q.length > 200) bad('Từ khóa quá dài.');
     if (!['all', 'completed', 'returned', 'cancelled'].includes(status))
         bad('Trạng thái không hợp lệ.');
+    if (!['all', 'counter', 'delivery'].includes(channel)) bad('Kênh bán không hợp lệ.');
     if (
         ![
             'all',
@@ -72,10 +74,14 @@ function listInvoices(user, params) {
             );
             args.push(...scope);
         }
-        const returned = `(EXISTS(SELECT 1 FROM returns r WHERE r.invoiceCode=i.code) OR COALESCE(json_extract(CASE WHEN json_valid(i.extra) THEN i.extra ELSE '{}' END,'$.hasReturned'),0) != 0)`;
+        const extraJson = `CASE WHEN json_valid(i.extra) THEN i.extra ELSE '{}' END`;
+        const returned = `(EXISTS(SELECT 1 FROM returns r WHERE r.invoiceCode=i.code) OR COALESCE(json_extract(${extraJson},'$.hasReturned'),0) != 0)`;
+        const isDeliveryExpr = `(COALESCE(json_extract(${extraJson},'$.cod'),0) != 0 OR json_extract(${extraJson},'$.channel')='delivery' OR EXISTS(SELECT 1 FROM delivery_orders d WHERE d.invoiceId=i.id))`;
         if (status === 'completed') where.push(`i.status='completed' AND NOT ${returned}`);
         if (status === 'returned') where.push(returned);
         if (status === 'cancelled') where.push("i.status='cancelled'");
+        if (channel === 'delivery') where.push(isDeliveryExpr);
+        if (channel === 'counter') where.push(`NOT ${isDeliveryExpr}`);
         if (q) {
             where.push(
                 "(instr(nkiot_lower(i.code),?)>0 OR instr(nkiot_lower(i.customer),?)>0 OR instr(COALESCE(i.phone,''),?)>0)"
@@ -97,7 +103,9 @@ function listInvoices(user, params) {
                 `SELECT i.id,i.code,i.time,i.customer,i.phone,i.total,i.paid,COALESCE(i.discount,0) AS discount,i.status,
             i.branch,i.redPaid,
             (SELECT r.code FROM returns r WHERE r.invoiceCode=i.code LIMIT 1) AS returnCode,
+            (SELECT d.code FROM delivery_orders d WHERE d.invoiceId=i.id LIMIT 1) AS deliveryCode,
             (SELECT c.code FROM customers c WHERE (c.phone IS NOT NULL AND c.phone != '' AND c.phone=i.phone) OR c.name=i.customer LIMIT 1) AS customerCode,
+            ${isDeliveryExpr} AS isDelivery,
             ${returned} AS hasReturned FROM invoices i
             WHERE ${clause} ORDER BY i.rowid LIMIT ? OFFSET ?`
             )
@@ -108,6 +116,9 @@ function listInvoices(user, params) {
                 paid: Number(row.paid) || 0,
                 discount: Number(row.discount) || 0,
                 redPaid: !!row.redPaid,
+                isDelivery: !!row.isDelivery,
+                channel: row.isDelivery ? 'delivery' : 'counter',
+                deliveryCode: row.deliveryCode || '',
                 hasReturned: !!row.hasReturned,
                 returnCode: row.returnCode || '',
                 customerCode: row.customerCode || ''

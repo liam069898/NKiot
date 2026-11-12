@@ -14,17 +14,19 @@ const hub = require('./hub-client');
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 // Idempotency records must outlive any realistic offline/pending reconciliation window.
 const PROCESSED_REQUEST_RETENTION_MS = 30 * 86400000;
-const BRANCH_SCOPED = new Set([
-    'products',
-    'invoices',
-    'imports',
-    'cashbook',
-    'returns',
-    'stocktakes'
-]);
+const BRANCH_SCOPED = new Set(['products', 'invoices', 'imports', 'stocktakes', 'delivery_orders']);
 const readable = {
-    products: ['pos', 'products', 'imports', 'stocktakes', 'transfers', 'reports', 'dashboard'],
-    customers: ['pos', 'customers', 'invoices', 'cashbook'],
+    products: [
+        'pos',
+        'shipping',
+        'products',
+        'imports',
+        'stocktakes',
+        'transfers',
+        'reports',
+        'dashboard'
+    ],
+    customers: ['pos', 'shipping', 'customers', 'invoices', 'cashbook'],
     suppliers: ['suppliers', 'imports', 'cashbook'],
     invoices: ['invoices', 'reports', 'dashboard'],
     imports: ['imports', 'reports', 'dashboard'],
@@ -34,13 +36,20 @@ const readable = {
     transfers: ['transfers'],
     users: ['users'],
     shared_products: ['shared_warehouse', 'products'],
-    share_orders: ['shared_warehouse', 'products']
+    share_orders: ['shared_warehouse', 'products'],
+    delivery_orders: ['shipping', 'invoices', 'pos']
 };
 // Builds the user's view without deep-cloning: new arrays/objects at the top level, rows shared
 // with `data`. Callers must treat the result as read-only (it may come from the frozen snapshot).
 function project(data, user) {
     const result = { ...data },
         branches = new Set(allowedBranches(user, data));
+    const canShip = ['shipping', 'invoices', 'pos'].some((p) => can(user, p));
+    const visibleDeliveryIds = canShip
+        ? new Set(
+              (data.delivery_orders || []).filter((r) => branches.has(branchOf(r))).map((r) => r.id)
+          )
+        : new Set();
     for (const [table, perms] of Object.entries(readable)) {
         if (!perms.some((p) => can(user, p))) result[table] = [];
         else if (BRANCH_SCOPED.has(table))
@@ -51,6 +60,15 @@ function project(data, user) {
             );
     }
     result.users = result.users.map(publicUser);
+    result.delivery_status_history = (data.delivery_status_history || []).filter((r) =>
+        visibleDeliveryIds.has(r.deliveryId)
+    );
+    result.delivery_tasks = (data.delivery_tasks || []).filter((r) =>
+        visibleDeliveryIds.has(r.deliveryId)
+    );
+    result.delivery_cod_records = (data.delivery_cod_records || []).filter((r) =>
+        visibleDeliveryIds.has(r.deliveryId)
+    );
     // shared_products and share_orders are not branch-scoped; all shared items are globally visible.
     if (result.shared_products && result.shared_products.length) {
         result.shared_products = result.shared_products.filter(

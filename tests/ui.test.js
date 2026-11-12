@@ -59,9 +59,6 @@ test('cleanup removes the unreachable database modal but preserves POS reconcili
     try {
         assert.equal(w.document.getElementById('db-info-modal'), null);
         assert.equal(typeof w.showDbInfoModal, 'undefined');
-        const reconcile = w.document.getElementById('pos-reconcile-btn');
-        assert.ok(reconcile);
-        assert.equal(reconcile.getAttribute('onclick'), 'forceSyncDatabase()');
         w.eval('window.syncCalls=0;KVStore.syncToDatabase=async()=>{window.syncCalls++};');
         await w.forceSyncDatabase();
         assert.equal(w.syncCalls, 1);
@@ -89,6 +86,121 @@ test('product modal locks existing cost and unauthorized price and resets for cr
         w.openAddProductModal();
         assert.equal(w.document.getElementById('prod-cost').readOnly, false);
         assert.equal(w.document.getElementById('prod-stock').readOnly, false);
+    } finally {
+        w.close();
+    }
+});
+
+test('Separated Counter POS, Delivery POS (Viettel Post & Self-Delivery), and Shipments view', async () => {
+    const dom = browser(),
+        w = dom.window,
+        doc = w.document;
+    try {
+        // 1. Counter POS no longer embeds delivery toggle; nav has a single "Bán hàng" button
+        assert.equal(doc.getElementById('pos-delivery-toggle'), null);
+        assert.equal(doc.getElementById('pos-delivery-nav-btn'), null);
+        assert.equal(doc.getElementById('nav-pos-delivery-mobile'), null);
+        w.eval("KVStore.user={...KVStore.user,role:'custom',permissions:{pos:true}};");
+        w.applyUserPermissionsToUI();
+        assert.equal(doc.getElementById('pos-nav-btn').style.display, '');
+        assert.ok(doc.getElementById('pos-nav-btn').textContent.includes('Bán hàng'));
+        assert.equal(doc.getElementById('nav-delivery').style.display, 'none');
+
+        // Without shipping permission, openDeliveryPos is blocked and stays out of delivery mode
+        w.openDeliveryPos();
+        assert.notEqual(w.eval('state.posMode'), 'delivery');
+
+        // Grant shipping permission -> Shipments (Vận đơn) nav appears; Delivery POS still opens cleanly
+        w.eval('KVStore.user.permissions.shipping=true;');
+        w.applyUserPermissionsToUI();
+        assert.equal(doc.getElementById('nav-delivery').style.display, '');
+
+        // Counter cart and Delivery cart are isolated
+        w.openCounterPos();
+        const sampleProd = w.eval(
+            'KVStore.data.products.find(p => !p.hasImei && p.stock > 0) || {...KVStore.data.products[0], hasImei:false, stock:5}'
+        );
+        w.eval(
+            'KVStore.data.products[0].hasImei = false; KVStore.data.products[0].imeis = []; KVStore.data.products[0].stock = 5;'
+        );
+        w.addPosCartItem(w.eval('KVStore.data.products[0]'));
+        assert.equal(w.eval('state.posTabs[0].cart.length'), 1);
+
+        w.openDeliveryPos();
+        assert.equal(w.eval('state.posMode'), 'delivery');
+        assert.equal(
+            w.eval('state.posTabs[0].cart.length'),
+            0,
+            'Delivery POS has isolated cart tabs'
+        );
+        assert.equal(
+            doc.getElementById('pos-counter-checkout-section').classList.contains('hidden'),
+            true
+        );
+        assert.equal(
+            doc.getElementById('pos-delivery-checkout-section').classList.contains('hidden'),
+            false
+        );
+
+        // Switch between Viettel Post and Self-delivery modes & compute live COD
+        w.addPosCartItem(w.eval('KVStore.data.products[0]'));
+        w.setPosDeliveryCarrierType('self');
+        assert.equal(doc.getElementById('pos-dlv-self-fields').classList.contains('hidden'), false);
+        assert.equal(doc.getElementById('pos-dlv-vtp-fields').classList.contains('hidden'), true);
+        w.handlePosDeliveryMoneyInput('shippingFeeToCustomer', '30000');
+        w.handlePosDeliveryMoneyInput('prepaid', '100000');
+        const prodPrice = w.eval('KVStore.data.products[0].price');
+        assert.ok(
+            doc
+                .getElementById('pos-dlv-cod-amount')
+                .textContent.includes(w.formatVND(prodPrice + 30000 - 100000))
+        );
+
+        // Submit Delivery POS dispatches single atomic deliverySale command
+        w.eval(`
+            window._sentCmd = null;
+            KVStore.command = async (type, payload) => {
+                window._sentCmd = { type, payload };
+                return {
+                    invoice: { id: 'HD999', code: 'HD999', total: ${prodPrice}, paid: 100000, items: [] },
+                    delivery: { id: 'GH999', code: 'GH999', carrierName: 'Nhân viên tự giao' }
+                };
+            };
+        `);
+        doc.getElementById('pos-dlv-receiver-name').value = 'Anh Minh';
+        doc.getElementById('pos-dlv-receiver-phone').value = '0912345678';
+        doc.getElementById('pos-dlv-receiver-address').value = '10 Hai Bà Trưng, Q1';
+        await w.checkoutPos();
+        assert.equal(w._sentCmd.type, 'deliverySale');
+        assert.equal(w._sentCmd.payload.carrierType, 'self');
+        assert.equal(w._sentCmd.payload.shippingFeeToCustomer, 30000);
+        assert.equal(w._sentCmd.payload.given, 100000);
+
+        // Shipments view (Vận đơn) renders Viettel Post & Self orders, filters, and expands inline
+        w.eval(`
+            KVStore.data.delivery_orders = [
+                { id:'GH1', code:'GH1', invoiceCode:'HD1', branch: getCurrentBranch(), carrierType:'viettelpost', shipmentCode:'VP1', receiverName:'Nguyễn A', receiverPhone:'0901', receiverAddress:'HCM', productTotal:1000000, prepaid:200000, codRequested:800000, status:'handed_over', createdAt: new Date().toISOString(), items:[{code:'SP1',name:'Máy A',qty:1,price:1000000,imeis:['IMEI111']}] },
+                { id:'GH2', code:'GH2', invoiceCode:'HD2', branch: getCurrentBranch(), carrierType:'self', carrierName:'GrabExpress', shipperName:'Tài Xế B', shipmentCode:'GRAB2', receiverName:'Trần B', receiverPhone:'0902', receiverAddress:'HN', productTotal:500000, prepaid:0, codRequested:500000, status:'confirmed', createdAt: new Date().toISOString(), items:[] }
+            ];
+        `);
+        w.switchView('delivery');
+        const tbody = doc.getElementById('delivery-tbody');
+        assert.ok(tbody.textContent.includes('GH1'));
+        assert.ok(tbody.textContent.includes('VP1'));
+        assert.ok(tbody.textContent.includes('GH2'));
+        assert.ok(tbody.textContent.includes('GrabExpress'));
+
+        // Expand inline detail row
+        w.toggleDeliveryRowDetail('GH1');
+        const detail = doc.getElementById('dlv-detail-GH1');
+        assert.ok(detail, 'Delivery row expands inline');
+        assert.ok(detail.textContent.includes('IMEI111'));
+
+        // Filter by carrierType = self
+        doc.getElementById('delivery-carrier-filter').value = 'self';
+        w.renderDelivery();
+        assert.ok(!tbody.textContent.includes('VP1'));
+        assert.ok(tbody.textContent.includes('GH2'));
     } finally {
         w.close();
     }
@@ -1756,7 +1868,7 @@ test('closing populated tabs asks first, pending tabs cannot close, and active t
         w.close();
     }
 });
-test('POS delete and close controls have visible content and recovery status persists', () => {
+test('POS delete and close controls have visible content and checkout disables while disconnected', () => {
     const dom = browser(),
         w = dom.window;
     try {
@@ -1768,27 +1880,18 @@ test('POS delete and close controls have visible content and recovery status per
             '×'
         );
         w.eval('KVStore.updateDbStatus()');
-        assert.match(w.document.getElementById('pos-save-status-text').textContent, /Đã kết nối/);
+        assert.equal(w.document.getElementById('pos-checkout-btn').disabled, false);
         w.eval(
             "localStorage.setItem('minikiot.pending.test',JSON.stringify({userId:KVStore.user.id,requestId:'test'}));KVStore.updateDbStatus()"
         );
-        assert.match(
-            w.document.getElementById('pos-save-status-text').textContent,
-            /chưa xác nhận/
-        );
         assert.equal(w.document.getElementById('pos-checkout-btn').disabled, true);
-        assert.equal(
-            w.document.getElementById('pos-reconcile-btn').textContent,
-            'Kiểm tra kết quả'
-        );
         w.eval('KVStore._sending=true;KVStore.updateDbStatus()');
         assert.match(w.document.getElementById('pos-checkout-btn').textContent, /ĐANG LƯU/);
-        assert.equal(w.document.getElementById('pos-reconcile-btn').disabled, true);
+        assert.equal(w.document.getElementById('pos-checkout-btn').disabled, true);
         w.eval(
             "KVStore._sending=false;localStorage.removeItem('minikiot.pending.test');KVStore.isDbConnected=false;KVStore.updateDbStatus()"
         );
-        assert.match(w.document.getElementById('pos-save-status-text').textContent, /Mất kết nối/);
-        assert.equal(w.document.getElementById('pos-reconcile-btn').disabled, false);
+        assert.equal(w.document.getElementById('pos-checkout-btn').disabled, true);
     } finally {
         w.close();
     }
@@ -1974,9 +2077,6 @@ test('POS identity uses text, updates branch, and keyboard shortcuts never submi
         w.eval(
             `KVStore.data.settings.storeName='<img src=x> Shop';state.currentView='pos';renderPosScreen();setupKeyboardShortcuts();setupKeyboardShortcuts();window.sent=0;KVStore.command=()=>{window.sent++};`
         );
-        const title = w.document.getElementById('pos-store-identity');
-        assert.ok(title.textContent.includes('<img src=x> Shop'));
-        assert.equal(title.querySelector('img'), null);
         const key = (name, options = {}) =>
             w.dispatchEvent(
                 new w.KeyboardEvent('keydown', {

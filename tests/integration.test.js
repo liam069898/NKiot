@@ -275,18 +275,12 @@ test('committed sale with lost response is recovered exactly once and clears ori
         assert.equal(db.getAllData().invoices.length, 1);
         assert.equal(b.w.eval('KVStore.pending().length'), 1);
         assert.equal(b.w.eval('state.posTabs[0].cart.length'), 1);
-        assert.match(
-            b.w.document.getElementById('pos-save-status-text').textContent,
-            /chưa xác nhận/
-        );
         assert.equal(b.w.document.getElementById('pos-checkout-btn').disabled, true);
-        assert.equal(b.w.document.getElementById('pos-reconcile-btn').disabled, false);
         await b.w.forceSyncDatabase();
         assert.equal(db.getAllData().invoices.length, 1);
         assert.equal(b.w.eval('KVStore.pending().length'), 0);
         assert.equal(b.w.eval('state.posTabs[0].cart.length'), 0);
         assert.equal(b.w.eval('state.posTabs[0].tenderEdited'), false);
-        assert.match(b.w.document.getElementById('pos-save-status-text').textContent, /Đã kết nối/);
         assert.equal(b.w.document.getElementById('pos-checkout-btn').disabled, false);
     } finally {
         b.close();

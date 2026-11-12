@@ -20,7 +20,8 @@ const CODE_PREFIXES = {
     NV: { table: 'users', minPad: 4 },
     CAT: { table: 'categories', minPad: 2 },
     SKC: { table: 'shared_products', minPad: 3 },
-    YC: { table: 'share_orders', minPad: 6 }
+    YC: { table: 'share_orders', minPad: 6 },
+    GH: { table: 'delivery_orders', minPad: 6 }
 };
 function generateCode(data, prefix = 'TX') {
     const cleanPrefix = String(prefix || 'TX').toUpperCase();

@@ -51,7 +51,7 @@ function customerFor(data, inv) {
     const matches = data.customers.filter(
         (c) => c.phone === inv.phone && c.code !== RETAIL_CUSTOMER_CODE
     );
-    if (matches.length !== 1 && inv.total > inv.paid)
+    if (matches.length !== 1 && inv.total > inv.paid && !inv.cod)
         fail('Cần xác định khách hàng duy nhất cho hóa đơn cũ trước khi xử lý công nợ.');
     return matches.length === 1 ? matches[0] : null;
 }
@@ -184,8 +184,10 @@ function averageCost(stock, cost, qty, price) {
     const value = BigInt(stock) * BigInt(amount(cost)) + BigInt(qty) * BigInt(amount(price));
     return amount(Number((value + BigInt(totalQty) / 2n) / BigInt(totalQty)));
 }
-function sale(data, user, input) {
-    requirePermission(user, 'pos');
+function sale(data, user, input, options = {}) {
+    requirePermission(user, options.permission || 'pos');
+    const cod = options.cod === true || input.cod === true;
+    const channel = options.channel || (cod ? 'delivery' : 'counter');
     const br = branch(data, user, input.branch);
     if (!Array.isArray(input.items) || !input.items.length) fail('Giỏ hàng trống.');
     const seen = new Set();
@@ -290,7 +292,8 @@ function sale(data, user, input) {
         ];
     }
 
-    if (retail && paid < total) fail('Khách lẻ chưa trả đủ tiền. Hãy chọn khách hàng để ghi nợ.');
+    if (!cod && retail && paid < total)
+        fail('Khách lẻ chưa trả đủ tiền. Hãy chọn khách hàng để ghi nợ.');
 
     const distinctMethods = new Set(finalPayments.filter((p) => p.amount > 0).map((p) => p.method));
     const invoicePaymentMethod =
@@ -308,8 +311,8 @@ function sale(data, user, input) {
         bookingVersion: 2,
         payments: finalPayments,
         customerId: retail ? null : cust.id,
-        customer: cust?.name || 'Khách lẻ',
-        phone: cust?.phone || 'Tại quầy',
+        customer: cust?.name || options.receiverCustomerName || 'Khách lẻ',
+        phone: cust?.phone || options.receiverPhone || 'Tại quầy',
         items,
         total,
         discount,
@@ -321,13 +324,15 @@ function sale(data, user, input) {
         cashier: user.name,
         branch: br,
         paymentMethod: invoicePaymentMethod,
-        note: input.note || ''
+        note: input.note || '',
+        cod,
+        channel
     };
     data.invoices.unshift(invoice);
     if (!retail) {
-        cust.debt = amount(cust.debt + total - paid);
         cust.totalSpent = amount(cust.totalSpent + total);
         cust.points = amount(cust.points + Math.floor(total / 100000));
+        if (!cod) cust.debt = amount(cust.debt + total - paid);
     }
     if (finalPayments.length > 1) {
         for (const p of finalPayments) {
@@ -368,8 +373,8 @@ function lineNet(inv, item) {
     const total = inv.items.reduce((s, i) => s + i.qty * i.price, 0);
     return total ? ratio(amount(item.qty * item.price), inv.total, total, true) : 0;
 }
-function returnGoods(data, user, input, cancel = false) {
-    requirePermission(user, 'invoices');
+function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
+    if (!skipPermCheck) requirePermission(user, 'invoices');
     const inv = data.invoices.find((i) => i.id === input.invoiceId || i.code === input.invoiceId);
     if (!inv) fail('Không tìm thấy hóa đơn.');
     branch(data, user, branchOf(inv));
@@ -458,8 +463,10 @@ function returnGoods(data, user, input, cancel = false) {
         value = remaining;
     }
     const cust = customerFor(data, inv);
-    const debtReduction = Math.min(value, Math.max(0, inv.total - already - inv.paid));
-    const refund = value - debtReduction;
+    const uncollected = Math.max(0, inv.total - already - inv.paid);
+    const debtReduction = inv.cod ? 0 : Math.min(value, uncollected);
+    const codReduction = inv.cod ? Math.min(value, uncollected) : 0;
+    const refund = value - debtReduction - codReduction;
     if (debtReduction && !cust) fail('Không xác định được khách hàng để giảm công nợ.');
     if (cust) {
         cust.debt = Math.max(0, cust.debt - debtReduction);
@@ -1174,6 +1181,585 @@ function updateSharedProduct(data, user, input) {
     return sp;
 }
 
+// ============================================================
+// Delivery (Bán giao hàng) — giữ hàng khi xác nhận, xuất kho khi bàn giao.
+// ============================================================
+
+const DELIVERY_FIELDS = [
+    'senderName',
+    'senderPhone',
+    'senderAddress',
+    'senderProvinceId',
+    'senderDistrictId',
+    'senderWardId',
+    'receiverName',
+    'receiverPhone',
+    'receiverAddress',
+    'receiverProvinceId',
+    'receiverDistrictId',
+    'receiverWardId',
+    'service',
+    'serviceAdd',
+    'paymentType',
+    'weightGram',
+    'productType',
+    'note',
+    'prepaid',
+    'carrierFee',
+    'shippingFeeToCustomer'
+];
+
+function text(value, max) {
+    return typeof value === 'string' ? value.slice(0, max) : '';
+}
+
+function appendDeliveryHistory(data, order, statusCode, statusName, note = '') {
+    if (!Array.isArray(data.delivery_status_history)) data.delivery_status_history = [];
+    const now = new Date().toISOString();
+    const uid = Math.random().toString(36).slice(2, 6);
+    data.delivery_status_history.unshift({
+        id: `DH-${order.id}-${statusCode}-${Date.now()}-${uid}`,
+        deliveryId: order.id,
+        orderNumber: order.shipmentCode || order.code || order.id,
+        statusCode,
+        statusName: text(statusName, 200),
+        statusDate: now,
+        reasonCode: null,
+        note: text(note, 500),
+        receivedAt: now,
+        processedAt: now
+    });
+}
+
+function deliveryOrder(data, user, input) {
+    requirePermission(user, 'shipping');
+    const br = branch(data, user, input.branch);
+    const invoiceId = text(input.invoiceId, 200);
+    if (!invoiceId) fail('Thiếu hóa đơn bán giao hàng.');
+    const inv = data.invoices.find((i) => i.id === invoiceId || i.code === invoiceId);
+    if (!inv) fail('Không tìm thấy hóa đơn.');
+    if (branchOf(inv) !== br) fail('Hóa đơn thuộc chi nhánh khác.', 403);
+    if (!inv.cod) fail('Hóa đơn không phải đơn giao hàng.');
+    const exists = data.delivery_orders.find(
+        (o) => o.invoiceId === inv.id && o.status !== 'cancelled'
+    );
+    if (exists) fail('Đơn giao hàng đã tồn tại cho hóa đơn này.', 409);
+
+    const carrierType = input.carrierType === 'self' ? 'self' : 'viettelpost';
+    if (input.carrierType !== undefined && !['viettelpost', 'self'].includes(input.carrierType))
+        fail('Hình thức vận chuyển không hợp lệ.');
+
+    const paymentType = Number(input.paymentType || (carrierType === 'self' ? 3 : 1));
+    if (![1, 2, 3, 4].includes(paymentType)) fail('Loại vận đơn không hợp lệ.');
+    const receiverPhone = text(input.receiverPhone, 200).trim();
+    if (!/^[0-9+ -]{6,40}$/.test(receiverPhone)) fail('Số điện thoại người nhận không hợp lệ.');
+    const receiverName = text(input.receiverName, 200).trim();
+    const weight = Number(input.weightGram ?? 0);
+    if (!Number.isSafeInteger(weight) || weight < 0 || weight > 1000000)
+        fail('Trọng lượng không hợp lệ.');
+
+    const productTotal = amount(inv.total, 'Tiền hàng');
+    const shippingFeeToCustomer = amount(input.shippingFeeToCustomer ?? 0, 'Phí giao thu khách');
+    const shippingPrepaid = amount(input.shippingPrepaid ?? 0, 'Phí giao trả trước');
+    const prepaid = amount(inv.paid + shippingPrepaid, 'Tiền đã nhận trước');
+    const codRequested = Math.max(0, productTotal + shippingFeeToCustomer - prepaid);
+    const carrierFee = amount(input.carrierFee ?? 0, 'Cước vận chuyển');
+    const carrierName =
+        carrierType === 'self'
+            ? text(input.carrierName, 120).trim() || 'Tự giao / Ship ngoài'
+            : 'Viettel Post';
+
+    const now = new Date().toISOString();
+    const id = code(data, 'GH');
+    const codStatus = codRequested === 0 ? 'settled' : prepaid > 0 ? 'partial_prepaid' : 'unpaid';
+    const record = {
+        id,
+        code: id,
+        invoiceId: inv.id,
+        invoiceCode: inv.code,
+        branch: br,
+        carrierType,
+        carrierName,
+        shipperName: carrierType === 'self' ? text(input.shipperName, 120).trim() : '',
+        shipperPhone: carrierType === 'self' ? text(input.shipperPhone, 40).trim() : '',
+        orderNumber: '',
+        senderName: text(input.senderName, 200),
+        senderPhone: text(input.senderPhone, 40),
+        senderAddress: text(input.senderAddress, 200),
+        senderProvinceId: text(input.senderProvinceId, 40),
+        senderDistrictId: text(input.senderDistrictId, 40),
+        senderWardId: text(input.senderWardId, 40),
+        receiverName,
+        receiverPhone,
+        receiverAddress: text(input.receiverAddress, 200),
+        receiverProvinceId: text(input.receiverProvinceId, 40),
+        receiverDistrictId: text(input.receiverDistrictId, 40),
+        receiverWardId: text(input.receiverWardId, 40),
+        service: text(input.service, 40),
+        serviceAdd: text(input.serviceAdd, 40),
+        paymentType,
+        weightGram: weight,
+        productType: input.productType === 'TH' ? 'TH' : 'HH',
+        note: text(input.note, 200),
+        productTotal,
+        prepaid,
+        shippingPrepaid,
+        codRequested,
+        carrierFee,
+        shippingFeeToCustomer,
+        codStatus,
+        shipmentReference: id,
+        shipmentCode: carrierType === 'self' ? text(input.shipmentCode, 100).trim() : '',
+        printCode: '',
+        printExpiresAt: null,
+        status: 'confirmed',
+        createdAt: now,
+        updatedAt: now,
+        cancelledAt: null,
+        items: inv.items.map((item) => ({
+            code: item.code,
+            name: item.name,
+            qty: item.qty,
+            price: item.price,
+            total: item.total,
+            imeis: Array.isArray(item.imeis) ? item.imeis : [],
+            note: item.note || ''
+        })),
+        heldItems: inv.items.map((item) => ({
+            code: item.code,
+            qty: item.qty,
+            imeis: Array.isArray(item.imeis) ? item.imeis : []
+        }))
+    };
+    inv.channel = 'delivery';
+    inv.deliveryId = id;
+    inv.deliveryCode = id;
+    data.delivery_orders.unshift(record);
+
+    if (shippingPrepaid > 0) {
+        const feeMethod = paymentMethod(input.shippingPrepaidMethod || 'transfer');
+        voucher(data, {
+            type: 'thu',
+            category: 'Thu phí giao hàng',
+            value: shippingPrepaid,
+            person: receiverName || inv.customer || 'Khách giao hàng',
+            method: feeMethod,
+            branch: br,
+            invoiceId: inv.id,
+            customerId: inv.customerId,
+            note: `Thu trước phí giao hàng đơn ${id} (${inv.code})`
+        });
+    }
+
+    if (!Array.isArray(data.delivery_tasks)) data.delivery_tasks = [];
+    if (carrierType === 'viettelpost') {
+        data.delivery_tasks.unshift({
+            id: `VTP-${id}`,
+            deliveryId: id,
+            action: 'create_order',
+            payload: '{}',
+            attempt: 0,
+            nextAttemptAt: Date.now(),
+            status: 'pending',
+            lastError: '',
+            createdAt: now,
+            updatedAt: now
+        });
+    }
+    if (!Array.isArray(data.delivery_cod_records)) data.delivery_cod_records = [];
+    data.delivery_cod_records.unshift({
+        id: `COD-${id}`,
+        deliveryId: id,
+        codRequested,
+        codCollected: 0,
+        carrierFee,
+        settlementAmount: 0,
+        status: codStatus,
+        settledAt: codRequested === 0 ? now : null,
+        note: '',
+        createdAt: now,
+        updatedAt: now
+    });
+
+    appendDeliveryHistory(
+        data,
+        record,
+        100,
+        carrierType === 'self'
+            ? `Khởi tạo đơn giao (${carrierName})`
+            : 'Khởi tạo đơn giao hàng Viettel Post',
+        record.note
+    );
+
+    recordActivity(data, {
+        type: 'delivery',
+        title: user.name || 'Nhân viên giao vận',
+        action: `Lập đơn giao hàng ${id} (${carrierName}) cho hóa đơn ${inv.code}`,
+        val: productTotal,
+        branch: br
+    });
+    return record;
+}
+
+function deliverySale(data, user, input) {
+    requirePermission(user, 'shipping');
+    const br = branch(data, user, input.branch);
+    const receiverName = text(input.receiverName, 200).trim();
+    if (!receiverName) fail('Vui lòng nhập họ tên người nhận.');
+    const receiverPhone = text(input.receiverPhone, 200).trim();
+    if (!/^[0-9+ -]{6,40}$/.test(receiverPhone)) fail('Số điện thoại người nhận không hợp lệ.');
+    const receiverAddress = text(input.receiverAddress, 200).trim();
+    if (!receiverAddress) fail('Vui lòng nhập địa chỉ giao hàng.');
+
+    const shippingFeeToCustomer = amount(input.shippingFeeToCustomer ?? 0, 'Phí giao thu khách');
+    const rawDiscount = amount(input.discount ?? 0, 'Giảm giá');
+    if (!Array.isArray(input.items) || !input.items.length) fail('Giỏ hàng trống.');
+
+    let estimatedSubtotal = 0;
+    for (const row of input.items) {
+        const p = product(data, row.code, br);
+        const qty = quantity(row.qty);
+        const unitPrice =
+            row.salePrice !== undefined && row.salePrice !== p.price
+                ? amount(row.salePrice)
+                : amount(p.price);
+        estimatedSubtotal += unitPrice * qty;
+    }
+    const productTotal = Math.max(0, estimatedSubtotal - rawDiscount);
+
+    let totalUpfront = 0;
+    let upfrontMethod = 'transfer';
+    if (Array.isArray(input.payments) && input.payments.length > 0) {
+        totalUpfront = input.payments.reduce(
+            (sum, p) => sum + (p && typeof p === 'object' ? amount(p.amount ?? p.value ?? 0) : 0),
+            0
+        );
+        const firstMethod = input.payments.find((p) => (p?.amount ?? p?.value ?? 0) > 0)?.method;
+        if (firstMethod) upfrontMethod = paymentMethod(firstMethod);
+    } else {
+        totalUpfront = amount(input.given ?? input.prepaid ?? 0, 'Tiền trả trước');
+        upfrontMethod = paymentMethod(input.paymentMethod || 'transfer');
+    }
+
+    const shippingPrepaid =
+        totalUpfront > productTotal
+            ? Math.min(shippingFeeToCustomer, totalUpfront - productTotal)
+            : 0;
+
+    const inv = sale(
+        data,
+        user,
+        {
+            branch: br,
+            items: input.items,
+            customerId: input.customerId || null,
+            discount: rawDiscount,
+            given: Math.min(totalUpfront, productTotal),
+            paymentMethod: upfrontMethod,
+            payments: Array.isArray(input.payments) ? input.payments : undefined,
+            note: input.orderNote !== undefined ? text(input.orderNote, 5000) : input.note || '',
+            cod: true
+        },
+        {
+            permission: 'shipping',
+            cod: true,
+            channel: 'delivery',
+            receiverCustomerName: receiverName,
+            receiverPhone
+        }
+    );
+
+    const delivery = deliveryOrder(data, user, {
+        ...input,
+        branch: br,
+        invoiceId: inv.id,
+        receiverName,
+        receiverPhone,
+        receiverAddress,
+        shippingFeeToCustomer,
+        shippingPrepaid,
+        shippingPrepaidMethod: upfrontMethod,
+        note: text(input.deliveryNote ?? input.note ?? '', 200)
+    });
+
+    return { invoice: inv, delivery };
+}
+
+function cancelDeliveryOrder(data, user, input) {
+    requirePermission(user, 'shipping');
+    const id = text(input.id, 200);
+    const order = (data.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) fail('Không tìm thấy đơn giao hàng.');
+    branch(data, user, order.branch);
+    if (order.status === 'cancelled') fail('Đơn giao hàng đã hủy.', 409);
+    if (!['confirmed', 'submitted'].includes(order.status))
+        fail('Đơn đã bàn giao/đang vận chuyển; dùng nghiệp vụ hoàn hàng.', 409);
+
+    const now = new Date().toISOString();
+    order.status = 'cancelled';
+    order.codStatus = 'cancelled';
+    order.cancelledAt = now;
+    order.updatedAt = now;
+
+    for (const task of data.delivery_tasks || []) {
+        if (task.deliveryId === order.id && ['pending', 'unknown'].includes(task.status)) {
+            task.status = 'cancelled';
+            task.updatedAt = now;
+        }
+    }
+    for (const codRec of data.delivery_cod_records || []) {
+        if (codRec.deliveryId === order.id && codRec.status !== 'settled') {
+            codRec.status = 'cancelled';
+            codRec.updatedAt = now;
+        }
+    }
+
+    const inv = (data.invoices || []).find(
+        (i) => i.id === order.invoiceId || i.code === order.invoiceCode
+    );
+    if (inv && inv.status !== 'cancelled') {
+        const reason = text(input.reason, 500) || `Hủy đơn giao hàng ${order.code}`;
+        returnGoods(
+            data,
+            user,
+            { invoiceId: inv.id, reason, refundMethod: input.refundMethod },
+            true,
+            true
+        );
+    }
+    if (order.shippingPrepaid > 0) {
+        const refundMethod = ['cash', 'transfer', 'card'].includes(input.refundMethod)
+            ? input.refundMethod
+            : 'transfer';
+        voucher(data, {
+            type: 'chi',
+            category: 'Hoàn phí giao hàng',
+            value: order.shippingPrepaid,
+            person: order.receiverName || inv?.customer || 'Khách giao hàng',
+            method: refundMethod,
+            branch: order.branch,
+            invoiceId: order.invoiceId,
+            customerId: inv?.customerId,
+            note: `Hoàn phí giao trả trước do hủy đơn ${order.code}`
+        });
+    }
+
+    appendDeliveryHistory(
+        data,
+        order,
+        107,
+        'Đã hủy đơn giao hàng trước bàn giao',
+        text(input.reason, 200)
+    );
+    recordActivity(data, {
+        type: 'delivery',
+        title: user.name || 'Nhân viên giao vận',
+        action: `Hủy đơn giao hàng ${order.code} (đã hoàn kho)`,
+        branch: order.branch
+    });
+    return order;
+}
+
+function updateDeliveryOrderStatus(data, user, input) {
+    requirePermission(user, 'shipping');
+    const id = text(input.id, 200);
+    const order = (data.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) fail('Không tìm thấy đơn giao hàng.');
+    branch(data, user, order.branch);
+    if (['cancelled', 'returned'].includes(order.status))
+        fail('Đơn giao hàng đã kết thúc, không thể chuyển trạng thái.', 409);
+
+    const nextStatus = text(input.status, 40);
+    if (!['handed_over', 'delivered', 'returning'].includes(nextStatus))
+        fail('Trạng thái vận đơn cập nhật không hợp lệ.');
+    if (order.status === 'delivered' && nextStatus === 'handed_over')
+        fail('Đơn đã giao thành công, không thể lùi về đang giao.', 409);
+
+    const now = new Date().toISOString();
+    order.status = nextStatus;
+    order.updatedAt = now;
+    if (input.shipperName !== undefined) order.shipperName = text(input.shipperName, 120).trim();
+    if (input.shipperPhone !== undefined) order.shipperPhone = text(input.shipperPhone, 40).trim();
+    if (input.shipmentCode !== undefined && text(input.shipmentCode, 100).trim()) {
+        order.shipmentCode = text(input.shipmentCode, 100).trim();
+    }
+
+    const metaMap = {
+        handed_over: { code: 200, label: 'Đã bàn giao kiện hàng đi giao' },
+        delivered: { code: 501, label: 'Giao hàng thành công cho người nhận' },
+        returning: { code: 505, label: 'Đơn đang chuyển hoàn về cửa hàng' }
+    };
+    const meta = metaMap[nextStatus];
+    appendDeliveryHistory(data, order, meta.code, meta.label, text(input.note, 200));
+    recordActivity(data, {
+        type: 'delivery',
+        title: user.name || 'Nhân viên giao vận',
+        action: `${meta.label}: ${order.code}`,
+        branch: order.branch
+    });
+    return order;
+}
+
+function returnDeliveryOrder(data, user, input) {
+    requirePermission(user, 'shipping');
+    const id = text(input.id, 200);
+    const order = (data.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) fail('Không tìm thấy đơn giao hàng.');
+    branch(data, user, order.branch);
+    if (order.status === 'cancelled') fail('Đơn giao hàng đã hủy.', 409);
+    if (order.status === 'returned') fail('Đơn giao hàng đã nhận hoàn kho trước đó.', 409);
+    if (!['handed_over', 'returning', 'delivered'].includes(order.status))
+        fail('Đơn chưa bàn giao; hãy dùng chức năng Hủy đơn.', 409);
+
+    const inv = (data.invoices || []).find(
+        (i) => i.id === order.invoiceId || i.code === order.invoiceCode
+    );
+    if (!inv) fail('Không tìm thấy hóa đơn gốc của đơn giao hàng.');
+    const prevReturns = previousReturns(data, inv);
+    const returnedMap = new Map();
+    for (const r of prevReturns) {
+        for (const it of r.items || []) {
+            returnedMap.set(it.code, (returnedMap.get(it.code) || 0) + it.qty);
+        }
+    }
+    const remainingItems = (inv.items || [])
+        .map((it) => {
+            const left = it.qty - (returnedMap.get(it.code) || 0);
+            if (left <= 0) return null;
+            const priorSerials = prevReturns.flatMap((r) =>
+                (r.items || []).filter((x) => x.code === it.code).flatMap((x) => x.imeis || [])
+            );
+            const availImeis = Array.isArray(it.imeis)
+                ? it.imeis.filter((s) => !priorSerials.includes(s)).slice(0, left)
+                : undefined;
+            return { code: it.code, qty: left, imeis: availImeis };
+        })
+        .filter(Boolean);
+
+    if (remainingItems.length > 0 && inv.status !== 'cancelled') {
+        const reason = text(input.reason, 500) || `Nhận hàng hoàn từ vận đơn ${order.code}`;
+        returnGoods(
+            data,
+            user,
+            { invoiceId: inv.id, items: remainingItems, reason, refundMethod: input.refundMethod },
+            false,
+            true
+        );
+    }
+
+    const now = new Date().toISOString();
+    order.status = 'returned';
+    order.returnedAt = now;
+    order.updatedAt = now;
+    if (order.codStatus !== 'settled') order.codStatus = 'cancelled';
+    for (const codRec of data.delivery_cod_records || []) {
+        if (codRec.deliveryId === order.id && codRec.status !== 'settled') {
+            codRec.status = 'cancelled';
+            codRec.updatedAt = now;
+        }
+    }
+
+    appendDeliveryHistory(
+        data,
+        order,
+        504,
+        'Cửa hàng đã nhận và nhập kho hàng hoàn',
+        text(input.reason, 200)
+    );
+    recordActivity(data, {
+        type: 'delivery',
+        title: user.name || 'Nhân viên giao vận',
+        action: `Nhận hàng hoàn vận đơn ${order.code} (đã nhập lại kho)`,
+        branch: order.branch
+    });
+    return order;
+}
+
+function settleDeliveryCodOrder(data, user, input) {
+    requirePermission(user, 'shipping');
+    const id = text(input.id, 200);
+    const order = (data.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) fail('Không tìm thấy đơn giao hàng.');
+    branch(data, user, order.branch);
+    if (['cancelled', 'returned'].includes(order.status))
+        fail('Không thể đối soát COD cho đơn đã hủy hoặc đã hoàn.', 409);
+    if (order.codRequested <= 0) fail('Đơn giao hàng này không có tiền thu hộ COD.', 409);
+
+    const codRec = (data.delivery_cod_records || []).find((c) => c.deliveryId === order.id);
+    if (order.codStatus === 'settled' || codRec?.status === 'settled')
+        fail('Đơn giao hàng đã được đối soát COD trước đó.', 409);
+
+    const settledAmount =
+        input.settlementAmount !== undefined
+            ? amount(input.settlementAmount, 'Tiền đối soát COD')
+            : amount(order.codRequested, 'Tiền thu hộ COD');
+    if (settledAmount <= 0) fail('Số tiền đối soát phải lớn hơn 0.');
+    const method = paymentMethod(input.method || 'transfer');
+    const now = new Date().toISOString();
+
+    if (codRec) {
+        codRec.codCollected = order.codRequested;
+        codRec.settlementAmount = settledAmount;
+        codRec.status = 'settled';
+        codRec.settledAt = now;
+        codRec.note = text(input.note, 200);
+        codRec.updatedAt = now;
+    }
+    order.codStatus = 'settled';
+    order.codSettledAt = now;
+    if (
+        input.markDelivered !== false &&
+        ['confirmed', 'submitted', 'handed_over'].includes(order.status)
+    ) {
+        order.status = 'delivered';
+    }
+    order.updatedAt = now;
+
+    const inv = (data.invoices || []).find(
+        (i) => i.id === order.invoiceId || i.code === order.invoiceCode
+    );
+    if (inv && inv.status !== 'cancelled') {
+        const goodsDue = Math.max(0, inv.total - (inv.returnedTotal || 0) - inv.paid);
+        const appliedToGoods = Math.min(settledAmount, goodsDue);
+        if (appliedToGoods > 0) {
+            inv.paid = amount(inv.paid + appliedToGoods);
+            inv.redPaid = inv.total - (inv.returnedTotal || 0) > inv.paid;
+            if (!Array.isArray(inv.payments)) inv.payments = [];
+            inv.payments.push({ amount: appliedToGoods, method, ...timestamp() });
+        }
+    }
+
+    voucher(data, {
+        type: 'thu',
+        category: 'Thu hộ COD',
+        value: settledAmount,
+        person: order.receiverName || inv?.customer || 'Khách giao hàng',
+        method,
+        branch: order.branch,
+        invoiceId: order.invoiceId,
+        customerId: inv?.customerId,
+        note:
+            text(input.note, 200) ||
+            `Đối soát thu hộ COD vận đơn ${order.code}${order.shipmentCode ? ` (${order.shipmentCode})` : ''}`
+    });
+
+    appendDeliveryHistory(
+        data,
+        order,
+        600,
+        `Đã đối soát COD: ${settledAmount.toLocaleString('vi-VN')} đ (${methodLabel(method)})`,
+        text(input.note, 200)
+    );
+    recordActivity(data, {
+        type: 'delivery',
+        title: user.name || 'Thu ngân',
+        action: `Đối soát COD vận đơn ${order.code}`,
+        val: settledAmount,
+        branch: order.branch
+    });
+    return order;
+}
+
 function execute(data, user, type, input) {
     if (!input || typeof input !== 'object' || Array.isArray(input))
         fail('Nội dung thao tác không hợp lệ.');
@@ -1372,6 +1958,24 @@ function execute(data, user, type, input) {
                 action: `Cập nhật thông tin sản phẩm kho chung ${result.name}`
             });
             return result;
+        }
+        case 'deliverySale': {
+            return deliverySale(data, user, input);
+        }
+        case 'delivery': {
+            return deliveryOrder(data, user, input);
+        }
+        case 'cancelDelivery': {
+            return cancelDeliveryOrder(data, user, input);
+        }
+        case 'updateDeliveryStatus': {
+            return updateDeliveryOrderStatus(data, user, input);
+        }
+        case 'returnDelivery': {
+            return returnDeliveryOrder(data, user, input);
+        }
+        case 'settleDeliveryCod': {
+            return settleDeliveryCodOrder(data, user, input);
         }
         default:
             fail('Thao tác không hợp lệ.', 400);

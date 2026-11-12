@@ -1408,7 +1408,11 @@ const defaultData = {
                 }
             ]
         }
-    ]
+    ],
+    delivery_orders: [],
+    delivery_status_history: [],
+    delivery_tasks: [],
+    delivery_cod_records: []
 };
 
 // Server-only fixture/default settings. Never served to the browser.

@@ -322,8 +322,15 @@ function exportTableToCSV(type) {
             'Thu ngân',
             'Chi nhánh'
         ];
+        const invChannel = document.getElementById('invoice-channel-filter')?.value || 'all';
+        const deliveryIds = new Set((KVStore.data.delivery_orders || []).map((d) => d.invoiceId));
         rows = (KVStore.data.invoices || [])
             .filter((i) => isAll || (i.branch || FALLBACK_BRANCH) === currentBranch)
+            .filter((i) => {
+                if (invChannel === 'all') return true;
+                const isDlv = Boolean(i.cod || i.channel === 'delivery' || deliveryIds.has(i.id));
+                return invChannel === 'delivery' ? isDlv : !isDlv;
+            })
             .filter((i) =>
                 matchesDocumentFilter(i, {
                     kind: 'invoices',

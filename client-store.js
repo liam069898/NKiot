@@ -236,8 +236,10 @@ const KVStore = {
             )
         );
         this._volatilePending.set(requestId, pending);
-        if (type === 'sale' && typeof state !== 'undefined') {
-            state.posTabs[state.activePosTab].pendingRequestId = requestId;
+        if ((type === 'sale' || type === 'deliverySale') && typeof state !== 'undefined') {
+            if (state.posTabs?.[state.activePosTab]) {
+                state.posTabs[state.activePosTab].pendingRequestId = requestId;
+            }
             if (typeof savePosDraft === 'function') savePosDraft();
         }
         return this.sendPending(pending);
@@ -256,13 +258,21 @@ const KVStore = {
                 : await this.request('/api/requests/' + encodeURIComponent(pending.requestId));
             // Retire the persisted basket BEFORE removing the durable pending request.
             // Reload during reconciliation must not resurrect a committed sale.
-            if (pending.envelope?.type === 'sale' && typeof settlePosDraft === 'function')
+            if (
+                (pending.envelope?.type === 'sale' || pending.envelope?.type === 'deliverySale') &&
+                typeof settlePosDraft === 'function'
+            )
                 settlePosDraft(pending);
             await this.adoptResult(result);
             localStorage.removeItem(key);
             this._volatilePending.delete(pending.requestId);
             if (typeof state !== 'undefined') {
-                const tab = state.posTabs.find((t) => t.pendingRequestId === pending.requestId);
+                const allTabs = [
+                    ...(state.posTabs || []),
+                    ...(state._counterTabsBucket?.tabs || []),
+                    ...(state._deliveryTabsBucket?.tabs || [])
+                ];
+                const tab = allTabs.find((t) => t.pendingRequestId === pending.requestId);
                 if (tab) {
                     tab.cart = [];
                     tab.customer = null;
@@ -273,6 +283,9 @@ const KVStore = {
                     tab.multiPayments = { transfer: 0, cash: 0, card: 0 };
                     tab.paymentMethod = 'cash';
                     tab.note = '';
+                    if (typeof createDefaultDeliverySpec === 'function' && tab.delivery) {
+                        tab.delivery = createDefaultDeliverySpec();
+                    }
                     delete tab.branch;
                     delete tab.pendingRequestId;
                 }

@@ -1,6 +1,28 @@
 // NKiot WebApp - Main Logic Controller
+function createDefaultDeliverySpec() {
+    return {
+        carrierType: 'viettelpost',
+        carrierName: 'Nhân viên tự giao',
+        shipperName: '',
+        shipperPhone: '',
+        shipmentCode: '',
+        receiverName: '',
+        receiverPhone: '',
+        receiverAddress: '',
+        service: 'VCN',
+        paymentType: 3,
+        weightGram: 200,
+        shippingFeeToCustomer: 0,
+        carrierFee: 0,
+        prepaid: 0,
+        prepaidMethod: 'transfer',
+        note: ''
+    };
+}
+
 let state = {
     currentView: 'dashboard',
+    posMode: 'counter',
     activePosTab: 0,
     posTabs: [
         {
@@ -13,9 +35,29 @@ let state = {
             customerGiven: 0,
             multiPayments: { transfer: 0, cash: 0, card: 0 },
             note: '',
-            mode: 'fast'
+            mode: 'fast',
+            delivery: null
         }
     ],
+    _counterTabsBucket: null,
+    _deliveryTabsBucket: {
+        active: 0,
+        tabs: [
+            {
+                id: 1,
+                name: 'Đơn giao 1',
+                cart: [],
+                customer: null,
+                discount: 0,
+                paymentMethod: 'transfer',
+                customerGiven: 0,
+                multiPayments: { transfer: 0, cash: 0, card: 0 },
+                note: '',
+                mode: 'delivery',
+                delivery: createDefaultDeliverySpec()
+            }
+        ]
+    },
     selectedInvoice: null,
     selectedImport: null,
     selectedCustomer: null,
@@ -85,7 +127,9 @@ function setupCapitalizeInputs() {
                 'sup-address',
                 'staff-input-name',
                 'set-store-name',
-                'set-address'
+                'set-address',
+                'pos-dlv-receiver-name',
+                'pos-dlv-shipper-name'
             ].includes(target.id)
         ) {
             if (target.value) {
@@ -134,7 +178,12 @@ async function initApp() {
             }
         } catch {}
 
-        if (savedView && hasPermission(savedView)) {
+        const savedPermMap = {
+            delivery: 'shipping',
+            posDelivery: 'shipping',
+            sharedWarehouse: 'products'
+        };
+        if (savedView && hasPermission(savedPermMap[savedView] || savedView)) {
             switchView(savedView);
         } else {
             navigateAfterLogin();
@@ -149,6 +198,7 @@ function renderAllViews() {
     renderStocktakes();
     renderTransfers();
     renderInvoices();
+    renderDelivery();
     renderImports();
     renderCustomers();
     renderSuppliers();
@@ -182,11 +232,14 @@ function renderCurrentView() {
         case 'reports':
             return renderReports();
         case 'pos':
+        case 'posDelivery':
             return renderPosScreen();
         case 'sharedWarehouse':
             return sharedWarehouseTab === 'partners'
                 ? loadPartnerCatalog()
                 : renderSharedWarehouse();
+        case 'delivery':
+            return renderDelivery();
     }
 }
 function refreshCurrentView() {
@@ -240,11 +293,95 @@ function playViewEnter(el, className) {
     cancelEnterAnimation = finish;
 }
 
+function swapPosModeTabs(targetMode) {
+    const nextMode = targetMode === 'delivery' ? 'delivery' : 'counter';
+    const currentMode = state.posMode === 'delivery' ? 'delivery' : 'counter';
+    if (nextMode === currentMode) {
+        if (nextMode === 'delivery') {
+            state.posTabs.forEach((t) => {
+                if (!t.delivery) t.delivery = createDefaultDeliverySpec();
+            });
+        }
+        return;
+    }
+    savePosDraft();
+    if (currentMode === 'counter') {
+        state._counterTabsBucket = { tabs: state.posTabs, active: state.activePosTab };
+        if (!state._deliveryTabsBucket || !Array.isArray(state._deliveryTabsBucket.tabs)) {
+            state._deliveryTabsBucket = {
+                active: 0,
+                tabs: [
+                    {
+                        id: 1,
+                        name: 'Đơn giao 1',
+                        cart: [],
+                        customer: null,
+                        discount: 0,
+                        paymentMethod: 'transfer',
+                        customerGiven: 0,
+                        multiPayments: { transfer: 0, cash: 0, card: 0 },
+                        note: '',
+                        mode: 'delivery',
+                        delivery: createDefaultDeliverySpec()
+                    }
+                ]
+            };
+        }
+        state.posMode = 'delivery';
+        state.posTabs = state._deliveryTabsBucket.tabs;
+        state.activePosTab = Math.min(
+            Math.max(0, state._deliveryTabsBucket.active || 0),
+            state.posTabs.length - 1
+        );
+    } else {
+        state._deliveryTabsBucket = { tabs: state.posTabs, active: state.activePosTab };
+        if (!state._counterTabsBucket || !Array.isArray(state._counterTabsBucket.tabs)) {
+            state._counterTabsBucket = {
+                active: 0,
+                tabs: [
+                    {
+                        id: 1,
+                        name: 'Hóa đơn 1',
+                        cart: [],
+                        customer: null,
+                        discount: 0,
+                        paymentMethod: 'cash',
+                        customerGiven: 0,
+                        multiPayments: { transfer: 0, cash: 0, card: 0 },
+                        note: '',
+                        mode: 'fast',
+                        delivery: null
+                    }
+                ]
+            };
+        }
+        state.posMode = 'counter';
+        state.posTabs = state._counterTabsBucket.tabs;
+        state.activePosTab = Math.min(
+            Math.max(0, state._counterTabsBucket.active || 0),
+            state.posTabs.length - 1
+        );
+    }
+}
+
+function openCounterPos() {
+    switchView('pos');
+}
+
+function openDeliveryPos() {
+    switchView('posDelivery');
+}
+
+function switchPosMode(mode) {
+    switchView(mode === 'delivery' ? 'posDelivery' : 'pos');
+}
+
 function switchView(viewName) {
     // 1. Permission Guard
     const viewPermMap = {
         dashboard: 'dashboard',
         pos: 'pos',
+        posDelivery: 'shipping',
         products: 'products',
         stocktakes: 'stocktakes',
         transfers: 'transfers',
@@ -254,13 +391,15 @@ function switchView(viewName) {
         customers: 'customers',
         cashbook: 'cashbook',
         reports: 'reports',
-        sharedWarehouse: 'products'
+        sharedWarehouse: 'products',
+        delivery: 'shipping'
     };
     const reqPerm = viewPermMap[viewName];
     if (reqPerm && typeof hasPermission === 'function' && !hasPermission(reqPerm)) {
         const permNames = {
             dashboard: 'Tổng quan',
-            pos: 'Bán hàng (POS)',
+            pos: 'Bán tại quầy (POS)',
+            shipping: 'Bán giao hàng & Vận đơn',
             products: 'Hàng hóa & Danh mục',
             stocktakes: 'Kiểm kho',
             transfers: 'Chuyển hàng',
@@ -269,7 +408,8 @@ function switchView(viewName) {
             invoices: 'Đơn hàng & Hóa đơn',
             customers: 'Khách hàng',
             cashbook: 'Sổ quỹ',
-            reports: 'Báo cáo & Doanh thu'
+            reports: 'Báo cáo & Doanh thu',
+            delivery: 'Vận đơn & Giao hàng'
         };
         showToast(
             `Tài khoản "${getCurrentUser()?.name || 'Hiện tại'}" không có quyền truy cập: ${permNames[reqPerm] || viewName}!`,
@@ -278,7 +418,7 @@ function switchView(viewName) {
         return;
     }
 
-    if (state.currentView !== 'pos') {
+    if (state.currentView !== 'pos' && state.currentView !== 'posDelivery') {
         state.previousView = state.currentView;
     }
     state.currentView = viewName;
@@ -301,17 +441,18 @@ function switchView(viewName) {
     document.getElementById('nav-imports')?.setAttribute('aria-expanded', 'false');
     document.getElementById('nav-more')?.setAttribute('aria-expanded', 'false');
 
-    if (viewName === 'pos') {
-        // Lưu vị trí cuộn của view quản lý trước khi ẩn.
+    if (viewName === 'pos' || viewName === 'posDelivery') {
         const visibleMgmtView = document.querySelector('.view-container:not(.hidden)');
         if (visibleMgmtView) {
             rememberViewScroll(visibleMgmtView);
         }
+        const wasPosHidden = !posLayout || posLayout.classList.contains('hidden');
+        swapPosModeTabs(viewName === 'posDelivery' ? 'delivery' : 'counter');
         if (mgmtLayout) mgmtLayout.classList.add('hidden');
         if (posLayout) posLayout.classList.remove('hidden');
         updatePosResponsivePanels();
         renderPosScreen();
-        playViewEnter(posLayout, 'layout-entering');
+        if (wasPosHidden) playViewEnter(posLayout, 'layout-entering');
         return;
     }
 
@@ -339,7 +480,7 @@ function switchView(viewName) {
     }
     const activeBtn = document.getElementById(activeBtnId);
     if (activeBtn) activeBtn.classList.add('nav-item-active');
-    if (['invoices', 'customers', 'cashbook', 'reports'].includes(viewName)) {
+    if (['invoices', 'delivery', 'customers', 'cashbook', 'reports'].includes(viewName)) {
         document.getElementById('nav-more')?.classList.add('nav-item-active');
     }
 
@@ -358,6 +499,12 @@ function switchView(viewName) {
 }
 
 function setupNavigation() {
+    const deliveryRefresh = document.getElementById('delivery-refresh');
+    if (deliveryRefresh) {
+        deliveryRefresh.addEventListener('click', () => {
+            renderDelivery();
+        });
+    }
     const navDropdowns = [
         {
             wrapperId: 'hanghoa-dropdown-wrapper',
@@ -1860,13 +2007,10 @@ function renderPosScreen() {
     updatePosResponsivePanels();
 
     const currentBranch = getCurrentBranch();
-    const identity = document.getElementById('pos-store-identity');
-    if (identity) {
-        identity.textContent = `${KVStore.data.settings?.storeName || 'NKiot'} · ${currentBranch}`;
-        identity.title = identity.textContent;
+    const isDeliveryMode = state.posMode === 'delivery';
+    if (isDeliveryMode && curTab && !curTab.delivery) {
+        curTab.delivery = createDefaultDeliverySpec();
     }
-    const posBranchEl = document.getElementById('pos-branch-badge');
-    if (posBranchEl) posBranchEl.textContent = currentBranch;
 
     // Staff/Cashier label
     const cashierName = KVStore.user?.name || KVStore.data.settings?.cashier || 'Thu ngân';
@@ -2179,20 +2323,133 @@ function renderPosScreen() {
 
     // Sync responsive layout panels
     updatePosResponsivePanels();
+    syncPosDeliveryPanel(grandTotal);
     KVStore.updateDbStatus();
     savePosDraft();
 }
 
-function getPosDraftStorageKey(branch = getCurrentBranch()) {
+function syncPosDeliveryPanel(grandTotal = 0) {
+    const curTab = state.posTabs[state.activePosTab];
+    const isDelivery = state.posMode === 'delivery';
+    const counterBtn = document.getElementById('pos-mode-counter-btn');
+    const deliveryBtn = document.getElementById('pos-mode-delivery-btn');
+    if (counterBtn) {
+        counterBtn.style.display = hasPermission('pos') ? '' : 'none';
+        counterBtn.setAttribute('aria-pressed', String(!isDelivery));
+        counterBtn.className = !isDelivery
+            ? 'flex-1 py-1.5 rounded-lg text-[12px] font-bold bg-white text-[#0066cc] shadow-2xs transition'
+            : 'flex-1 py-1.5 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition';
+    }
+    if (deliveryBtn) {
+        deliveryBtn.style.display = hasPermission('shipping') ? '' : 'none';
+        deliveryBtn.setAttribute('aria-pressed', String(isDelivery));
+        deliveryBtn.className = isDelivery
+            ? 'flex-1 py-1.5 rounded-lg text-[12px] font-bold bg-white text-[#0066cc] shadow-2xs transition'
+            : 'flex-1 py-1.5 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition';
+    }
+
+    document.getElementById('pos-counter-checkout-section')?.classList.toggle('hidden', isDelivery);
+    document
+        .getElementById('pos-delivery-checkout-section')
+        ?.classList.toggle('hidden', !isDelivery);
+    document
+        .getElementById('pos-delivery-financials-section')
+        ?.classList.toggle('hidden', !isDelivery);
+    document
+        .getElementById('pos-shipping-fee-summary-row')
+        ?.classList.toggle('hidden', !isDelivery);
+
+    const checkoutBtn = document.getElementById('pos-checkout-btn');
+    const checkoutLbl = document.getElementById('pos-checkout-btn-label');
+    if (checkoutLbl) checkoutLbl.textContent = isDelivery ? 'XUẤT ĐƠN GIAO' : 'THANH TOÁN';
+    if (checkoutBtn) {
+        checkoutBtn.classList.toggle('bg-[#1e7b4f]', !isDelivery);
+        checkoutBtn.classList.toggle('hover:bg-[#16653f]', !isDelivery);
+        checkoutBtn.classList.toggle('bg-[#0066cc]', isDelivery);
+        checkoutBtn.classList.toggle('hover:bg-[#0052a3]', isDelivery);
+    }
+    const grandTotalLbl = document.getElementById('pos-grand-total-label');
+    if (grandTotalLbl) {
+        grandTotalLbl.textContent = isDelivery ? 'Tổng thu đơn giao' : 'Khách cần trả';
+    }
+
+    if (!isDelivery || !curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    const d = curTab.delivery;
+    const isSelf = d.carrierType === 'self';
+
+    const vtpBtn = document.getElementById('pos-dlv-carrier-vtp');
+    const selfBtn = document.getElementById('pos-dlv-carrier-self');
+    if (vtpBtn) {
+        vtpBtn.setAttribute('aria-pressed', String(!isSelf));
+        vtpBtn.className = !isSelf
+            ? 'flex-1 py-1.5 px-2 rounded-lg text-[12px] font-bold bg-white text-[#0066cc] shadow-2xs transition'
+            : 'flex-1 py-1.5 px-2 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition';
+    }
+    if (selfBtn) {
+        selfBtn.setAttribute('aria-pressed', String(isSelf));
+        selfBtn.className = isSelf
+            ? 'flex-1 py-1.5 px-2 rounded-lg text-[12px] font-bold bg-white text-amber-800 shadow-2xs transition'
+            : 'flex-1 py-1.5 px-2 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition';
+    }
+    document.getElementById('pos-dlv-vtp-fields')?.classList.toggle('hidden', isSelf);
+    document.getElementById('pos-dlv-self-fields')?.classList.toggle('hidden', !isSelf);
+
+    const syncVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el) el.value = val;
+    };
+    syncVal('pos-dlv-receiver-name', d.receiverName || '');
+    syncVal('pos-dlv-receiver-phone', d.receiverPhone || '');
+    syncVal('pos-dlv-receiver-address', d.receiverAddress || '');
+    syncVal('pos-dlv-service', d.service ?? 'VCN');
+    syncVal('pos-dlv-weight', d.weightGram ?? 200);
+    syncVal('pos-dlv-payment-type', String(d.paymentType || 3));
+    syncVal('pos-dlv-carrier-name', d.carrierName || 'Nhân viên tự giao');
+    syncVal('pos-dlv-shipment-code', d.shipmentCode || '');
+    syncVal('pos-dlv-shipper-name', d.shipperName || '');
+    syncVal('pos-dlv-shipper-phone', d.shipperPhone || '');
+    syncVal(
+        'pos-dlv-shipping-fee',
+        d.shippingFeeToCustomer > 0 ? formatVND(d.shippingFeeToCustomer) : ''
+    );
+    syncVal('pos-dlv-carrier-fee', d.carrierFee > 0 ? formatVND(d.carrierFee) : '');
+    syncVal('pos-dlv-prepaid', d.prepaid > 0 ? formatVND(d.prepaid) : '');
+    syncVal('pos-dlv-prepaid-method', d.prepaidMethod || 'transfer');
+    syncVal('pos-dlv-note', d.note || '');
+
+    const shippingFee = Number(d.shippingFeeToCustomer) || 0;
+    const totalCollectable = grandTotal + shippingFee;
+    const prepaid = Math.min(totalCollectable, Number(d.prepaid) || 0);
+    const cod = Math.max(0, totalCollectable - prepaid);
+
+    const shipSumEl = document.getElementById('pos-summary-shipping-fee');
+    if (shipSumEl) shipSumEl.textContent = `${formatVND(shippingFee)} đ`;
+    const grandEl = document.getElementById('pos-grand-total');
+    if (grandEl) grandEl.textContent = formatVND(totalCollectable);
+    const codEl = document.getElementById('pos-dlv-cod-amount');
+    if (codEl) codEl.textContent = `${formatVND(cod)} đ`;
+
+    const qrBox = document.getElementById('pos-vietqr-container');
+    if (prepaid > 0 && (d.prepaidMethod || 'transfer') === 'transfer') {
+        renderVietQR(prepaid, 'pos-vietqr-img', 'pos-vietqr-desc');
+        qrBox?.classList.remove('hidden');
+    } else {
+        qrBox?.classList.add('hidden');
+    }
+}
+
+function getPosDraftStorageKey(branch = getCurrentBranch(), mode = state.posMode) {
     const userId = KVStore.user?.id || KVStore.user?.username || 'anon';
-    return `minikiot_pos_draft_${userId}_${branch}`;
+    const prefix = mode === 'delivery' ? 'minikiot_pos_delivery_draft' : 'minikiot_pos_draft';
+    return `${prefix}_${userId}_${branch}`;
 }
 
 function savePosDraft() {
     try {
         if (typeof sessionStorage === 'undefined' || !KVStore.user) return;
         const branch = getCurrentBranch();
-        const key = getPosDraftStorageKey(branch);
+        const key = getPosDraftStorageKey(branch, state.posMode);
         const hasContent =
             state.posTabs.length > 1 ||
             state.posTabs.some(
@@ -2200,7 +2457,12 @@ function savePosDraft() {
                     (Array.isArray(t.cart) && t.cart.length > 0) ||
                     t.customer ||
                     (t.discount && t.discount > 0) ||
-                    (t.note && t.note.trim())
+                    (t.note && t.note.trim()) ||
+                    (state.posMode === 'delivery' &&
+                        t.delivery &&
+                        (t.delivery.receiverName ||
+                            t.delivery.receiverPhone ||
+                            t.delivery.receiverAddress))
             );
         if (!hasContent) {
             sessionStorage.removeItem(key);
@@ -2219,13 +2481,12 @@ function savePosDraft() {
 
 function settlePosDraft(pending) {
     const branch = pending.envelope.payload.branch;
-    const key = getPosDraftStorageKey(branch);
+    const mode = pending.envelope?.type === 'deliverySale' ? 'delivery' : 'counter';
+    const key = getPosDraftStorageKey(branch, mode);
     const raw = sessionStorage.getItem(key);
     if (!raw) return;
     try {
         const draft = JSON.parse(raw);
-        // Legacy drafts did not persist request IDs. Fail safe: discard this
-        // branch's old draft instead of offering a paid basket for a new sale.
         if (!draft.posTabs?.some((tab) => tab.pendingRequestId === pending.requestId)) {
             sessionStorage.removeItem(key);
             return;
@@ -2234,61 +2495,84 @@ function settlePosDraft(pending) {
         draft.activePosTab = 0;
         if (draft.posTabs.length) sessionStorage.setItem(key, JSON.stringify(draft));
         else sessionStorage.removeItem(key);
-    } catch (error) {
-        // Failure to remove the draft must keep the pending request for retry.
+    } catch {
         sessionStorage.removeItem(key);
     }
+}
+
+function parseStoredPosDraft(branch, mode) {
+    const raw = sessionStorage.getItem(getPosDraftStorageKey(branch, mode));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+        !parsed ||
+        parsed.branch !== branch ||
+        !Array.isArray(parsed.posTabs) ||
+        !parsed.posTabs.length
+    ) {
+        return null;
+    }
+    const branchProducts = (KVStore.data?.products || []).filter(
+        (p) => (p.branch || FALLBACK_BRANCH) === branch
+    );
+    const tabs = parsed.posTabs.map((tab, idx) => ({
+        id: Number(tab.id) || idx + 1,
+        name: tab.name || (mode === 'delivery' ? `Đơn giao ${idx + 1}` : `Hóa đơn ${idx + 1}`),
+        cart: Array.isArray(tab.cart)
+            ? tab.cart.map((item) => {
+                  const live = branchProducts.find((p) => p.code === item.code);
+                  return {
+                      ...item,
+                      stock: live ? Number(live.stock) || 0 : item.stock,
+                      costPrice: live?.costPrice ?? item.costPrice,
+                      listPrice: live?.price ?? item.listPrice ?? item.price
+                  };
+              })
+            : [],
+        customer: tab.customer || null,
+        discount: Number(tab.discount) || 0,
+        discountPercent: Number(tab.discountPercent) || 0,
+        paymentMethod: tab.paymentMethod || (mode === 'delivery' ? 'transfer' : 'cash'),
+        customerGiven: Number(tab.customerGiven) || 0,
+        tenderEdited: Boolean(tab.tenderEdited),
+        multiPayments: tab.multiPayments || { transfer: 0, cash: 0, card: 0 },
+        note: tab.note || '',
+        mode: mode === 'delivery' ? 'delivery' : tab.mode || 'fast',
+        delivery:
+            mode === 'delivery'
+                ? { ...createDefaultDeliverySpec(), ...(tab.delivery || {}) }
+                : null,
+        ...(tab.pendingRequestId ? { pendingRequestId: tab.pendingRequestId } : {}),
+        ...(tab.branch ? { branch: tab.branch } : {})
+    }));
+    const active = Math.min(Math.max(0, Number(parsed.activePosTab) || 0), tabs.length - 1);
+    return { tabs, active };
 }
 
 function restorePosDraft() {
     try {
         if (typeof sessionStorage === 'undefined' || !KVStore.user) return false;
         const branch = getCurrentBranch();
-        const raw = sessionStorage.getItem(getPosDraftStorageKey(branch));
-        if (!raw) return false;
-        const parsed = JSON.parse(raw);
-        if (
-            !parsed ||
-            parsed.branch !== branch ||
-            !Array.isArray(parsed.posTabs) ||
-            !parsed.posTabs.length
-        ) {
-            return false;
+        let restoredAny = false;
+        const counterDraft = parseStoredPosDraft(branch, 'counter');
+        if (counterDraft) {
+            state._counterTabsBucket = counterDraft;
+            if (state.posMode !== 'delivery') {
+                state.posTabs = counterDraft.tabs;
+                state.activePosTab = counterDraft.active;
+            }
+            restoredAny = true;
         }
-        const branchProducts = (KVStore.data?.products || []).filter(
-            (p) => (p.branch || FALLBACK_BRANCH) === branch
-        );
-        state.posTabs = parsed.posTabs.map((tab, idx) => ({
-            id: Number(tab.id) || idx + 1,
-            name: tab.name || `Hóa đơn ${idx + 1}`,
-            cart: Array.isArray(tab.cart)
-                ? tab.cart.map((item) => {
-                      const live = branchProducts.find((p) => p.code === item.code);
-                      return {
-                          ...item,
-                          stock: live ? Number(live.stock) || 0 : item.stock,
-                          costPrice: live?.costPrice ?? item.costPrice,
-                          listPrice: live?.price ?? item.listPrice ?? item.price
-                      };
-                  })
-                : [],
-            customer: tab.customer || null,
-            discount: Number(tab.discount) || 0,
-            discountPercent: Number(tab.discountPercent) || 0,
-            paymentMethod: tab.paymentMethod || 'cash',
-            customerGiven: Number(tab.customerGiven) || 0,
-            tenderEdited: Boolean(tab.tenderEdited),
-            multiPayments: tab.multiPayments || { transfer: 0, cash: 0, card: 0 },
-            note: tab.note || '',
-            mode: tab.mode || 'fast',
-            ...(tab.pendingRequestId ? { pendingRequestId: tab.pendingRequestId } : {}),
-            ...(tab.branch ? { branch: tab.branch } : {})
-        }));
-        state.activePosTab = Math.min(
-            Math.max(0, Number(parsed.activePosTab) || 0),
-            state.posTabs.length - 1
-        );
-        return true;
+        const deliveryDraft = parseStoredPosDraft(branch, 'delivery');
+        if (deliveryDraft) {
+            state._deliveryTabsBucket = deliveryDraft;
+            if (state.posMode === 'delivery') {
+                state.posTabs = deliveryDraft.tabs;
+                state.activePosTab = deliveryDraft.active;
+            }
+            restoredAny = true;
+        }
+        return restoredAny;
     } catch {
         return false;
     }
@@ -2297,7 +2581,9 @@ function restorePosDraft() {
 function clearPosDraft() {
     try {
         if (typeof sessionStorage === 'undefined') return;
-        sessionStorage.removeItem(getPosDraftStorageKey());
+        const branch = getCurrentBranch();
+        sessionStorage.removeItem(getPosDraftStorageKey(branch, 'counter'));
+        sessionStorage.removeItem(getPosDraftStorageKey(branch, 'delivery'));
     } catch {}
 }
 
@@ -2984,23 +3270,26 @@ function handlePosTenderInput(val) {
 }
 
 function addPosNewTab() {
+    const isDeliveryMode = state.posMode === 'delivery';
     const newId = Math.max(0, ...state.posTabs.map((tab) => tab.id)) + 1;
+    const tabLabel = isDeliveryMode ? `Đơn giao ${newId}` : `Hóa đơn ${newId}`;
     state.posTabs.push({
         id: newId,
-        name: `Hóa đơn ${newId}`,
+        name: tabLabel,
         cart: [],
         customer: null,
         discount: 0,
         discountPercent: 0,
-        paymentMethod: 'cash',
+        paymentMethod: isDeliveryMode ? 'transfer' : 'cash',
         customerGiven: 0,
         multiPayments: { transfer: 0, cash: 0, card: 0 },
         note: '',
-        mode: 'fast'
+        mode: isDeliveryMode ? 'delivery' : 'fast',
+        delivery: isDeliveryMode ? createDefaultDeliverySpec() : null
     });
     state.activePosTab = state.posTabs.length - 1;
     renderPosScreen();
-    showToast(`Đã mở thêm Hóa đơn ${newId}`, 'success');
+    showToast(`Đã mở thêm ${tabLabel}`, 'success');
 }
 
 function switchPosTab(index) {
@@ -3325,6 +3614,18 @@ function handlePosCustomerKeydown(e) {
 function selectPosCustomer(cust) {
     const curTab = state.posTabs[state.activePosTab];
     curTab.customer = cust;
+    if (state.posMode === 'delivery') {
+        if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+        if (!curTab.delivery.receiverName && cust?.name && cust.code !== RETAIL_CUSTOMER_CODE) {
+            curTab.delivery.receiverName = cust.name;
+        }
+        if (!curTab.delivery.receiverPhone && cust?.phone && cust.phone !== 'Tại quầy') {
+            curTab.delivery.receiverPhone = cust.phone;
+        }
+        if (!curTab.delivery.receiverAddress && cust?.address) {
+            curTab.delivery.receiverAddress = cust.address;
+        }
+    }
     const dropdown = document.getElementById('pos-customer-dropdown');
     if (dropdown) dropdown.classList.add('hidden');
     renderPosScreen();
@@ -3635,6 +3936,92 @@ function setPosPaymentMethod(method) {
     }
 }
 
+function setPosDeliveryCarrierType(carrierType) {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    curTab.delivery.carrierType = carrierType === 'self' ? 'self' : 'viettelpost';
+    renderPosScreen();
+}
+
+function updatePosDeliveryField(field, value) {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    if (field === 'weightGram') {
+        curTab.delivery.weightGram = Math.max(0, parseInt(value || '0', 10) || 0);
+    } else if (field === 'paymentType') {
+        curTab.delivery.paymentType = Number(value) || 3;
+    } else {
+        curTab.delivery[field] = value;
+    }
+    if (field === 'prepaidMethod') {
+        renderPosScreen();
+    } else {
+        savePosDraft();
+    }
+}
+
+function handlePosDeliveryMoneyInput(field, val) {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    const raw = parseInt(String(val || '0').replace(/\D/g, ''), 10) || 0;
+    curTab.delivery[field] = raw;
+    const inputMap = {
+        shippingFeeToCustomer: 'pos-dlv-shipping-fee',
+        carrierFee: 'pos-dlv-carrier-fee',
+        prepaid: 'pos-dlv-prepaid'
+    };
+    const inputEl = document.getElementById(inputMap[field]);
+    if (inputEl) inputEl.value = raw > 0 ? formatVND(raw) : '';
+    const sub = curTab.cart.reduce((a, c) => a + c.qty * c.price, 0);
+    const grand = Math.max(0, sub - (curTab.discount || 0));
+    syncPosDeliveryPanel(grand);
+    savePosDraft();
+}
+
+function setPosDeliveryQuickPrepaid(preset) {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    const sub = curTab.cart.reduce((a, c) => a + c.qty * c.price, 0);
+    const grand = Math.max(0, sub - (curTab.discount || 0));
+    const totalCollectable = grand + (Number(curTab.delivery.shippingFeeToCustomer) || 0);
+    curTab.delivery.prepaid = preset === 'paid100' ? totalCollectable : 0;
+    renderPosScreen();
+}
+
+function appendPosDeliveryNote(phrase) {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    const cur = (curTab.delivery.note || '').trim();
+    if (!cur.includes(phrase)) {
+        curTab.delivery.note = cur ? `${cur}, ${phrase}` : phrase;
+    }
+    const noteEl = document.getElementById('pos-dlv-note');
+    if (noteEl) noteEl.value = curTab.delivery.note;
+    savePosDraft();
+}
+
+function fillPosDeliveryFromCustomer() {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    const cust = curTab.customer;
+    if (!cust || cust.code === RETAIL_CUSTOMER_CODE) {
+        showToast('Hãy chọn khách hàng ở ô tìm khách trước khi lấy thông tin.', 'warning');
+        document.getElementById('pos-customer-input')?.focus();
+        return;
+    }
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    curTab.delivery.receiverName = cust.name || '';
+    curTab.delivery.receiverPhone = cust.phone && cust.phone !== 'Tại quầy' ? cust.phone : '';
+    curTab.delivery.receiverAddress = cust.address || '';
+    renderPosScreen();
+    showToast(`Đã điền người nhận từ khách ${cust.name}.`, 'info');
+}
+
 function handleMultiPaymentInput(method, val) {
     const curTab = state.posTabs[state.activePosTab];
     if (!curTab) return;
@@ -3762,6 +4149,86 @@ function renderVietQR(amount, imgId, descId) {
         descEl.innerHTML = renderHTML`<strong>${bankName}</strong> | STK: <span class="font-mono font-bold">${bankAccount}</span><br>Chủ TK: <strong>${bankOwner}</strong> | Số tiền: <strong>${formatVND(amount)} đ</strong>`;
 }
 
+function buildPosDeliverySalePayload(tab, mappedItems, orderNote) {
+    const d = tab.delivery || createDefaultDeliverySpec();
+    const nameInput = document.getElementById('pos-dlv-receiver-name');
+    const phoneInput = document.getElementById('pos-dlv-receiver-phone');
+    const addrInput = document.getElementById('pos-dlv-receiver-address');
+    const receiverName = (nameInput?.value ?? d.receiverName ?? '').trim();
+    const receiverPhone = (phoneInput?.value ?? d.receiverPhone ?? '').trim();
+    const receiverAddress = (addrInput?.value ?? d.receiverAddress ?? '').trim();
+
+    if (!receiverName) {
+        if (nameInput) setFieldValidationError(nameInput, 'Vui lòng nhập họ tên người nhận');
+        throw new Error('Vui lòng nhập họ tên người nhận để giao hàng.');
+    }
+    if (!receiverPhone || !/^[0-9+ -]{6,40}$/.test(receiverPhone)) {
+        if (phoneInput) setFieldValidationError(phoneInput, 'Số điện thoại nhận không hợp lệ');
+        throw new Error('Nhập số điện thoại người nhận hợp lệ để giao hàng.');
+    }
+    if (!receiverAddress) {
+        if (addrInput) setFieldValidationError(addrInput, 'Vui lòng nhập địa chỉ giao hàng');
+        throw new Error('Vui lòng nhập địa chỉ giao hàng chi tiết.');
+    }
+
+    const carrierType = d.carrierType === 'self' ? 'self' : 'viettelpost';
+    return {
+        branch: tab.branch || getCurrentBranch(),
+        items: mappedItems,
+        customerId: tab.customer?.id || null,
+        discount: tab.discount || 0,
+        given: Number(d.prepaid) || 0,
+        paymentMethod: d.prepaidMethod || 'transfer',
+        orderNote,
+        deliveryNote: (document.getElementById('pos-dlv-note')?.value ?? d.note ?? '').trim(),
+        carrierType,
+        carrierName:
+            carrierType === 'self'
+                ? document.getElementById('pos-dlv-carrier-name')?.value ||
+                  d.carrierName ||
+                  'Nhân viên tự giao'
+                : 'Viettel Post',
+        shipperName:
+            carrierType === 'self'
+                ? (
+                      document.getElementById('pos-dlv-shipper-name')?.value ??
+                      d.shipperName ??
+                      ''
+                  ).trim()
+                : '',
+        shipperPhone:
+            carrierType === 'self'
+                ? (
+                      document.getElementById('pos-dlv-shipper-phone')?.value ??
+                      d.shipperPhone ??
+                      ''
+                  ).trim()
+                : '',
+        shipmentCode:
+            carrierType === 'self'
+                ? (
+                      document.getElementById('pos-dlv-shipment-code')?.value ??
+                      d.shipmentCode ??
+                      ''
+                  ).trim()
+                : '',
+        receiverName,
+        receiverPhone,
+        receiverAddress,
+        senderName: KVStore.data.settings?.storeName || 'Cửa hàng',
+        senderPhone: KVStore.data.settings?.phone || '',
+        senderAddress: KVStore.data.settings?.address || '',
+        service: document.getElementById('pos-dlv-service')?.value ?? d.service ?? 'VCN',
+        paymentType: Number(
+            document.getElementById('pos-dlv-payment-type')?.value ?? d.paymentType ?? 3
+        ),
+        weightGram: Number(document.getElementById('pos-dlv-weight')?.value ?? d.weightGram ?? 200),
+        shippingFeeToCustomer: Number(d.shippingFeeToCustomer) || 0,
+        carrierFee: Number(d.carrierFee) || 0,
+        productType: 'HH'
+    };
+}
+
 // --- CHECKOUT & PRINT BILL ---
 async function checkoutPos() {
     const tab = state.posTabs[state.activePosTab];
@@ -3801,39 +4268,59 @@ async function checkoutPos() {
     }
 
     try {
-        let paymentsPayload = undefined;
-        let givenAmount = tab.customerGiven || 0;
+        clearFormValidationErrors(document.getElementById('pos-delivery-checkout-section'));
+        const isDelivery = state.posMode === 'delivery';
+        const mappedItems = tab.cart.map((i) => ({
+            code: i.code,
+            qty: i.qty,
+            expectedPrice: i.listPrice ?? i.price,
+            salePrice: i.price,
+            imeis:
+                i.hasImei && Array.isArray(i.selectedImeis) && i.selectedImeis.length === i.qty
+                    ? i.selectedImeis
+                    : undefined,
+            note: typeof i.note === 'string' ? i.note.trim() : ''
+        }));
+        const orderNote = tab.note || document.getElementById('pos-order-note')?.value || '';
+        let invoice;
 
-        if (tab.paymentMethod === 'multi') {
-            const mp = tab.multiPayments || {};
-            paymentsPayload = [
-                { method: 'transfer', amount: mp.transfer || 0 },
-                { method: 'cash', amount: mp.cash || 0 },
-                { method: 'card', amount: mp.card || 0 }
-            ].filter((p) => p.amount > 0);
-            givenAmount = paymentsPayload.reduce((s, p) => s + p.amount, 0);
+        if (isDelivery) {
+            const payload = buildPosDeliverySalePayload(tab, mappedItems, orderNote);
+            const res = await KVStore.command('deliverySale', payload);
+            invoice = res.invoice;
+            const dlv = res.delivery;
+            showToast(
+                payload.carrierType === 'self'
+                    ? `Đã xuất đơn giao ${dlv.code} (${dlv.carrierName}) · HĐ ${invoice.code}.`
+                    : `Đã xuất đơn giao ${dlv.code} · Hệ thống đang tạo vận đơn Viettel Post.`,
+                'success'
+            );
+        } else {
+            let paymentsPayload = undefined;
+            let givenAmount = tab.customerGiven || 0;
+            if (tab.paymentMethod === 'multi') {
+                const mp = tab.multiPayments || {};
+                paymentsPayload = [
+                    { method: 'transfer', amount: mp.transfer || 0 },
+                    { method: 'cash', amount: mp.cash || 0 },
+                    { method: 'card', amount: mp.card || 0 }
+                ].filter((p) => p.amount > 0);
+                givenAmount = paymentsPayload.reduce((s, p) => s + p.amount, 0);
+            }
+            invoice = await KVStore.command('sale', {
+                branch: tab.branch || getCurrentBranch(),
+                items: mappedItems,
+                customerId: tab.customer?.id || null,
+                discount: tab.discount || 0,
+                given: givenAmount,
+                paymentMethod: tab.paymentMethod,
+                payments: paymentsPayload,
+                cod: false,
+                note: orderNote
+            });
+            showToast(`Đã lưu hóa đơn ${invoice.code}.`, 'success');
         }
 
-        const invoice = await KVStore.command('sale', {
-            branch: tab.branch || getCurrentBranch(),
-            items: tab.cart.map((i) => ({
-                code: i.code,
-                qty: i.qty,
-                expectedPrice: i.listPrice ?? i.price,
-                salePrice: i.price,
-                imeis:
-                    i.hasImei && Array.isArray(i.selectedImeis) && i.selectedImeis.length === i.qty
-                        ? i.selectedImeis
-                        : undefined,
-                note: typeof i.note === 'string' ? i.note.trim() : ''
-            })),
-            customerId: tab.customer?.id || null,
-            discount: tab.discount || 0,
-            given: givenAmount,
-            paymentMethod: tab.paymentMethod,
-            payments: paymentsPayload,
-            note: tab.note || document.getElementById('pos-order-note')?.value || ''
-        });
         tab.cart = [];
         tab.customer = null;
         tab.discount = 0;
@@ -3841,15 +4328,15 @@ async function checkoutPos() {
         tab.customerGiven = 0;
         tab.tenderEdited = false;
         tab.multiPayments = { transfer: 0, cash: 0, card: 0 };
-        tab.paymentMethod = 'cash';
+        tab.paymentMethod = isDelivery ? 'transfer' : 'cash';
         tab.note = '';
+        tab.delivery = isDelivery ? createDefaultDeliverySpec() : null;
         delete tab.branch;
         const noteEl = document.getElementById('pos-order-note');
         if (noteEl) noteEl.value = '';
         refreshCurrentView();
         openReceiptModal(invoice);
         playBeep('success');
-        showToast(`Đã lưu hóa đơn ${invoice.code}.`, 'success');
 
         const autoPrintCb = document.getElementById('pos-auto-print-cb');
         if (autoPrintCb && autoPrintCb.checked) {
@@ -8741,6 +9228,7 @@ function invoiceQueryKey() {
     return JSON.stringify([
         getCurrentBranch(),
         invoiceStatusFilter,
+        document.getElementById('invoice-channel-filter')?.value || 'all',
         document.getElementById('invoice-search-input')?.value.trim() || '',
         document.getElementById('invoice-date-filter')?.value || 'all'
     ]);
@@ -8815,25 +9303,35 @@ async function renderInvoices(page = 1) {
     }
     invoicePage.key = key;
     if (count) count.textContent = 'Đang tải hóa đơn…';
-    const [branch, status, q, date] = JSON.parse(key);
+    const [branch, status, channel, q, date] = JSON.parse(key);
     if (status === 'starred') {
         const isAll = branch === ALL_BRANCHES;
         const returnsMap = new Map(
             (KVStore.data.returns || []).map((r) => [r.invoiceCode, r.code])
         );
+        const deliveryIds = new Set((KVStore.data.delivery_orders || []).map((d) => d.invoiceId));
         const customersMap = new Map();
         (KVStore.data.customers || []).forEach((c) => {
             if (c.phone) customersMap.set(c.phone, c.code);
             if (c.name) customersMap.set(c.name, c.code);
         });
         let starredList = (KVStore.data.invoices || [])
-            .filter(
-                (inv) =>
+            .filter((inv) => {
+                const isDlv = Boolean(
+                    inv.cod || inv.channel === 'delivery' || deliveryIds.has(inv.id)
+                );
+                if (channel === 'delivery' && !isDlv) return false;
+                if (channel === 'counter' && isDlv) return false;
+                return (
                     (isAll || (inv.branch || FALLBACK_BRANCH) === branch) &&
                     isRecordStarred(`inv:${inv.code}`)
-            )
+                );
+            })
             .map((inv) => ({
                 ...inv,
+                isDelivery: Boolean(
+                    inv.cod || inv.channel === 'delivery' || deliveryIds.has(inv.id)
+                ),
                 hasReturned: returnsMap.has(inv.code),
                 returnCode: returnsMap.get(inv.code) || '',
                 customerCode: customersMap.get(inv.phone) || customersMap.get(inv.customer) || '',
@@ -8863,6 +9361,7 @@ async function renderInvoices(page = 1) {
     const params = new URLSearchParams({
         branch,
         status,
+        channel,
         q,
         date,
         page: String(page),
@@ -8986,6 +9485,7 @@ function renderInvoiceRows(list, currentBranch) {
                     </button>
                     <span class="${row.status === 'cancelled' ? 'line-through text-gray-500' : ''}">${row.code}</span>
                     ${statusBadge}
+                    ${trustedHTML(row.isDelivery || row.cod || row.channel === 'delivery' ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-sky-50 text-sky-700 border border-sky-200/70">Giao hàng</span>' : '')}
                     ${trustedHTML(isAll && row.branch ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-gray-100 text-gray-700">${row.branch}</span>` : '')}
                 </div>
             </td>
@@ -9024,6 +9524,508 @@ function renderInvoiceRows(list, currentBranch) {
 
     const countEl = document.getElementById('invoices-total-count');
     if (countEl) countEl.textContent = `Hiển thị ${list.length} hóa đơn`;
+}
+
+let deliveryStatusFilter = 'all';
+let expandedDeliveryId = null;
+
+const DELIVERY_STATUS_META = {
+    draft: { label: 'Nháp', cls: 'kv-badge-info' },
+    confirmed: { label: 'Chờ lấy hàng', cls: 'kv-badge-info' },
+    submitted: { label: 'Đã gửi hãng', cls: 'kv-badge-info' },
+    handed_over: { label: 'Đang giao', cls: 'kv-badge-info' },
+    delivered: { label: 'Giao thành công', cls: 'kv-badge-success' },
+    returning: { label: 'Đang hoàn', cls: 'kv-badge-warning' },
+    returned: { label: 'Đã nhận hoàn', cls: 'kv-badge-warning' },
+    cancelled: { label: 'Đã hủy', cls: 'kv-badge-danger' }
+};
+
+function getDeliveryCodState(order) {
+    const codRec = (KVStore.data?.delivery_cod_records || []).find(
+        (c) => c.deliveryId === order.id
+    );
+    const status =
+        order.codStatus || codRec?.status || (order.codRequested > 0 ? 'unpaid' : 'settled');
+    return { status, record: codRec };
+}
+
+function formatDeliveryTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setDeliveryStatusFilter(filterKey) {
+    deliveryStatusFilter = filterKey || 'all';
+    renderDelivery();
+}
+
+function clearDeliverySearch() {
+    const inp = document.getElementById('delivery-search-input');
+    if (inp) {
+        inp.value = '';
+        inp.focus();
+    }
+    renderDelivery();
+}
+
+function matchDeliveryStatusCard(o, key) {
+    const codState = getDeliveryCodState(o).status;
+    if (key === 'pending') return ['confirmed', 'submitted', 'draft'].includes(o.status);
+    if (key === 'shipping') return o.status === 'handed_over';
+    if (key === 'delivered') return o.status === 'delivered';
+    if (key === 'unsettled_cod')
+        return (
+            (o.codRequested || 0) > 0 &&
+            codState !== 'settled' &&
+            !['cancelled', 'returned'].includes(o.status)
+        );
+    if (key === 'returned_cancelled')
+        return ['returning', 'returned', 'cancelled'].includes(o.status);
+    return true;
+}
+
+function renderDelivery() {
+    const tbody = document.getElementById('delivery-tbody');
+    if (!tbody) return;
+    renderDeliveryView(tbody);
+}
+
+function renderDeliveryView(tbody) {
+    const branch = getCurrentBranch();
+    const isAll = branch === ALL_BRANCHES;
+    const q = (document.getElementById('delivery-search-input')?.value || '').trim().toLowerCase();
+    document.getElementById('delivery-search-clear-btn')?.classList.toggle('hidden', !q);
+    const carrierFilter = document.getElementById('delivery-carrier-filter')?.value || 'all';
+    const dateFilter = document.getElementById('delivery-date-filter')?.value || 'all';
+
+    const scoped = (KVStore.data?.delivery_orders || []).filter((o) => {
+        if (!isAll && (o.branch || FALLBACK_BRANCH) !== branch) return false;
+        const cType = o.carrierType === 'self' ? 'self' : 'viettelpost';
+        if (carrierFilter !== 'all' && cType !== carrierFilter) return false;
+        if (dateFilter !== 'all' && !matchesDateFilter(formatDeliveryTime(o.createdAt), dateFilter))
+            return false;
+        if (q) {
+            const imeiStr = (o.items || o.heldItems || [])
+                .flatMap((it) => it.imeis || [])
+                .join(' ');
+            const hay =
+                `${o.code || ''} ${o.id || ''} ${o.invoiceCode || ''} ${o.shipmentCode || ''} ${o.receiverName || ''} ${o.receiverPhone || ''} ${o.receiverAddress || ''} ${o.shipperName || ''} ${imeiStr}`.toLowerCase();
+            if (!hay.includes(q)) return false;
+        }
+        return true;
+    });
+
+    const cardsEl = document.getElementById('delivery-status-cards');
+    if (cardsEl) {
+        const defs = [
+            ['all', 'Tất cả đơn'],
+            ['pending', 'Chờ lấy hàng'],
+            ['shipping', 'Đang giao'],
+            ['delivered', 'Giao thành công'],
+            ['unsettled_cod', 'Chờ đối soát COD'],
+            ['returned_cancelled', 'Hoàn / Đã hủy']
+        ];
+        cardsEl.innerHTML = trustedHTML(
+            defs
+                .map(([k, lbl]) => {
+                    const cnt = scoped.filter((o) => matchDeliveryStatusCard(o, k)).length;
+                    const active = deliveryStatusFilter === k;
+                    return renderHTML`<button type="button" onclick="setDeliveryStatusFilter('${k}')" aria-pressed="${String(active)}" class="text-left rounded-xl p-2.5 transition ${active ? 'bg-blue-50/90 border-[1.5px] border-[#0066cc] shadow-2xs' : 'bg-white/85 border border-gray-200/80 hover:border-gray-300'}"><div class="text-[11.5px] font-medium ${active ? 'text-[#0066cc]' : 'text-gray-500'} truncate">${lbl}</div><div class="text-[16px] font-bold text-slate-900 tabular-nums mt-0.5">${cnt}</div></button>`.toString();
+                })
+                .join('')
+        );
+    }
+
+    const orders = scoped
+        .filter((o) => matchDeliveryStatusCard(o, deliveryStatusFilter))
+        .slice(0, 300);
+    let sumProd = 0,
+        sumPrepaid = 0,
+        sumCod = 0;
+    orders.forEach((o) => {
+        if (!['cancelled', 'returned'].includes(o.status)) {
+            sumProd += Number(o.productTotal) || 0;
+            sumPrepaid += Number(o.prepaid) || 0;
+            if (getDeliveryCodState(o).status !== 'settled') sumCod += Number(o.codRequested) || 0;
+        }
+    });
+    const setTxt = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = v;
+    };
+    setTxt('delivery-total-count', `Hiển thị ${orders.length} vận đơn`);
+    setTxt('delivery-sum-product', `${formatVND(sumProd)} đ`);
+    setTxt('delivery-sum-prepaid', `${formatVND(sumPrepaid)} đ`);
+    setTxt('delivery-sum-cod', `${formatVND(sumCod)} đ`);
+
+    tbody.replaceChildren();
+    if (!orders.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td colspan="8" class="py-10 text-center text-gray-400 text-[13px]">Chưa có vận đơn giao hàng phù hợp bộ lọc.</td>';
+        tbody.appendChild(tr);
+        return;
+    }
+    renderDeliveryRows(tbody, orders, isAll);
+}
+
+function buildDeliveryQuickButtons(order, key, codState) {
+    const btns = [
+        renderHTML`<button type="button" onclick="event.stopPropagation(); printDeliveryLabel('${key}')" class="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-[11.5px] font-medium transition" title="In phiếu gửi hàng">In nhãn</button>`.toString()
+    ];
+    if (['confirmed', 'submitted'].includes(order.status)) {
+        btns.push(
+            renderHTML`<button type="button" onclick="event.stopPropagation(); promptHandoverDelivery('${key}')" class="px-2 py-1 bg-blue-50 hover:bg-[#0066cc] text-[#0066cc] hover:text-white rounded-lg text-[11.5px] font-semibold transition">Giao đi</button>`.toString(),
+            renderHTML`<button type="button" onclick="event.stopPropagation(); cancelPosDelivery('${key}')" class="px-2 py-1 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-lg text-[11.5px] font-medium transition">Hủy</button>`.toString()
+        );
+    } else if (order.status === 'handed_over') {
+        btns.push(
+            renderHTML`<button type="button" onclick="event.stopPropagation(); updatePosDeliveryStatus('${key}', 'delivered')" class="px-2 py-1 bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white rounded-lg text-[11.5px] font-semibold transition">Đã giao</button>`.toString()
+        );
+    }
+    if (
+        (order.codRequested || 0) > 0 &&
+        codState !== 'settled' &&
+        !['cancelled', 'returned'].includes(order.status)
+    ) {
+        btns.push(
+            renderHTML`<button type="button" onclick="event.stopPropagation(); promptSettleDeliveryCod('${key}')" class="px-2 py-1 bg-amber-50 hover:bg-amber-600 text-amber-800 hover:text-white rounded-lg text-[11.5px] font-semibold transition">Thu COD</button>`.toString()
+        );
+    }
+    return btns.join('');
+}
+
+function renderDeliveryRows(tbody, orders, isAll) {
+    orders.forEach((order) => {
+        const key = order.id || order.code;
+        const isExpanded = expandedDeliveryId === key;
+        const meta = DELIVERY_STATUS_META[order.status] || {
+            label: order.status,
+            cls: 'kv-badge-info'
+        };
+        const isSelf = order.carrierType === 'self';
+        const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+        const codState = getDeliveryCodState(order).status;
+        const codBadge =
+            (order.codRequested || 0) <= 0
+                ? '<span class="text-[10.5px] text-gray-400">Không COD</span>'
+                : codState === 'settled'
+                  ? '<span class="text-[10.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Đã đối soát</span>'
+                  : ['cancelled', 'returned'].includes(order.status)
+                    ? '<span class="text-[10.5px] text-gray-400">Đã đóng</span>'
+                    : '<span class="text-[10.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Chờ thu COD</span>';
+
+        const tr = document.createElement('tr');
+        tr.dataset.exportKey = String(key);
+        tr.setAttribute('tabindex', '0');
+        tr.setAttribute('role', 'row');
+        tr.setAttribute('aria-expanded', String(isExpanded));
+        tr.className = `table-row-hover border-b border-gray-100/70 text-[13px] cursor-pointer ${order.status === 'cancelled' ? 'bg-rose-50/30 opacity-75' : ''} ${isExpanded ? 'bg-blue-50/60' : ''}`;
+        tr.innerHTML = renderHTML`
+            <td class="py-2.5 px-3 font-mono">
+                <div class="flex items-center gap-1.5">
+                    <button type="button" id="dlv-trigger-${key}" aria-expanded="${String(isExpanded)}" aria-controls="dlv-detail-${key}" onclick="event.stopPropagation(); toggleDeliveryRowDetail('${key}')" class="text-[10px] text-gray-400 hover:text-[#0066cc] p-0.5">${isExpanded ? '▼' : '▶'}</button>
+                    <div>
+                        <div class="font-bold text-[#0066cc]">${order.code || order.id}</div>
+                        <div class="text-[11px] text-gray-500">${order.invoiceCode || order.invoiceId || ''} · ${formatDeliveryTime(order.createdAt)}</div>
+                        ${trustedHTML(isAll && order.branch ? renderHTML`<span class="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-gray-100 text-gray-700">${order.branch}</span>` : '')}
+                    </div>
+                </div>
+            </td>
+            <td class="py-2.5 px-3">
+                <span class="inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold ${isSelf ? 'bg-amber-50 text-amber-800 border border-amber-200/70' : 'bg-blue-50 text-[#0066cc] border border-blue-200/70'}">${carrierLabel}</span>
+                <div class="text-[11.5px] font-mono text-gray-600 mt-0.5">${order.shipmentCode || (isSelf ? order.shipperName || '—' : 'Chờ cấp mã')}</div>
+            </td>
+            <td class="py-2.5 px-3">
+                <div class="font-semibold text-gray-900">${order.receiverName || '—'}</div>
+                <div class="text-[11.5px] font-mono text-gray-600">${order.receiverPhone || ''}</div>
+                <div class="text-[11px] text-gray-500 truncate max-w-[220px]" title="${order.receiverAddress || ''}">${order.receiverAddress || ''}</div>
+            </td>
+            <td class="py-2.5 px-3 text-right tabular-nums font-medium text-gray-800">${formatVND(order.productTotal || 0)} đ</td>
+            <td class="py-2.5 px-3 text-right tabular-nums font-semibold text-emerald-700">${formatVND(order.prepaid || 0)} đ</td>
+            <td class="py-2.5 px-3 text-right">
+                <div class="tabular-nums font-bold ${(order.codRequested || 0) > 0 && codState !== 'settled' ? 'text-rose-600' : 'text-gray-800'}">${formatVND(order.codRequested || 0)} đ</div>
+                <div>${trustedHTML(codBadge)}</div>
+            </td>
+            <td class="py-2.5 px-3"><span class="kv-badge ${meta.cls}">${meta.label}</span></td>
+            <td class="py-2.5 px-3 text-right whitespace-nowrap"><div class="inline-flex items-center gap-1">${trustedHTML(buildDeliveryQuickButtons(order, key, codState))}</div></td>
+        `;
+        tr.onclick = (e) => {
+            if (!e.target.closest('button') && !e.target.closest('input'))
+                toggleDeliveryRowDetail(key);
+        };
+        tr.onkeydown = (e) => {
+            if (e.target === tr && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault();
+                toggleDeliveryRowDetail(key);
+            }
+        };
+        tbody.appendChild(tr);
+
+        if (isExpanded) {
+            const detailTr = document.createElement('tr');
+            detailTr.id = `dlv-detail-${key}`;
+            detailTr.dataset.detailKey = String(key);
+            detailTr.setAttribute('role', 'region');
+            detailTr.setAttribute('aria-labelledby', `dlv-trigger-${key}`);
+            detailTr.className = 'expand-detail-row bg-slate-50/80 border-b border-blue-200';
+            const td = document.createElement('td');
+            td.colSpan = 8;
+            td.className = 'p-3 sm:p-4 text-left';
+            td.innerHTML = renderDeliveryDetailHtml(order);
+            detailTr.appendChild(td);
+            tbody.appendChild(detailTr);
+        }
+    });
+}
+
+function toggleDeliveryRowDetail(key) {
+    expandedDeliveryId = expandedDeliveryId === key ? null : key;
+    renderDelivery();
+}
+
+function buildDeliveryDetailActionButtons(order, key, codState) {
+    const actionBtns = [
+        renderHTML`<button type="button" onclick="printDeliveryLabel('${key}')" class="px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-800 border border-gray-200 rounded-xl text-[12px] font-semibold transition">In phiếu gửi hàng</button>`.toString()
+    ];
+    if (['confirmed', 'submitted'].includes(order.status)) {
+        actionBtns.push(
+            renderHTML`<button type="button" onclick="promptHandoverDelivery('${key}')" class="px-3 py-1.5 bg-[#0066cc] hover:bg-[#0052a3] text-white rounded-xl text-[12px] font-semibold transition">Xác nhận bàn giao đi giao</button>`.toString(),
+            renderHTML`<button type="button" onclick="cancelPosDelivery('${key}')" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 rounded-xl text-[12px] font-semibold transition">Hủy đơn &amp; Hoàn kho</button>`.toString()
+        );
+    }
+    if (order.status === 'handed_over') {
+        actionBtns.push(
+            renderHTML`<button type="button" onclick="updatePosDeliveryStatus('${key}', 'delivered')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[12px] font-semibold transition">Xác nhận Giao thành công</button>`.toString(),
+            renderHTML`<button type="button" onclick="updatePosDeliveryStatus('${key}', 'returning')" class="px-3 py-1.5 bg-amber-50 hover:bg-amber-600 text-amber-800 hover:text-white border border-amber-200 rounded-xl text-[12px] font-semibold transition">Báo chuyển hoàn</button>`.toString()
+        );
+    }
+    if (['handed_over', 'returning', 'delivered'].includes(order.status)) {
+        actionBtns.push(
+            renderHTML`<button type="button" onclick="confirmReturnPosDelivery('${key}')" class="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-[12px] font-semibold transition">Nhận hàng hoàn &amp; Nhập kho</button>`.toString()
+        );
+    }
+    if (
+        (order.codRequested || 0) > 0 &&
+        codState !== 'settled' &&
+        !['cancelled', 'returned'].includes(order.status)
+    ) {
+        actionBtns.push(
+            renderHTML`<button type="button" onclick="promptSettleDeliveryCod('${key}', 'transfer')" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[12px] font-bold transition">Đối soát COD (CK)</button>`.toString(),
+            renderHTML`<button type="button" onclick="promptSettleDeliveryCod('${key}', 'cash')" class="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-[12px] font-semibold transition">Thu COD Tiền mặt</button>`.toString()
+        );
+    }
+    return actionBtns.join('');
+}
+
+function renderDeliveryDetailHtml(order) {
+    const key = order.id || order.code;
+    const isSelf = order.carrierType === 'self';
+    const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+    const { status: codState } = getDeliveryCodState(order);
+    const inv = (KVStore.data?.invoices || []).find(
+        (i) => i.id === order.invoiceId || i.code === order.invoiceCode
+    );
+    const items = order.items || inv?.items || order.heldItems || [];
+    const itemsHtml = items
+        .map((it, idx) =>
+            renderHTML`
+        <tr class="border-b border-gray-100 text-[12px]">
+            <td class="py-1.5 px-2 text-center text-gray-400">${idx + 1}</td>
+            <td class="py-1.5 px-2 font-mono font-semibold text-[#0066cc]">${it.code}</td>
+            <td class="py-1.5 px-2"><div class="font-medium text-gray-900">${it.name || it.code}</div>${trustedHTML(it.imeis?.length ? renderHTML`<div class="text-[11px] font-mono text-gray-500">IMEI: ${it.imeis.join(', ')}</div>` : '')}</td>
+            <td class="py-1.5 px-2 text-center font-bold">${it.qty}</td>
+            <td class="py-1.5 px-2 text-right tabular-nums">${it.price != null ? formatVND(it.price) + ' đ' : '—'}</td>
+        </tr>`.toString()
+        )
+        .join('');
+
+    const history = (KVStore.data?.delivery_status_history || []).filter(
+        (h) => h.deliveryId === order.id
+    );
+    const historyHtml = history.length
+        ? history
+              .map((h) =>
+                  renderHTML`<div class="flex justify-between gap-2 text-[11.5px] py-1 border-b border-gray-100 last:border-0"><span class="font-medium text-gray-800">• ${h.statusName || `Mã ${h.statusCode}`}${h.note ? ` — ${h.note}` : ''}</span><span class="font-mono text-gray-400 flex-shrink-0">${formatDeliveryTime(h.statusDate)}</span></div>`.toString()
+              )
+              .join('')
+        : '<div class="text-[11.5px] text-gray-400 italic">Chưa có lịch sử cập nhật.</div>';
+
+    return renderHTML`
+        <div class="bg-white rounded-2xl p-3.5 border border-gray-200/80 shadow-xs space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-gray-100">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <span class="font-bold text-slate-900 text-sm font-mono">${order.code}</span>
+                    <span class="font-semibold text-[#0066cc]">HĐ: ${order.invoiceCode || order.invoiceId}</span>
+                    <span class="text-gray-600">Vận chuyển: <strong>${carrierLabel}</strong> ${order.shipmentCode ? `(${order.shipmentCode})` : ''}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-1.5">${trustedHTML(buildDeliveryDetailActionButtons(order, key, codState))}</div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/70 space-y-1">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase">Người nhận &amp; Giao vận</div>
+                    <div class="font-bold text-gray-900">${order.receiverName || '—'} · <span class="font-mono">${order.receiverPhone || ''}</span></div>
+                    <div class="text-gray-600">${order.receiverAddress || 'Chưa có địa chỉ'}</div>
+                    ${trustedHTML(isSelf && (order.shipperName || order.shipperPhone) ? renderHTML`<div class="text-amber-800 pt-1">Người giao: <strong>${order.shipperName || ''}</strong> ${order.shipperPhone || ''}</div>` : '')}
+                    <div class="text-gray-600 italic">Ghi chú: ${order.note || '(Không có)'}</div>
+                </div>
+                <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100 space-y-1">
+                    <div class="text-[10.5px] font-bold text-blue-800 uppercase">Tiền hàng &amp; Đối soát COD</div>
+                    <div class="flex justify-between"><span>Tiền hàng:</span><span class="font-mono font-bold">${formatVND(order.productTotal || 0)} đ</span></div>
+                    <div class="flex justify-between"><span>Phí ship thu khách:</span><span class="font-mono font-semibold">${formatVND(order.shippingFeeToCustomer || 0)} đ</span></div>
+                    <div class="flex justify-between text-emerald-700"><span>Khách trả trước:</span><span class="font-mono font-bold">${formatVND(order.prepaid || 0)} đ</span></div>
+                    <div class="flex justify-between text-rose-600 font-bold border-t border-blue-200/60 pt-1"><span>Thu hộ (COD):</span><span class="font-mono">${formatVND(order.codRequested || 0)} đ (${codState === 'settled' ? 'Đã đối soát' : 'Chưa đối soát'})</span></div>
+                </div>
+                <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/70 space-y-1 max-h-36 overflow-y-auto">
+                    <div class="text-[10.5px] font-bold text-gray-400 uppercase">Hành trình vận đơn</div>
+                    ${trustedHTML(historyHtml)}
+                </div>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead class="bg-gray-50 text-gray-600 font-semibold border-b border-gray-200">
+                        <tr><th class="py-1.5 px-2 w-10 text-center">#</th><th class="py-1.5 px-2">Mã SP</th><th class="py-1.5 px-2">Sản phẩm / IMEI</th><th class="py-1.5 px-2 text-center w-14">SL</th><th class="py-1.5 px-2 text-right">Đơn giá</th></tr>
+                    </thead>
+                    <tbody>${trustedHTML(itemsHtml || '<tr><td colspan="5" class="py-3 text-center text-gray-400">Không có chi tiết mặt hàng</td></tr>')}</tbody>
+                </table>
+            </div>
+        </div>`.toString();
+}
+
+function printDeliveryLabel(id) {
+    const order = (KVStore.data?.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    const box = document.getElementById('printable-delivery-label');
+    if (!order || !box) return;
+    const isSelf = order.carrierType === 'self';
+    const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+    const items = order.items || order.heldItems || [];
+    box.innerHTML = renderHTML`
+        <div style="font-family: sans-serif; max-width: 380px; margin: 0 auto; padding: 12px; border: 2px solid #111; color: #111;">
+            <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #111; padding-bottom: 6px; margin-bottom: 8px;">
+                <div>
+                    <div style="font-size: 16px; font-weight: 800;">PHIẾU GỬI HÀNG</div>
+                    <div style="font-size: 12px;">${carrierLabel}</div>
+                </div>
+                <div style="text-align: right; font-family: monospace;">
+                    <div style="font-size: 15px; font-weight: 800;">${order.shipmentCode || order.code}</div>
+                    <div style="font-size: 11px;">Đơn: ${order.code} · ${order.invoiceCode || ''}</div>
+                </div>
+            </div>
+            <div style="font-size: 12px; border-bottom: 1px dashed #666; padding-bottom: 6px; margin-bottom: 6px;">
+                <strong>Từ:</strong> ${order.senderName || KVStore.data?.settings?.storeName || 'Cửa hàng'} (${order.senderPhone || KVStore.data?.settings?.phone || ''})<br/>
+                <span>${order.senderAddress || KVStore.data?.settings?.address || order.branch || ''}</span>
+            </div>
+            <div style="font-size: 13px; border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 8px;">
+                <strong>Người nhận: ${order.receiverName || ''}</strong> — <strong>${order.receiverPhone || ''}</strong><br/>
+                <span>Đ/c: ${order.receiverAddress || ''}</span>
+            </div>
+            <div style="font-size: 12px; margin-bottom: 8px;">
+                <strong>Nội dung hàng (${items.reduce((s, i) => s + (i.qty || 0), 0)} SP):</strong>
+                ${items.map((i) => `${i.name || i.code} x${i.qty}`).join('; ')}
+                ${order.note ? ` | Ghi chú: ${order.note}` : ''}
+            </div>
+            <div style="padding: 8px; border: 2px solid #111; text-align: center;">
+                <div style="font-size: 11px; text-transform: uppercase;">Tiền thu hộ người nhận (COD)</div>
+                <div style="font-size: 22px; font-weight: 900; margin-top: 2px;">${formatVND(order.codRequested || 0)} đ</div>
+            </div>
+        </div>
+    `.toString();
+    printRegion('printable-delivery-label', true, 'k80');
+}
+
+async function cancelPosDelivery(id) {
+    if (
+        !(await askAction({
+            title: 'Hủy vận đơn & Hoàn kho',
+            message: `Hủy đơn giao hàng ${id}? Hệ thống sẽ hủy chứng từ bán liên kết, cộng trả lại tồn kho/IMEI và hoàn phiếu chi nếu khách đã đặt cọc.`,
+            confirmText: 'Xác nhận hủy & hoàn kho'
+        }))
+    )
+        return;
+    try {
+        await KVStore.command('cancelDelivery', { id });
+        renderDelivery();
+        showToast('Đã hủy vận đơn và hoàn trả tồn kho.', 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function updatePosDeliveryStatus(id, nextStatus, extra = {}) {
+    try {
+        await KVStore.command('updateDeliveryStatus', { id, status: nextStatus, ...extra });
+        renderDelivery();
+        const msgMap = {
+            handed_over: 'Đã xác nhận bàn giao kiện hàng đi giao.',
+            delivered: 'Đã xác nhận giao hàng thành công.',
+            returning: 'Đã chuyển trạng thái đang hoàn hàng.'
+        };
+        showToast(msgMap[nextStatus] || 'Đã cập nhật trạng thái vận đơn.', 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function promptHandoverDelivery(id) {
+    const order = (KVStore.data?.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) return;
+    if (
+        !(await askAction({
+            title: 'Bàn giao đi giao hàng',
+            message: `Xác nhận đã đóng gói và bàn giao kiện hàng ${order.code} cho đơn vị vận chuyển / người giao?`,
+            confirmText: 'Xác nhận bàn giao'
+        }))
+    )
+        return;
+    await updatePosDeliveryStatus(order.id, 'handed_over');
+}
+
+async function promptSettleDeliveryCod(id, method = 'transfer') {
+    const order = (KVStore.data?.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) return;
+    const methodNames = { transfer: 'Chuyển khoản ngân hàng', cash: 'Tiền mặt', card: 'Thẻ' };
+    if (
+        !(await askAction({
+            title: 'Đối soát thu tiền COD',
+            message: `Xác nhận đã nhận đủ tiền COD ${formatVND(order.codRequested)} đ của vận đơn ${order.code} qua "${methodNames[method] || method}"? Hệ thống sẽ tự động lập phiếu thu Sổ quỹ.`,
+            confirmText: 'Xác nhận thu COD'
+        }))
+    )
+        return;
+    try {
+        await KVStore.command('settleDeliveryCod', {
+            id: order.id,
+            method,
+            settlementAmount: order.codRequested
+        });
+        renderDelivery();
+        showToast(`Đã đối soát COD ${formatVND(order.codRequested)} đ vào Sổ quỹ.`, 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+async function confirmReturnPosDelivery(id) {
+    const order = (KVStore.data?.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) return;
+    if (
+        !(await askAction({
+            title: 'Nhận hàng hoàn & Nhập lại kho',
+            message: `Xác nhận đã nhận và kiểm tra đủ hàng hoàn của vận đơn ${order.code}? Hệ thống sẽ khôi phục tồn kho/IMEI và ghi nhận phiếu trả hàng.`,
+            confirmText: 'Nhận hoàn & Nhập kho'
+        }))
+    )
+        return;
+    try {
+        await KVStore.command('returnDelivery', { id: order.id });
+        renderDelivery();
+        showToast(`Đã nhận hàng hoàn vận đơn ${order.code} và nhập lại kho.`, 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
 }
 
 function toggleInvoiceRowDetail(code) {
@@ -12786,6 +13788,7 @@ const ROLE_PRESETS = {
             pos: true,
             posPrice: true,
             invoices: true,
+            shipping: true,
             products: true,
             stocktakes: true,
             transfers: true,
@@ -12805,6 +13808,7 @@ const ROLE_PRESETS = {
             pos: true,
             posPrice: true,
             invoices: true,
+            shipping: true,
             products: true,
             stocktakes: true,
             transfers: true,
@@ -12824,6 +13828,7 @@ const ROLE_PRESETS = {
             pos: true,
             posPrice: false,
             invoices: true,
+            shipping: true,
             products: false,
             stocktakes: false,
             transfers: false,
@@ -12843,6 +13848,7 @@ const ROLE_PRESETS = {
             pos: false,
             posPrice: false,
             invoices: false,
+            shipping: false,
             products: true,
             stocktakes: true,
             transfers: true,
@@ -12924,20 +13930,22 @@ async function handleLoginSubmit(e) {
     }
 }
 function navigateAfterLogin() {
-    const view = [
-        'dashboard',
-        'pos',
-        'invoices',
-        'products',
-        'stocktakes',
-        'transfers',
-        'imports',
-        'suppliers',
-        'customers',
-        'cashbook',
-        'reports'
-    ].find((p) => hasPermission(p));
-    if (view) switchView(view);
+    const candidates = [
+        { perm: 'dashboard', view: 'dashboard' },
+        { perm: 'pos', view: 'pos' },
+        { perm: 'shipping', view: 'delivery' },
+        { perm: 'invoices', view: 'invoices' },
+        { perm: 'products', view: 'products' },
+        { perm: 'stocktakes', view: 'stocktakes' },
+        { perm: 'transfers', view: 'transfers' },
+        { perm: 'imports', view: 'imports' },
+        { perm: 'suppliers', view: 'suppliers' },
+        { perm: 'customers', view: 'customers' },
+        { perm: 'cashbook', view: 'cashbook' },
+        { perm: 'reports', view: 'reports' }
+    ];
+    const match = candidates.find((c) => hasPermission(c.perm));
+    if (match) switchView(match.view);
 }
 
 function toggleLoginPasswordVisibility() {
@@ -12962,6 +13970,7 @@ async function handleLogout() {
     KVStore.csrfToken = null;
     KVStore.data = copyData(defaultData);
     KVStore._base = copyData(defaultData);
+    state.posMode = 'counter';
     state.posTabs = [
         {
             id: 1,
@@ -12971,9 +13980,31 @@ async function handleLogout() {
             discount: 0,
             paymentMethod: 'cash',
             customerGiven: 0,
-            note: ''
+            multiPayments: { transfer: 0, cash: 0, card: 0 },
+            note: '',
+            mode: 'fast',
+            delivery: null
         }
     ];
+    state._counterTabsBucket = null;
+    state._deliveryTabsBucket = {
+        active: 0,
+        tabs: [
+            {
+                id: 1,
+                name: 'Đơn giao 1',
+                cart: [],
+                customer: null,
+                discount: 0,
+                paymentMethod: 'transfer',
+                customerGiven: 0,
+                multiPayments: { transfer: 0, cash: 0, card: 0 },
+                note: '',
+                mode: 'delivery',
+                delivery: createDefaultDeliverySpec()
+            }
+        ]
+    };
     state.activePosTab = 0;
     try {
         if (typeof localStorage !== 'undefined') {
@@ -13062,6 +14093,12 @@ function applyUserPermissionsToUI() {
     const navInvoices = document.getElementById('nav-invoices');
     if (navInvoices) navInvoices.style.display = hasPermission('invoices') ? '' : 'none';
 
+    const deliveryNavBtn = document.getElementById('nav-delivery');
+    if (deliveryNavBtn) deliveryNavBtn.style.display = hasPermission('shipping') ? '' : 'none';
+    const deliveryNavMobileBtn = document.getElementById('nav-delivery-mobile');
+    if (deliveryNavMobileBtn)
+        deliveryNavMobileBtn.style.display = hasPermission('shipping') ? '' : 'none';
+
     const navCustomers = document.getElementById('nav-customers');
     if (navCustomers) navCustomers.style.display = hasPermission('customers') ? '' : 'none';
 
@@ -13087,6 +14124,8 @@ function applyUserPermissionsToUI() {
 function goToManagementFromPos() {
     if (hasPermission('dashboard')) {
         switchView('dashboard');
+    } else if (hasPermission('shipping')) {
+        switchView('delivery');
     } else if (hasPermission('invoices')) {
         switchView('invoices');
     } else if (hasPermission('products')) {
@@ -13333,6 +14372,7 @@ function openStaffFormModal(staffId = null) {
             'pos',
             'posPrice',
             'invoices',
+            'shipping',
             'products',
             'stocktakes',
             'transfers',
@@ -13381,6 +14421,7 @@ function onRolePresetChange(role) {
         'pos',
         'posPrice',
         'invoices',
+        'shipping',
         'products',
         'stocktakes',
         'transfers',
@@ -13458,6 +14499,7 @@ async function saveStaffSubmit(e) {
         'pos',
         'posPrice',
         'invoices',
+        'shipping',
         'products',
         'stocktakes',
         'transfers',
@@ -14592,6 +15634,50 @@ function openApiTokensModal() {
     document.getElementById('new-token-banner')?.classList.add('hidden');
     modal.classList.remove('hidden');
     loadApiTokensList();
+}
+
+async function openVtpConfigModal() {
+    if (typeof hasPermission === 'function' && !hasPermission('settings')) {
+        showToast('Chỉ Quản trị viên mới có quyền cấu hình Viettel Post.', 'error');
+        return;
+    }
+    const modal = document.getElementById('vtp-config-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    document.getElementById('vtp-config-status').textContent = 'Đang tải cấu hình…';
+    try {
+        const res = await KVStore.request('/api/vtp/config');
+        document.getElementById('vtp-base-url').value = res.config?.baseUrl || '';
+        document.getElementById('vtp-username').value = res.config?.username || '';
+        document.getElementById('vtp-password').value = '';
+        document.getElementById('vtp-webhook-secret').value = '';
+        document.getElementById('vtp-config-status').textContent = res.config?.configured
+            ? 'Đã cấu hình. Để trống mật khẩu/secret nếu không thay đổi.'
+            : 'Chưa cấu hình kết nối Viettel Post.';
+    } catch (error) {
+        document.getElementById('vtp-config-status').textContent = error.message;
+    }
+}
+
+async function saveVtpConfig(e) {
+    e.preventDefault();
+    const status = document.getElementById('vtp-config-status');
+    try {
+        const input = {
+            baseUrl: document.getElementById('vtp-base-url').value.trim(),
+            username: document.getElementById('vtp-username').value.trim(),
+            password: document.getElementById('vtp-password').value,
+            webhookSecret: document.getElementById('vtp-webhook-secret').value
+        };
+        await KVStore.request('/api/vtp/config', { method: 'POST', body: input });
+        status.textContent = 'Đã lưu cấu hình Viettel Post.';
+        showToast('Đã lưu kết nối Viettel Post.', 'success');
+        document.getElementById('vtp-password').value = '';
+        document.getElementById('vtp-webhook-secret').value = '';
+    } catch (error) {
+        status.textContent = error.message;
+        showToast(error.message, 'error');
+    }
 }
 
 async function copyApiBaseUrl() {

@@ -4,6 +4,8 @@ const { hashPassword } = require('./security');
 const { FALLBACK_BRANCH } = require('./constants');
 
 function hasColumn(db, table, column) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))
+        return true;
     return db
         .prepare(`PRAGMA table_info(${table})`)
         .all()
@@ -202,6 +204,119 @@ const MIGRATIONS = [
                     updatedAt TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS deplao_send_jobs_user ON deplao_send_jobs(userId, createdAt);
+            `);
+        }
+    },
+    {
+        version: 11,
+        name: 'delivery_orders',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS delivery_orders (
+                    id TEXT PRIMARY KEY,
+                    invoiceId TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    code TEXT NOT NULL DEFAULT '',
+                    orderNumber TEXT NOT NULL DEFAULT '',
+                    senderName TEXT NOT NULL DEFAULT '',
+                    senderPhone TEXT NOT NULL DEFAULT '',
+                    senderAddress TEXT NOT NULL DEFAULT '',
+                    senderProvinceId TEXT NOT NULL DEFAULT '',
+                    senderDistrictId TEXT NOT NULL DEFAULT '',
+                    senderWardId TEXT NOT NULL DEFAULT '',
+                    receiverName TEXT NOT NULL DEFAULT '',
+                    receiverPhone TEXT NOT NULL DEFAULT '',
+                    receiverAddress TEXT NOT NULL DEFAULT '',
+                    receiverProvinceId TEXT NOT NULL DEFAULT '',
+                    receiverDistrictId TEXT NOT NULL DEFAULT '',
+                    receiverWardId TEXT NOT NULL DEFAULT '',
+                    service TEXT NOT NULL DEFAULT '',
+                    serviceAdd TEXT NOT NULL DEFAULT '',
+                    paymentType INTEGER NOT NULL DEFAULT 1,
+                    weightGram INTEGER NOT NULL DEFAULT 0,
+                    productType TEXT NOT NULL DEFAULT 'HH',
+                    note TEXT NOT NULL DEFAULT '',
+                    productTotal INTEGER NOT NULL DEFAULT 0,
+                    prepaid INTEGER NOT NULL DEFAULT 0,
+                    codRequested INTEGER NOT NULL DEFAULT 0,
+                    carrierFee INTEGER NOT NULL DEFAULT 0,
+                    shippingFeeToCustomer INTEGER NOT NULL DEFAULT 0,
+                    shipmentReference TEXT NOT NULL DEFAULT '',
+                    shipmentCode TEXT NOT NULL DEFAULT '',
+                    printCode TEXT NOT NULL DEFAULT '',
+                    printExpiresAt INTEGER,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL,
+                    cancelledAt TEXT,
+                    extra TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS delivery_orders_invoice ON delivery_orders(invoiceId);
+                CREATE INDEX IF NOT EXISTS delivery_orders_shipment ON delivery_orders(shipmentCode);
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS delivery_status_history (
+                    id TEXT PRIMARY KEY,
+                    deliveryId TEXT NOT NULL,
+                    orderNumber TEXT NOT NULL,
+                    statusCode INTEGER NOT NULL,
+                    statusName TEXT NOT NULL DEFAULT '',
+                    statusDate TEXT NOT NULL,
+                    reasonCode TEXT,
+                    note TEXT NOT NULL DEFAULT '',
+                    receivedAt TEXT NOT NULL,
+                    processedAt TEXT
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS delivery_history_dedup
+                    ON delivery_status_history(deliveryId, statusCode, statusDate);
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS delivery_tasks (
+                    id TEXT PRIMARY KEY,
+                    deliveryId TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    attempt INTEGER NOT NULL DEFAULT 0,
+                    nextAttemptAt INTEGER,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    lastError TEXT NOT NULL DEFAULT '',
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS delivery_tasks_due ON delivery_tasks(status, nextAttemptAt);
+            `);
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS delivery_cod_records (
+                    id TEXT PRIMARY KEY,
+                    deliveryId TEXT NOT NULL,
+                    codRequested INTEGER NOT NULL DEFAULT 0,
+                    codCollected INTEGER NOT NULL DEFAULT 0,
+                    carrierFee INTEGER NOT NULL DEFAULT 0,
+                    settlementAmount INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'unpaid',
+                    settledAt TEXT,
+                    note TEXT NOT NULL DEFAULT '',
+                    createdAt TEXT NOT NULL,
+                    updatedAt TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS delivery_cod_delivery ON delivery_cod_records(deliveryId);
+            `);
+        }
+    },
+    {
+        version: 12,
+        name: 'persistent_sessions',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token TEXT PRIMARY KEY,
+                    userId TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    csrfToken TEXT NOT NULL,
+                    expires INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS sessions_user ON sessions(userId);
+                CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires);
             `);
         }
     }

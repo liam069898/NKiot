@@ -116,16 +116,27 @@ function cookie(req) {
         .find((s) => s.startsWith('minikiot_session='))
         ?.slice(17);
 }
+// Đọc phiên từ cache RAM trước, nếu chưa có thì nạp lại từ SQLite (khôi phục sau restart).
+function loadSession(token) {
+    if (!token) return null;
+    let session = sessions.get(token);
+    if (session) return session;
+    session = db.readSession(token);
+    if (session) sessions.set(token, session);
+    return session;
+}
 function sessionUser(req) {
     const token = cookie(req),
-        session = sessions.get(token);
+        session = loadSession(token);
     if (!session || session.expires < Date.now()) {
         sessions.delete(token);
+        db.deleteSession(token);
         return null;
     }
     const user = db.readSnapshot().users.find((u) => u.id === session.userId);
     if (!user || user.status !== 'active' || user.password !== session.password) {
         sessions.delete(token);
+        db.deleteSession(token);
         return null;
     }
     return user;
@@ -291,6 +302,23 @@ async function handler(req, res) {
         }
 
         if (url.pathname.startsWith('/api/')) {
+            // Webhook Viettel Post: không cần phiên đăng nhập, xác thực bằng secret riêng.
+            if (url.pathname === '/api/vtp/webhook' && req.method === 'POST') {
+                const secret = process.env.NKIOT_VTP_WEBHOOK_SECRET || '';
+                if (!secret)
+                    return json(res, 404, { success: false, error: 'Không cấu hình webhook.' });
+                const sent = Buffer.from(
+                    String(req.headers.authorization || '').replace(/^Bearer\s+/i, '')
+                );
+                const expected = Buffer.from(secret);
+                if (sent.length !== expected.length || !crypto.timingSafeEqual(sent, expected))
+                    return json(res, 401, { success: false, error: 'Webhook không hợp lệ.' });
+                const input = await body(req);
+                const delivery = require('./delivery-service');
+                const outcome = delivery.handleWebhook(input);
+                // Luôn trả 200 để Viettel Post không retry với sự kiện trùng/không rõ.
+                return json(res, 200, { success: true, ...outcome });
+            }
             if (req.headers.origin) {
                 let origin;
                 try {
@@ -344,15 +372,17 @@ async function handler(req, res) {
                     });
                 }
                 attempts.delete(key);
-                for (const [token, s] of sessions) if (s.expires < time) sessions.delete(token);
+                db.deleteExpiredSessions(time);
                 const token = crypto.randomBytes(32).toString('hex'),
                     csrfToken = crypto.randomBytes(32).toString('base64url');
-                sessions.set(token, {
+                const session = {
                     userId: user.id,
                     password: user.password,
                     csrfToken,
                     expires: time + (input.remember ? 7 * 86400000 : 12 * 3600000)
-                });
+                };
+                sessions.set(token, session);
+                db.writeSession({ token, ...session });
                 setCookie(
                     res,
                     token,
@@ -363,7 +393,7 @@ async function handler(req, res) {
             }
             const user = sessionUser(req);
             if (!user) return json(res, 401, { success: false, error: 'Vui lòng đăng nhập.' });
-            const csrfToken = sessions.get(cookie(req)).csrfToken;
+            const csrfToken = loadSession(cookie(req)).csrfToken;
             if (!['GET', 'HEAD'].includes(req.method)) {
                 const sent = Buffer.from(
                         String(req.headers['x-nkiot-csrf'] || req.headers['x-minikiot-csrf'] || '')
@@ -403,6 +433,7 @@ async function handler(req, res) {
             if (url.pathname === '/api/logout' && req.method === 'POST') {
                 await body(req);
                 sessions.delete(cookie(req));
+                db.deleteSession(cookie(req));
                 res.setHeader(
                     'Set-Cookie',
                     'minikiot_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'
@@ -448,6 +479,7 @@ async function handler(req, res) {
                     throw error;
                 }
                 for (const [token, s] of sessions) if (s.userId === user.id) sessions.delete(token);
+                db.deleteSessionsForUser(user.id);
                 return json(res, 200, {
                     success: true,
                     message: 'Đã đổi mật khẩu. Vui lòng đăng nhập lại.'
@@ -470,7 +502,12 @@ async function handler(req, res) {
                         ? application.project(db.readSnapshot(), fresh)
                         : null;
                 const result = application.transact(fresh, envelope);
-                if (!result.replayed) hub.scheduleSync();
+                if (!result.replayed) {
+                    hub.scheduleSync();
+                    if (envelope?.type === 'delivery' || envelope?.type === 'deliverySale') {
+                        require('./delivery-service').scheduleDelivery(0);
+                    }
+                }
                 const next = view(fresh);
                 // transact checks revision in its own write transaction, so a fresh (not replayed)
                 // commit at base+1 was applied on top of exactly the state `prior` was built from.
@@ -740,6 +777,23 @@ async function handler(req, res) {
                 const token = require('./open-api-service').createToken(user, input);
                 return json(res, 201, { success: true, token });
             }
+            if (url.pathname === '/api/vtp/config') {
+                auth.requirePermission(user, 'settings');
+                if (user.role !== 'admin')
+                    throw Object.assign(
+                        new Error('Chỉ quản trị viên được cấu hình Viettel Post.'),
+                        {
+                            status: 403
+                        }
+                    );
+                const vtpConfig = require('./viettelpost-config');
+                if (req.method === 'GET')
+                    return json(res, 200, { success: true, config: vtpConfig.publicStatus() });
+                if (req.method === 'POST') {
+                    const input = await body(req);
+                    return json(res, 200, { success: true, config: vtpConfig.saveConfig(input) });
+                }
+            }
             const tokenActionMatch = /^\/api\/tokens\/([A-Za-z0-9_-]+)(?:\/revoke)?$/.exec(
                 url.pathname
             );
@@ -969,6 +1023,7 @@ async function handler(req, res) {
 function createServer() {
     db.initDb();
     hub.scheduleSync();
+    require('./delivery-service').scheduleDelivery();
     return http.createServer(handler);
 }
 if (require.main === module) {
@@ -991,4 +1046,4 @@ if (require.main === module) {
     );
     for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => shutdown(signal));
 }
-module.exports = { handler, createServer };
+module.exports = { handler, createServer, __resetSessionCacheForTest: () => sessions.clear() };

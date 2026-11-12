@@ -184,6 +184,28 @@ npm run bench -- 20000 5000 10
 
 Có thể đặt `NKIOT_SALE_WRITE_MODE=snapshot` và restart server để quay lại writer cũ khi cần đối soát; không cần rollback database. Không đặt biến này từ request của client.
 
+## Bán giao hàng Viettel Post
+
+POS hỗ trợ chế độ **Giao hàng** qua Viettel Post. Token chỉ nằm ở backend; trình duyệt
+không nhận token. Đơn giao hàng được lưu trước khi tạo vận đơn, công nợ khách không
+ghi cho phần thu hộ (COD), và tiền COD chỉ đối soát khi hãng xác nhận.
+
+Cấu hình bằng biến môi trường:
+
+```bash
+NKIOT_VTP_BASE_URL='https://partnerdev.viettelpost.vn'   # hoặc https://partner.viettelpost.vn
+NKIOT_VTP_USERNAME='<tài-khoản>'
+NKIOT_VTP_PASSWORD='<mật-khẩu>'
+NKIOT_VTP_WEBHOOK_SECRET='<secret-webhook>'
+```
+
+- **Hoặc cấu hình qua giao diện:** Cài đặt → **Kết nối Viettel Post** (chỉ Quản trị
+  viên). Mật khẩu và secret webhook được mã hóa AES-256-GCM và lưu trong `app_meta`;
+  không hiển thị lại cho trình duyệt.
+- Webhook nhận tại `POST /api/vtp/webhook`, xác thực bằng `Authorization: Bearer <secret>`.
+- Không đưa token vào `NKIOT_VTP_BASE_URL` hoặc gửi về trình duyệt. Đặc tả chi tiết:
+  `VIETTELPOST_INTEGRATION_SPEC.md`.
+
 ## Đợt 4 — danh sách hóa đơn phân trang
 
 - `GET /api/invoices` yêu cầu session và quyền `invoices`. Tham số: `branch`, `status` (`all/completed/returned/cancelled`), `q` (tối đa 200 ký tự), `date` (các preset trên giao diện), `page` và `pageSize` (mặc định 50, tối đa 100). Tổng số và dòng kết quả đều giới hạn theo chi nhánh được phép.
