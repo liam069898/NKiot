@@ -115,6 +115,139 @@ function finishTask(id, { status, lastError = '', delivery = null, nextAttemptAt
     db.bumpRevision();
 }
 
+// Dựng payload tính cước từ delivery_orders (dùng cho việc chọn dịch vụ khả dụng).
+function buildPricePayload(record) {
+    const cod = record.paymentType === 3 || record.paymentType === 2;
+    return {
+        SENDER_ADDRESS: vtp.bytes(record.senderAddress, 150),
+        RECEIVER_ADDRESS: vtp.bytes(record.receiverAddress, 150),
+        PRODUCT_TYPE: record.productType || 'HH',
+        PRODUCT_WEIGHT: Number(record.weightGram) || 50,
+        PRODUCT_PRICE: Math.max(0, Number(record.productTotal) || 0),
+        MONEY_COLLECTION: cod ? Number(record.codRequested) || 0 : 0,
+        TYPE: 1
+    };
+}
+
+// Trả danh sách dịch vụ khả dụng cho một tuyến (dùng cho POS chọn dịch vụ).
+async function listServices(input) {
+    return vtp.availableServices({
+        SENDER_ADDRESS: vtp.bytes(input?.senderAddress, 150),
+        RECEIVER_ADDRESS: vtp.bytes(input?.receiverAddress, 150),
+        PRODUCT_TYPE: input?.productType === 'TH' ? 'TH' : 'HH',
+        PRODUCT_WEIGHT: Number(input?.weightGram) || 50,
+        PRODUCT_PRICE: Math.max(0, Number(input?.productTotal) || 0),
+        MONEY_COLLECTION: Math.max(0, Number(input?.codRequested) || 0),
+        TYPE: 1
+    });
+}
+
+// Chọn mã dịch vụ hợp lệ cho tuyến: giữ dịch vụ đang chọn nếu hãng chấp nhận,
+// ngược lại lấy dịch vụ rẻ nhất trong danh sách khả dụng.
+async function resolveService(record) {
+    let services;
+    try {
+        // buildPricePayload đã trả payload đúng định dạng Viettel Post (key chữ hoa),
+        // nên gọi thẳng availableServices thay vì listServices (nhận input chữ thường).
+        services = await vtp.availableServices(buildPricePayload(record));
+    } catch (error) {
+        // Lỗi mạng: không kết luận được, để lần thử sau xử lý.
+        throw Object.assign(error, { network: true });
+    }
+    const wanted = String(record.service || '').trim();
+    if (wanted && services.some((s) => s.code === wanted)) return wanted;
+    if (!services.length) return '';
+    return services.slice().sort((a, b) => a.price - b.price)[0].code;
+}
+
+// Đảo ngược chứng từ bán khi hãng/cửa hàng hủy vận đơn trước bàn giao:
+// hoàn kho, IMEI, tiền cọc, công nợ. Dùng chung cho webhook và thao tác hủy qua hãng.
+function cancelWithReversal(orderId, reason) {
+    const d = db.getDb();
+    const domain = require('./domain');
+    d.exec('BEGIN IMMEDIATE');
+    try {
+        const dataObj = db.readForWrite();
+        const orderInData = (dataObj.delivery_orders || []).find(
+            (o) => o.id === orderId || o.code === orderId
+        );
+        const admin = (dataObj.users || []).find(
+            (u) => u.role === 'admin' && u.status === 'active'
+        );
+        if (orderInData && admin && orderInData.status !== 'cancelled') {
+            domain.cancelDeliveryOrder(
+                dataObj,
+                admin,
+                { id: orderInData.id, reason: reason || 'Hủy vận đơn Viettel Post' },
+                true
+            );
+        }
+        db.saveAllData(dataObj, true);
+        db.bumpRevision();
+        d.exec('COMMIT');
+    } catch (error) {
+        if (d.isTransaction) d.exec('ROLLBACK');
+        throw error;
+    }
+}
+
+// Loại cập nhật theo tài liệu UpdateOrder.
+const VTP_ACTIONS = {
+    approve: 1, // duyệt đơn hàng
+    approve_return: 2, // duyệt hoàn (khi hãng báo 505)
+    redeliver: 3, // phát tiếp (khi hãng báo 505)
+    cancel: 4, // hủy đơn (chỉ khi hãng chưa lấy hàng)
+    delete: 5 // xóa đơn đã hủy
+};
+
+// Xếp hành động cập nhật trạng thái vận đơn qua hãng vào hàng đợi worker.
+// Không gọi API trong transaction SQLite; worker sẽ gọi và cập nhật lại chứng từ.
+function enqueueOrderAction(deliveryId, action, note = '') {
+    const type = VTP_ACTIONS[action];
+    if (!type) return { ok: false, reason: 'unknown_action' };
+    const d = db.getDb();
+    const order = d
+        .prepare('SELECT * FROM delivery_orders WHERE id=? OR code=?')
+        .get(deliveryId, deliveryId);
+    if (!order) return { ok: false, reason: 'unknown_order' };
+    if (order.carrierType === 'self') return { ok: false, reason: 'self_delivery' };
+    if (!order.shipmentCode) return { ok: false, reason: 'no_shipment_code' };
+
+    // Điều kiện theo tài liệu: hủy chỉ khi hãng chưa lấy hàng (ORDER_STATUS < 200).
+    if (action === 'cancel' && order.status !== 'submitted')
+        return { ok: false, reason: 'not_cancellable' };
+    if (['approve_return', 'redeliver'].includes(action) && order.status !== 'returning')
+        return { ok: false, reason: 'not_returning' };
+    if (action === 'delete' && order.status !== 'cancelled')
+        return { ok: false, reason: 'not_cancelled' };
+
+    const pending = d
+        .prepare(
+            "SELECT 1 FROM delivery_tasks WHERE deliveryId=? AND action='update_order' AND status IN ('pending','running')"
+        )
+        .get(order.id);
+    if (pending) return { ok: false, reason: 'action_pending' };
+
+    const now = nowIso();
+    d.prepare(
+        `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+        `VTP-ACT-${order.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        order.id,
+        'update_order',
+        JSON.stringify({ type, action, note: text(note, 200) }),
+        0,
+        Date.now(),
+        'pending',
+        '',
+        now,
+        now
+    );
+    db.bumpRevision();
+    return { ok: true, type };
+}
+
 // Dựng payload createOrderNlp từ delivery_orders (địa chỉ dạng chữ, hãng tự chuẩn hóa).
 // Không gửi token hay dữ liệu thừa; chuỗi tự do cắt theo byte để không vượt giới hạn hãng.
 function buildCreateOrderPayload(record) {
@@ -156,7 +289,15 @@ function buildCreateOrderPayload(record) {
 async function processTask(task) {
     const d = db.getDb();
     const record = d.prepare('SELECT * FROM delivery_orders WHERE id=?').get(task.deliveryId);
-    if (!record || record.status !== 'confirmed') {
+    if (!record) {
+        finishTask(task.id, { status: 'done' });
+        return;
+    }
+    if (task.action === 'update_order') {
+        await processOrderAction(task, record);
+        return;
+    }
+    if (record.status !== 'confirmed') {
         finishTask(task.id, { status: 'done' });
         return;
     }
@@ -165,6 +306,25 @@ async function processTask(task) {
         return;
     }
     try {
+        // Chọn dịch vụ khả dụng cho tuyến trước khi tạo đơn: tránh lỗi
+        // "Price does not apply to this itinerary!" do dịch vụ không áp dụng tuyến.
+        const resolved = await resolveService(record);
+        if (!resolved) {
+            const err = new Error(
+                'Viettel Post không có dịch vụ vận chuyển cho tuyến này. Kiểm tra lại địa chỉ gửi/nhận.'
+            );
+            err.permanent = true;
+            throw err;
+        }
+        if (resolved !== record.service) {
+            d.prepare('UPDATE delivery_orders SET service=?, updatedAt=? WHERE id=?').run(
+                resolved,
+                nowIso(),
+                record.id
+            );
+            record.service = resolved;
+            db.bumpRevision();
+        }
         const response = await vtp.createOrderNlp(buildCreateOrderPayload(record));
         const orderNumber = text(response?.data?.ORDER_NUMBER, 200);
         if (!orderNumber) throw new Error('Viettel Post không trả mã vận đơn.');
@@ -185,8 +345,66 @@ async function processTask(task) {
             });
             return;
         }
+        // Lỗi không thể tự khỏi (ví dụ tuyến không có dịch vụ): đánh dấu thất bại ngay để
+        // nhân viên sửa địa chỉ/dịch vụ rồi bấm "Tạo lại vận đơn", tránh retry vô ích.
+        if (error.permanent) {
+            finishTask(task.id, { status: 'failed', lastError: detail });
+            return;
+        }
         // Hãng đã trả lời rõ: thử lại tối đa vài lần (để che lỗi thoáng qua), sau đó đánh dấu
         // thất bại để UI hiển thị cho nhân viên, thay vì retry vô hạn.
+        finishTask(task.id, {
+            status: attempt < MAX_CREATE_ORDER_RETRY ? 'unknown' : 'failed',
+            lastError: detail,
+            nextAttemptAt: attempt < MAX_CREATE_ORDER_RETRY ? Date.now() + RETRY_MS : null
+        });
+    }
+}
+
+// Xử lý hành động cập nhật trạng thái vận đơn qua hãng (UpdateOrder TYPE 1–5).
+async function processOrderAction(task, record) {
+    let payload = {};
+    try {
+        payload = JSON.parse(task.payload || '{}');
+    } catch {}
+    const type = Number(payload.type);
+    const attempt = (Number(task.attempt) || 0) + 1;
+    if (![1, 2, 3, 4, 5].includes(type)) {
+        finishTask(task.id, {
+            status: 'failed',
+            lastError: 'Loại cập nhật vận đơn không hợp lệ.'
+        });
+        return;
+    }
+    if (!record.shipmentCode) {
+        finishTask(task.id, {
+            status: 'failed',
+            lastError: 'Đơn chưa có mã vận đơn Viettel Post để cập nhật.'
+        });
+        return;
+    }
+    try {
+        await vtp.updateOrder(type, record.shipmentCode, text(payload.note, 150));
+        if (type === 4) {
+            // Hãng đã xác nhận hủy: đảo chứng từ ngay để kho/tiền không bị treo,
+            // không phụ thuộc webhook (webhook 107 đến sau sẽ bị bỏ qua do đã hủy).
+            try {
+                cancelWithReversal(record.id, payload.note || 'Hủy vận đơn qua Viettel Post');
+            } catch (error) {
+                console.error('Không đảo được chứng từ khi hủy qua hãng:', error.message);
+            }
+        }
+        finishTask(task.id, { status: 'done' });
+    } catch (error) {
+        const detail = String(error.message || error).slice(0, 500);
+        if (error.network) {
+            finishTask(task.id, {
+                status: 'unknown',
+                lastError: detail,
+                nextAttemptAt: attempt < MAX_NETWORK_RETRY ? Date.now() + RETRY_MS : null
+            });
+            return;
+        }
         finishTask(task.id, {
             status: attempt < MAX_CREATE_ORDER_RETRY ? 'unknown' : 'failed',
             lastError: detail,
@@ -293,31 +511,8 @@ function handleWebhook(payload) {
     // (hoàn kho, IMEI, tiền cọc, công nợ) để tránh hóa đơn "mồ côi" còn trừ kho/giữ doanh thu.
     if (next.status === 'cancelled') {
         try {
-            const domain = require('./domain');
-            d.exec('BEGIN IMMEDIATE');
-            const dataObj = db.readForWrite();
-            const orderInData = (dataObj.delivery_orders || []).find(
-                (o) => o.id === record.id || o.code === record.id
-            );
-            const admin = (dataObj.users || []).find(
-                (u) => u.role === 'admin' && u.status === 'active'
-            );
-            if (orderInData && admin && orderInData.status !== 'cancelled') {
-                domain.cancelDeliveryOrder(
-                    dataObj,
-                    admin,
-                    {
-                        id: orderInData.id,
-                        reason: text(data.STATUS_NAME, 500) || 'Viettel Post hủy vận đơn'
-                    },
-                    true
-                );
-            }
-            db.saveAllData(dataObj, true);
-            db.bumpRevision();
-            d.exec('COMMIT');
+            cancelWithReversal(record.id, text(data.STATUS_NAME, 500));
         } catch (error) {
-            if (d.isTransaction) d.exec('ROLLBACK');
             console.error('Không thể đảo ngược đơn giao hàng khi hãng hủy:', error.message);
             // Giữ trạng thái hủy ở bảng vận đơn (đã chốt) và không làm rơi webhook.
         }
@@ -340,11 +535,108 @@ function handleWebhook(payload) {
     return { recorded: true, deliveryId: record.id, status: statusCode };
 }
 
+// Cho phép nhân viên yêu cầu tạo lại vận đơn sau khi sửa lỗi (ví dụ đã nhập địa chỉ người gửi).
+// Đặt lại task create_order failed về pending để worker thử lại, không chạm đến chứng từ bán.
+function requeueCreateOrderTask(deliveryId) {
+    const d = db.getDb();
+    const order = d
+        .prepare('SELECT * FROM delivery_orders WHERE id=? OR code=?')
+        .get(deliveryId, deliveryId);
+    if (!order) return { ok: false, reason: 'unknown_order' };
+    if (order.status !== 'confirmed') return { ok: false, reason: 'not_confirmed' };
+    const task = d
+        .prepare(
+            `SELECT * FROM delivery_tasks
+             WHERE deliveryId=? AND action='create_order'
+             ORDER BY rowid DESC LIMIT 1`
+        )
+        .get(order.id);
+    if (!task) {
+        // Không có task (hiếm gặp): tạo mới.
+        const now = nowIso();
+        d.prepare(
+            `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+        ).run(
+            `VTP-${order.id}`,
+            order.id,
+            'create_order',
+            '{}',
+            0,
+            Date.now(),
+            'pending',
+            '',
+            now,
+            now
+        );
+    } else if (task.status === 'failed' || task.status === 'unknown') {
+        d.prepare(
+            `UPDATE delivery_tasks SET status='pending', attempt=0, lastError='', nextAttemptAt=?, updatedAt=? WHERE id=?`
+        ).run(Date.now(), nowIso(), task.id);
+    } else {
+        return { ok: false, reason: 'task_not_retryable' };
+    }
+    db.bumpRevision();
+    return { ok: true };
+}
+
+// ===== A1: In nhãn chính thức của Viettel Post =====
+// Hãng trả mã in (printing-code) có hạn; nhãn in là link DigitalizePrint kèm mã in đó.
+const LABEL_HOST_DEV = 'https://dev-release-print.viettelpost.vn';
+const LABEL_HOST_PROD = 'https://digitalize.viettelpost.vn';
+const LABEL_TYPES = { A5: '1', A6: '2', A6_1: 'a6_1', A7: '100', A7_1: '1001' };
+const LABEL_TTL_MS = 15 * 60 * 1000;
+
+// Trả link in nhãn chính thức cho một vận đơn. Mã in được lưu lại tới khi hết hạn
+// để in nhiều lần không phải gọi hãng lại.
+async function labelUrl(orderId, { size = 'A5', showPostage = 0 } = {}) {
+    const d = db.getDb();
+    const order = d
+        .prepare('SELECT * FROM delivery_orders WHERE id=? OR code=?')
+        .get(orderId, orderId);
+    if (!order) {
+        const error = new Error('Không tìm thấy vận đơn.');
+        error.status = 404;
+        throw error;
+    }
+    if (!order.shipmentCode) {
+        const error = new Error('Đơn chưa có mã vận đơn Viettel Post nên chưa in nhãn được.');
+        error.status = 409;
+        throw error;
+    }
+    const now = Date.now();
+    let printCode = order.printCode || '';
+    let expiresAt = Number(order.printExpiresAt) || 0;
+    if (!printCode || !expiresAt || expiresAt <= now) {
+        const nextExpiry = now + LABEL_TTL_MS;
+        const res = await vtp.printingCode([order.shipmentCode], nextExpiry);
+        printCode = typeof res?.message === 'string' ? res.message.trim() : '';
+        if (!printCode) {
+            const error = new Error('Viettel Post không trả mã in vận đơn.');
+            error.status = 502;
+            throw error;
+        }
+        expiresAt = nextExpiry;
+        d.prepare(
+            'UPDATE delivery_orders SET printCode=?, printExpiresAt=?, updatedAt=? WHERE id=?'
+        ).run(printCode, expiresAt, nowIso(), order.id);
+        db.bumpRevision();
+    }
+    const host = /partnerdev/i.test(vtp.currentBaseUrl()) ? LABEL_HOST_DEV : LABEL_HOST_PROD;
+    const type = LABEL_TYPES[String(size).toUpperCase()] || LABEL_TYPES.A5;
+    const url = `${host}/DigitalizePrint/report.do?type=${encodeURIComponent(type)}&bill=${encodeURIComponent(printCode)}&showPostage=${showPostage ? 1 : 0}`;
+    return { url, expiresAt, printCode };
+}
+
 module.exports = {
     enabled,
     processPendingTasks,
     scheduleDelivery,
     handleWebhook,
     applyStatus,
-    mapVtpStatus
+    mapVtpStatus,
+    listServices,
+    enqueueOrderAction,
+    labelUrl,
+    requeueCreateOrderTask
 };

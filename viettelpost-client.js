@@ -29,6 +29,9 @@ const enabled = () => {
     return !!c.baseUrl;
 };
 
+// Base URL đang dùng (đã lưu hoặc biến môi trường) — cần cho link in nhãn dev/prod.
+const currentBaseUrl = () => effectiveConfig().baseUrl || '';
+
 function assertBaseUrl(baseUrl) {
     let url;
     try {
@@ -208,6 +211,28 @@ async function getPriceAllNlp(payload) {
     return request('POST', '/v2/order/getPriceAllNlp', { body: payload });
 }
 
+// Danh sách dịch vụ khả dụng cho một tuyến, đã chuẩn hóa về { code, name, price, time }.
+// Viettel Post trả "Price does not apply to this itinerary!" khi tuyến không có dịch vụ nào,
+// trường hợp đó trả mảng rỗng thay vì lỗi để nơi gọi tự quyết định thông báo.
+async function availableServices(payload) {
+    let out;
+    try {
+        out = await request('POST', '/v2/order/getPriceAllNlp', { body: payload });
+    } catch (error) {
+        if (/does not apply/i.test(String(error.message))) return [];
+        throw error;
+    }
+    const list = Array.isArray(out?.RESULT) ? out.RESULT : Array.isArray(out) ? out : [];
+    return list
+        .map((s) => ({
+            code: String(s.MA_DV_CHINH || '').trim(),
+            name: String(s.TEN_DICHVU || '').trim(),
+            price: Number(s.GIA_CUOC) || 0,
+            time: String(s.THOI_GIAN || '').trim()
+        }))
+        .filter((s) => s.code);
+}
+
 // Tính cước một dịch vụ cụ thể.
 async function getPrice(payload) {
     return request('POST', '/v2/order/getPrice', { body: payload });
@@ -242,6 +267,7 @@ module.exports = {
     config,
     setConfigResolver,
     enabled,
+    currentBaseUrl,
     ensureToken,
     login,
     ownerConnect,
@@ -249,6 +275,7 @@ module.exports = {
     wardsNew,
     getPriceAll,
     getPriceAllNlp,
+    availableServices,
     getPrice,
     getPriceNlp,
     createOrder,

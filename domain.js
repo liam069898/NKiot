@@ -1273,6 +1273,13 @@ function deliveryOrder(data, user, input) {
             ? text(input.carrierName, 120).trim() || 'Tự giao / Ship ngoài'
             : 'Viettel Post';
 
+    // Thông tin người gửi ưu tiên tham số truyền vào, nếu trống thì lấy từ chi nhánh đang bán.
+    // Viettel Post bắt buộc SENDER_ADDRESS; tránh để trống gây lỗi "Sender address is required".
+    const branchRecord = data.branches.find((b) => b.name === br || b.code === br);
+    const senderName = text(input.senderName, 200) || branchRecord?.name || '';
+    const senderPhone = text(input.senderPhone, 40) || branchRecord?.phone || '';
+    const senderAddress = text(input.senderAddress, 200) || branchRecord?.address || '';
+
     const now = new Date().toISOString();
     const id = code(data, 'GH');
     const codStatus = codRequested === 0 ? 'settled' : prepaid > 0 ? 'partial_prepaid' : 'unpaid';
@@ -1287,9 +1294,9 @@ function deliveryOrder(data, user, input) {
         shipperName: carrierType === 'self' ? text(input.shipperName, 120).trim() : '',
         shipperPhone: carrierType === 'self' ? text(input.shipperPhone, 40).trim() : '',
         orderNumber: '',
-        senderName: text(input.senderName, 200),
-        senderPhone: text(input.senderPhone, 40),
-        senderAddress: text(input.senderAddress, 200),
+        senderName,
+        senderPhone,
+        senderAddress,
         senderProvinceId: text(input.senderProvinceId, 40),
         senderDistrictId: text(input.senderDistrictId, 40),
         senderWardId: text(input.senderWardId, 40),

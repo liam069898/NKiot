@@ -132,6 +132,10 @@ test('processPendingTasks marks unknown on client failure and done on success', 
             new Date().toISOString()
         );
     const original = vtp.createOrderNlp;
+    const originalServices = vtp.availableServices;
+    vtp.availableServices = async () => [
+        { code: 'VCN', name: 'Nhanh', price: 20000, time: '24 giờ' }
+    ];
     vtp.createOrderNlp = async () => {
         // Lỗi mạng/timeout: không biết hãng đã nhận chưa, giữ unknown để thử lại có giới hạn.
         throw Object.assign(new Error('timeout'), { network: true });
@@ -146,6 +150,7 @@ test('processPendingTasks marks unknown on client failure and done on success', 
         );
     } finally {
         vtp.createOrderNlp = original;
+        vtp.availableServices = originalServices;
         delete process.env.NKIOT_VTP_BASE_URL;
     }
 });
@@ -171,6 +176,10 @@ test('create_order task stops retrying after a carrier-side error and surfaces i
             new Date().toISOString()
         );
     const original = vtp.createOrderNlp;
+    const originalServices = vtp.availableServices;
+    vtp.availableServices = async () => [
+        { code: 'VCN', name: 'Nhanh', price: 20000, time: '24 giờ' }
+    ];
     vtp.createOrderNlp = async () => {
         throw new Error('Incorrect data: ORDER_SERVICE');
     };
@@ -186,6 +195,135 @@ test('create_order task stops retrying after a carrier-side error and surfaces i
         assert.equal(row.nextAttemptAt, null);
     } finally {
         vtp.createOrderNlp = original;
+        vtp.availableServices = originalServices;
+        delete process.env.NKIOT_VTP_BASE_URL;
+
+        test('create_order picks a service that applies to the route instead of the stored one', async () => {
+            // Đơn lưu dịch vụ VCN (không áp dụng tuyến); hãng chỉ có LCOD/NCOD/VHT.
+            const id = seedDelivery('confirmed');
+            db.getDb().prepare("UPDATE delivery_orders SET service='VCN' WHERE id=?").run(id);
+            db.getDb()
+                .prepare(
+                    `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+                )
+                .run(
+                    `T-${id}`,
+                    id,
+                    'create_order',
+                    '{}',
+                    0,
+                    Date.now() - 1000,
+                    'pending',
+                    '',
+                    new Date().toISOString(),
+                    new Date().toISOString()
+                );
+            const originalServices = vtp.availableServices;
+            const originalCreate = vtp.createOrderNlp;
+            vtp.availableServices = async () => [
+                { code: 'NCOD', name: 'Nhanh', price: 43120, time: '36 giờ' },
+                { code: 'LCOD', name: 'Tiết kiệm', price: 34720, time: '72 giờ' }
+            ];
+            let sentService = '';
+            vtp.createOrderNlp = async (payload) => {
+                sentService = payload.ORDER_SERVICE;
+                return { data: { ORDER_NUMBER: 'VP-OK-1' } };
+            };
+            process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.vn';
+            try {
+                await delivery.processPendingTasks();
+                assert.equal(sentService, 'LCOD', 'phải gửi dịch vụ hợp lệ rẻ nhất');
+                assert.equal(
+                    db.getDb().prepare('SELECT service FROM delivery_orders WHERE id=?').get(id)
+                        .service,
+                    'LCOD',
+                    'dịch vụ đã chọn được lưu lại để UI hiển thị đúng'
+                );
+            } finally {
+                vtp.availableServices = originalServices;
+                vtp.createOrderNlp = originalCreate;
+                delete process.env.NKIOT_VTP_BASE_URL;
+            }
+        });
+    }
+});
+
+test('enqueueOrderAction validates state before queueing an update task', () => {
+    const noCode = seedDelivery('submitted', '');
+    assert.equal(delivery.enqueueOrderAction(noCode, 'cancel').reason, 'no_shipment_code');
+
+    const confirmed = seedDelivery('confirmed', 'VP-ACT-2');
+    assert.equal(delivery.enqueueOrderAction(confirmed, 'cancel').reason, 'not_cancellable');
+    assert.equal(delivery.enqueueOrderAction(confirmed, 'redeliver').reason, 'not_returning');
+    assert.equal(delivery.enqueueOrderAction(confirmed, 'bogus').reason, 'unknown_action');
+
+    const submitted = seedDelivery('submitted', 'VP-ACT-1');
+    assert.equal(delivery.enqueueOrderAction(submitted, 'cancel').ok, true);
+    // Chặn xếp trùng khi đã có thao tác đang chờ
+    assert.equal(delivery.enqueueOrderAction(submitted, 'cancel').reason, 'action_pending');
+
+    const task = db
+        .getDb()
+        .prepare('SELECT action, status, payload FROM delivery_tasks WHERE deliveryId=?')
+        .get(submitted);
+    assert.equal(task.action, 'update_order');
+    assert.equal(task.status, 'pending');
+    assert.equal(JSON.parse(task.payload).type, 4);
+});
+
+test('update_order task calls Viettel Post UpdateOrder and completes', async () => {
+    const id = seedDelivery('returning', 'VP-ACT-3');
+    assert.equal(delivery.enqueueOrderAction(id, 'redeliver').ok, true);
+    const calls = [];
+    const original = vtp.updateOrder;
+    vtp.updateOrder = async (type, code, note) => {
+        calls.push({ type, code, note });
+        return { status: 200, error: false };
+    };
+    process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.vn';
+    try {
+        await delivery.processPendingTasks();
+        assert.deepEqual(calls, [{ type: 3, code: 'VP-ACT-3', note: '' }]);
+        const task = db
+            .getDb()
+            .prepare('SELECT status, lastError FROM delivery_tasks WHERE deliveryId=?')
+            .get(id);
+        assert.equal(task.status, 'done');
+        assert.equal(task.lastError, '');
+    } finally {
+        vtp.updateOrder = original;
+        delete process.env.NKIOT_VTP_BASE_URL;
+    }
+});
+
+test('labelUrl builds the official DigitalizePrint link and reuses the cached print code', async () => {
+    const id = seedDelivery('submitted', 'VP-LABEL-1');
+    const original = vtp.printingCode;
+    let called = 0;
+    vtp.printingCode = async () => {
+        called++;
+        return { status: 200, error: false, message: 'PRINTCODE123', data: null };
+    };
+    process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.vn';
+    try {
+        const first = await delivery.labelUrl(id, { size: 'A5', showPostage: 1 });
+        assert.match(first.url, /dev-release-print\.viettelpost\.vn/);
+        assert.match(first.url, /bill=PRINTCODE123/);
+        assert.match(first.url, /type=1/);
+        assert.match(first.url, /showPostage=1/);
+        const second = await delivery.labelUrl(id, { size: 'A5', showPostage: 0 });
+        assert.equal(called, 1, 'dùng lại mã in còn hạn, không gọi hãng lại');
+        assert.equal(second.printCode, 'PRINTCODE123');
+        assert.match(second.url, /showPostage=0/);
+        const row = db
+            .getDb()
+            .prepare('SELECT printCode, printExpiresAt FROM delivery_orders WHERE id=?')
+            .get(id);
+        assert.equal(row.printCode, 'PRINTCODE123');
+        assert.ok(Number(row.printExpiresAt) > Date.now());
+    } finally {
+        vtp.printingCode = original;
         delete process.env.NKIOT_VTP_BASE_URL;
     }
 });

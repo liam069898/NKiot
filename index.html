@@ -2090,7 +2090,9 @@
                 </div>
 
                 <!-- Nút Bán hàng -->
-                <div class="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0 ml-1 sm:ml-1.5">
+                <div
+                    class="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0 ml-1 sm:ml-1.5"
+                >
                     <button
                         id="pos-nav-btn"
                         type="button"
@@ -3390,9 +3392,13 @@
                 id="view-delivery"
                 class="view-container hidden flex-1 min-h-0 px-2.5 py-2.5 sm:px-4 sm:py-3 max-w-[1600px] w-full mx-auto flex flex-col"
             >
-                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 mb-2.5 flex-shrink-0">
+                <div
+                    class="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 mb-2.5 flex-shrink-0"
+                >
                     <div class="flex flex-col sm:flex-row sm:items-center gap-2 flex-1 min-w-0">
-                        <h1 class="font-bold text-[17px] sm:text-[18px] text-gray-900 tracking-tight flex-shrink-0">
+                        <h1
+                            class="font-bold text-[17px] sm:text-[18px] text-gray-900 tracking-tight flex-shrink-0"
+                        >
                             Vận đơn &amp; Giao hàng
                         </h1>
                         <div class="relative flex-1 sm:max-w-[380px] w-full">
@@ -3410,7 +3416,9 @@
                                 aria-label="Xóa từ khóa tìm vận đơn"
                                 onclick="clearDeliverySearch()"
                                 class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 p-0.5 rounded-full"
-                            >✕</button>
+                            >
+                                ✕
+                            </button>
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 flex-shrink-0">
@@ -3441,17 +3449,26 @@
                             id="delivery-refresh"
                             type="button"
                             class="px-3 py-1.5 bg-white hover:bg-blue-50 text-[#0066cc] rounded-xl border border-gray-200 font-semibold text-[12.5px] transition"
-                        >Làm mới</button>
+                        >
+                            Làm mới
+                        </button>
                         <button
                             id="delivery-open-pos-btn"
                             type="button"
                             onclick="openDeliveryPos()"
                             class="px-3.5 py-1.5 bg-[#0066cc] hover:bg-[#0052a3] text-white rounded-xl font-bold text-[12.5px] transition inline-flex items-center gap-1.5 shadow-xs"
-                        >+ Bán giao hàng</button>
+                        >
+                            + Bán giao hàng
+                        </button>
                     </div>
                 </div>
-                <div id="delivery-status-cards" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2.5 flex-shrink-0"></div>
-                <div class="glass-card rounded-2xl flex-1 min-h-0 flex flex-col overflow-hidden border border-gray-200/70 bg-white">
+                <div
+                    id="delivery-status-cards"
+                    class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-2.5 flex-shrink-0"
+                ></div>
+                <div
+                    class="glass-card rounded-2xl flex-1 min-h-0 flex flex-col overflow-hidden border border-gray-200/70 bg-white"
+                >
                     <div class="flex-1 min-h-0 overflow-auto">
                         <table class="w-full min-w-[920px] text-left border-collapse">
                             <thead class="sticky-th">
@@ -3465,11 +3482,34 @@
                                     <th class="py-2.5 px-3">Trạng thái</th>
                                     <th class="py-2.5 px-3 text-right">Thao tác</th>
                                 </tr>
-                                <tr class="bg-blue-50/50 text-[12px] font-bold text-slate-800 border-b border-gray-200/70">
-                                    <th class="py-1.5 px-3 text-gray-500 font-medium" colspan="3" id="delivery-total-count">0 vận đơn</th>
-                                    <th class="py-1.5 px-3 text-right tabular-nums" id="delivery-sum-product">0 đ</th>
-                                    <th class="py-1.5 px-3 text-right tabular-nums text-emerald-700" id="delivery-sum-prepaid">0 đ</th>
-                                    <th class="py-1.5 px-3 text-right tabular-nums text-rose-600" id="delivery-sum-cod">0 đ</th>
+                                <tr
+                                    class="bg-blue-50/50 text-[12px] font-bold text-slate-800 border-b border-gray-200/70"
+                                >
+                                    <th
+                                        class="py-1.5 px-3 text-gray-500 font-medium"
+                                        colspan="3"
+                                        id="delivery-total-count"
+                                    >
+                                        0 vận đơn
+                                    </th>
+                                    <th
+                                        class="py-1.5 px-3 text-right tabular-nums"
+                                        id="delivery-sum-product"
+                                    >
+                                        0 đ
+                                    </th>
+                                    <th
+                                        class="py-1.5 px-3 text-right tabular-nums text-emerald-700"
+                                        id="delivery-sum-prepaid"
+                                    >
+                                        0 đ
+                                    </th>
+                                    <th
+                                        class="py-1.5 px-3 text-right tabular-nums text-rose-600"
+                                        id="delivery-sum-cod"
+                                    >
+                                        0 đ
+                                    </th>
                                     <th class="py-1.5 px-3" colspan="2"></th>
                                 </tr>
                             </thead>
@@ -4352,9 +4392,7 @@
                             </h1>
                             <div class="text-[11.5px] text-gray-500 font-medium">
                                 Chi nhánh:
-                                <span id="rep-branch-name" class="font-bold text-[#0066cc]"
-                                    >—</span
-                                >
+                                <span id="rep-branch-name" class="font-bold text-[#0066cc]">—</span>
                                 <span id="rep-date-summary" class="ml-1 text-gray-400 font-normal"
                                     >| Tháng này</span
                                 >
@@ -5163,416 +5201,764 @@
                                         />
                                     </div>
                                 </div>
-                                <div id="pos-shipping-fee-summary-row" class="hidden flex items-center justify-between text-[12px] text-sky-700 font-medium">
+                                <div
+                                    id="pos-shipping-fee-summary-row"
+                                    class="hidden flex items-center justify-between text-[12px] text-sky-700 font-medium"
+                                >
                                     <span>Phí giao thu khách</span>
-                                    <span id="pos-summary-shipping-fee" class="tabular-nums font-semibold">0 đ</span>
-                                </div>
-                                <div class="border-t border-gray-200/70 pt-1.5 flex items-baseline justify-between">
-                                    <span id="pos-grand-total-label" class="font-bold text-gray-800 text-[13px]">Khách cần trả</span>
-                                    <div class="text-right">
-                                        <span id="pos-grand-total" class="font-black text-[#0066cc] text-[19px] tabular-nums leading-none">0</span>
-                                        <span class="text-xs font-bold text-[#0066cc] ml-0.5">đ</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- DEDICATED DELIVERY CHECKOUT SECTION (ONLY IN DELIVERY POS MODE) -->
-                            <div id="pos-delivery-checkout-section" class="hidden space-y-2 mb-2">
-                                <div role="group" aria-label="Hình thức vận chuyển" class="bg-sky-50/90 p-0.5 rounded-xl flex items-center border border-sky-200/80">
-                                    <button type="button" id="pos-dlv-carrier-vtp" onclick="setPosDeliveryCarrierType('viettelpost')" aria-pressed="true" class="flex-1 py-1.5 px-2 rounded-lg text-[12px] font-bold bg-white text-[#0066cc] shadow-2xs transition">Viettel Post</button>
-                                    <button type="button" id="pos-dlv-carrier-self" onclick="setPosDeliveryCarrierType('self')" aria-pressed="false" class="flex-1 py-1.5 px-2 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition">Tự giao / Ship ngoài</button>
-                                </div>
-
-                                <div class="space-y-1.5 bg-white/80 p-2.5 rounded-xl border border-gray-200/80">
-                                    <div class="flex items-center justify-between">
-                                        <span class="text-[11.5px] font-bold text-slate-800">Thông tin người nhận</span>
-                                        <button type="button" onclick="fillPosDeliveryFromCustomer()" class="text-[11px] font-semibold text-[#0066cc] hover:underline">Lấy từ khách mua</button>
-                                    </div>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                        <div>
-                                            <label for="pos-dlv-receiver-name" class="block text-[11px] font-medium text-gray-600">Người nhận *</label>
-                                            <input id="pos-dlv-receiver-name" type="text" maxlength="200" oninput="updatePosDeliveryField('receiverName', this.value)" placeholder="Họ tên người nhận" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] focus:outline-none focus:border-[#0066cc]" />
-                                        </div>
-                                        <div>
-                                            <label for="pos-dlv-receiver-phone" class="block text-[11px] font-medium text-gray-600">SĐT nhận *</label>
-                                            <input id="pos-dlv-receiver-phone" type="tel" maxlength="40" oninput="updatePosDeliveryField('receiverPhone', this.value)" placeholder="Số điện thoại" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-mono focus:outline-none focus:border-[#0066cc]" />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label for="pos-dlv-receiver-address" class="block text-[11px] font-medium text-gray-600">Địa chỉ giao hàng *</label>
-                                        <textarea id="pos-dlv-receiver-address" rows="2" maxlength="200" oninput="updatePosDeliveryField('receiverAddress', this.value)" placeholder="Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] focus:outline-none focus:border-[#0066cc]"></textarea>
-                                    </div>
-                                </div>
-                <div id="pos-dlv-vtp-fields" class="space-y-1.5 bg-blue-50/50 p-2.5 rounded-xl border border-blue-200/60">
-                    <div class="grid grid-cols-3 gap-1.5">
-                        <div>
-                            <label for="pos-dlv-service" class="block text-[11px] font-medium text-gray-600">Dịch vụ VTP</label>
-                            <select id="pos-dlv-service" onchange="updatePosDeliveryField('service', this.value)" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]">
-                                <option value="VCN">Nhanh (VCN)</option>
-                                <option value="VTK">Tiết kiệm (VTK)</option>
-                                <option value="VHT">Hỏa tốc (VHT)</option>
-                                <option value="">Mặc định</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="pos-dlv-weight" class="block text-[11px] font-medium text-gray-600">Khối lượng (g)</label>
-                            <input id="pos-dlv-weight" type="number" min="0" step="1" oninput="updatePosDeliveryField('weightGram', this.value)" placeholder="200" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] tabular-nums focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                        <div>
-                            <label for="pos-dlv-payment-type" class="block text-[11px] font-medium text-gray-600">Loại vận đơn</label>
-                            <select id="pos-dlv-payment-type" onchange="updatePosDeliveryField('paymentType', this.value)" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]">
-                                <option value="3">Thu hộ tiền hàng</option>
-                                <option value="2">Thu hộ hàng + cước</option>
-                                <option value="1">Không thu hộ</option>
-                                <option value="4">Thu hộ cước</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                <div id="pos-dlv-self-fields" class="hidden space-y-1.5 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/70">
-                    <div class="grid grid-cols-2 gap-1.5">
-                        <div>
-                            <label for="pos-dlv-carrier-name" class="block text-[11px] font-medium text-gray-600">Hình thức giao</label>
-                            <select id="pos-dlv-carrier-name" onchange="updatePosDeliveryField('carrierName', this.value)" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]">
-                                <option value="Nhân viên tự giao">Nhân viên tự giao</option>
-                                <option value="Grab / Ahamove / XanhSM">Grab / Ahamove / XanhSM</option>
-                                <option value="Xe khách / Chành xe">Xe khách / Chành xe</option>
-                                <option value="Ship ngoài khác">Ship ngoài khác</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="pos-dlv-shipment-code" class="block text-[11px] font-medium text-gray-600">Mã đơn ngoài / Xe</label>
-                            <input id="pos-dlv-shipment-code" type="text" maxlength="100" oninput="updatePosDeliveryField('shipmentCode', this.value)" placeholder="VD: GRAB-123, BKS..." class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-1.5">
-                        <div>
-                            <label for="pos-dlv-shipper-name" class="block text-[11px] font-medium text-gray-600">Người giao / Nhà xe</label>
-                            <input id="pos-dlv-shipper-name" type="text" maxlength="120" oninput="updatePosDeliveryField('shipperName', this.value)" placeholder="Tên tài xế / nhân viên" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                        <div>
-                            <label for="pos-dlv-shipper-phone" class="block text-[11px] font-medium text-gray-600">SĐT người giao</label>
-                            <input id="pos-dlv-shipper-phone" type="tel" maxlength="40" oninput="updatePosDeliveryField('shipperPhone', this.value)" placeholder="SĐT tài xế / nhà xe" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] font-mono focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="pos-counter-checkout-section">
-                            <div class="mb-2">
-                                <div
-                                    class="bg-gray-100/90 p-0.5 rounded-xl flex items-center border border-gray-200/60 shadow-inner"
-                                >
-                                    <button
-                                        type="button"
-                                        id="paymethod-cash"
-                                        onclick="setPosPaymentMethod('cash')"
-                                        class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg bg-white text-[#0066cc] font-bold text-[11.5px] transition-all"
+                                    <span
+                                        id="pos-summary-shipping-fee"
+                                        class="tabular-nums font-semibold"
+                                        >0 đ</span
                                     >
-                                        Tiền mặt
-                                    </button>
-                                    <button
-                                        type="button"
-                                        id="paymethod-transfer"
-                                        onclick="setPosPaymentMethod('transfer')"
-                                        class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg text-gray-600 hover:text-gray-900 font-medium text-[11.5px] transition-all"
-                                    >
-                                        C.Khoản
-                                    </button>
-                                    <button
-                                        type="button"
-                                        id="paymethod-card"
-                                        onclick="setPosPaymentMethod('card')"
-                                        class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg text-gray-600 hover:text-gray-900 font-medium text-[11.5px] transition-all"
-                                    >
-                                        Quẹt thẻ
-                                    </button>
-                                    <button
-                                        type="button"
-                                        id="paymethod-multi"
-                                        onclick="setPosPaymentMethod('multi')"
-                                        class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg text-gray-600 hover:text-gray-900 font-medium text-[11.5px] transition-all"
-                                        title="Thanh toán phối hợp nhiều hình thức (chuyển khoản, tiền mặt, thẻ, ghi nợ)"
-                                    >
-                                        Phối hợp
-                                    </button>
-                                </div>
-                            </div>
-
-                            <!-- Single Payment Input Container -->
-                            <div
-                                id="pos-single-pay-container"
-                                class="space-y-1.5 text-[12.5px] bg-white/60 p-2.5 rounded-xl border border-gray-200/60 mb-2"
-                            >
-                                <div class="flex items-center justify-between">
-                                    <label
-                                        id="pos-tender-label"
-                                        for="pos-tender-input"
-                                        class="text-gray-600 font-medium"
-                                        >Tiền khách đưa</label
-                                    >
-                                    <div class="flex items-center space-x-1">
-                                        <input
-                                            id="pos-tender-input"
-                                            inputmode="numeric"
-                                            type="text"
-                                            oninput="handlePosTenderInput(this.value)"
-                                            placeholder="0"
-                                            class="w-32 text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[13px] focus:outline-none focus:border-[#0066cc] focus:ring-1 focus:ring-[#0066cc]/30 font-bold tabular-nums text-emerald-600"
-                                        />
-                                        <span class="text-gray-500 text-xs font-medium">đ</span>
-                                    </div>
                                 </div>
                                 <div
-                                    class="flex items-center justify-between gap-1 flex-wrap pt-0.5"
+                                    class="border-t border-gray-200/70 pt-1.5 flex items-baseline justify-between"
                                 >
-                                    <div
-                                        id="pos-smart-denominations"
-                                        class="flex flex-wrap items-center gap-1"
-                                    ></div>
-                                    <button
-                                        id="pos-exact-tender-btn"
-                                        type="button"
-                                        onclick="fillPosExactTender()"
-                                        class="min-h-7 px-2.5 py-0.5 rounded-lg border border-gray-300 text-blue-700 bg-white font-semibold text-[11.5px] hover:bg-blue-50 transition shadow-2xs"
-                                    >
-                                        Khách trả đủ
-                                    </button>
-                                </div>
-                                <div
-                                    class="flex items-center justify-between pt-1 border-t border-gray-100"
-                                >
-                                    <span class="text-gray-600 font-medium"
-                                        >Tiền thừa trả khách</span
+                                    <span
+                                        id="pos-grand-total-label"
+                                        class="font-bold text-gray-800 text-[13px]"
+                                        >Khách cần trả</span
                                     >
                                     <div class="text-right">
                                         <span
-                                            id="pos-change"
-                                            class="font-bold text-gray-800 text-[13.5px] tabular-nums"
+                                            id="pos-grand-total"
+                                            class="font-black text-[#0066cc] text-[19px] tabular-nums leading-none"
                                             >0</span
                                         >
-                                        <span class="text-xs font-semibold text-gray-500 ml-0.5"
+                                        <span class="text-xs font-bold text-[#0066cc] ml-0.5"
                                             >đ</span
                                         >
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Multi Payment Panel -->
-                            <div
-                                id="pos-multi-pay-panel"
-                                class="hidden space-y-1.5 bg-gray-50/80 p-2.5 rounded-xl border border-gray-200/70 mb-2"
-                            >
+                            <!-- DEDICATED DELIVERY CHECKOUT SECTION (ONLY IN DELIVERY POS MODE) -->
+                            <div id="pos-delivery-checkout-section" class="hidden space-y-2 mb-2">
                                 <div
-                                    class="text-[11.5px] font-bold text-gray-700 flex items-center justify-between pb-1 border-b border-gray-200/60"
+                                    role="group"
+                                    aria-label="Hình thức vận chuyển"
+                                    class="bg-sky-50/90 p-0.5 rounded-xl flex items-center border border-sky-200/80"
                                 >
-                                    <span>Chi tiết thanh toán phối hợp:</span>
-                                    <span
-                                        id="pos-multi-total-paid"
-                                        class="text-[#0066cc] font-mono font-bold text-[12px]"
-                                        >0 đ</span
+                                    <button
+                                        type="button"
+                                        id="pos-dlv-carrier-vtp"
+                                        onclick="setPosDeliveryCarrierType('viettelpost')"
+                                        aria-pressed="true"
+                                        class="flex-1 py-1.5 px-2 rounded-lg text-[12px] font-bold bg-white text-[#0066cc] shadow-2xs transition"
                                     >
-                                </div>
-                                <!-- Transfer Row -->
-                                <div class="flex items-center justify-between gap-1 text-[11.5px]">
-                                    <span
-                                        class="text-gray-600 font-medium flex items-center space-x-1.5 min-w-[85px]"
+                                        Viettel Post
+                                    </button>
+                                    <button
+                                        type="button"
+                                        id="pos-dlv-carrier-self"
+                                        onclick="setPosDeliveryCarrierType('self')"
+                                        aria-pressed="false"
+                                        class="flex-1 py-1.5 px-2 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition"
                                     >
-                                        <svg
-                                            class="w-3.5 h-3.5 text-[#0066cc] flex-shrink-0"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            viewBox="0 0 24 24"
-                                            aria-hidden="true"
-                                        >
-                                            <path
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                                            />
-                                        </svg>
-                                        <span>C.Khoản:</span>
-                                    </span>
-                                    <div class="flex items-center space-x-1 flex-1 justify-end">
-                                        <input
-                                            id="pos-multi-pay-transfer"
-                                            type="text"
-                                            inputmode="numeric"
-                                            aria-label="Số tiền khách chuyển khoản"
-                                            oninput="
-                                                handleMultiPaymentInput('transfer', this.value)
-                                            "
-                                            placeholder="0"
-                                            class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-[#0066cc]"
-                                        />
-                                        <button
-                                            type="button"
-                                            onclick="clearMultiPayment('transfer')"
-                                            class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
-                                            title="Xóa"
-                                            aria-label="Xóa số tiền chuyển khoản"
-                                        >
-                                            <svg
-                                                class="w-4 h-4"
-                                                viewBox="0 0 24 24"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                            >
-                                                <path d="M18 6L6 18M6 6l12 12" />
-                                            </svg>
-                                        </button>
-                                    </div>
+                                        Tự giao / Ship ngoài
+                                    </button>
                                 </div>
-                                <!-- Cash Row -->
-                                <div class="flex items-center justify-between gap-1 text-[11.5px]">
-                                    <span
-                                        class="text-gray-600 font-medium flex items-center space-x-1.5 min-w-[85px]"
-                                    >
-                                        <svg
-                                            class="w-3.5 h-3.5 text-emerald-600 flex-shrink-0"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            viewBox="0 0 24 24"
-                                            aria-hidden="true"
-                                        >
-                                            <rect x="2" y="6" width="20" height="12" rx="2" />
-                                            <circle cx="12" cy="12" r="2" />
-                                            <path d="M6 12h.01M18 12h.01" />
-                                        </svg>
-                                        <span>Tiền mặt:</span>
-                                    </span>
-                                    <div class="flex items-center space-x-1 flex-1 justify-end">
-                                        <input
-                                            id="pos-multi-pay-cash"
-                                            type="text"
-                                            inputmode="numeric"
-                                            aria-label="Số tiền khách trả bằng tiền mặt"
-                                            oninput="handleMultiPaymentInput('cash', this.value)"
-                                            placeholder="0"
-                                            class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-emerald-600"
-                                        />
-                                        <button
-                                            type="button"
-                                            onclick="clearMultiPayment('cash')"
-                                            class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
-                                            title="Xóa"
-                                            aria-label="Xóa số tiền mặt"
-                                        >
-                                            <svg
-                                                class="w-4 h-4"
-                                                viewBox="0 0 24 24"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                            >
-                                                <path d="M18 6L6 18M6 6l12 12" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                                <!-- Card Row -->
-                                <div class="flex items-center justify-between gap-1 text-[11.5px]">
-                                    <span
-                                        class="text-gray-600 font-medium flex items-center space-x-1.5 min-w-[85px]"
-                                    >
-                                        <svg
-                                            class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            stroke-width="2"
-                                            viewBox="0 0 24 24"
-                                            aria-hidden="true"
-                                        >
-                                            <rect x="2" y="5" width="20" height="14" rx="2" />
-                                            <line x1="2" y1="10" x2="22" y2="10" />
-                                        </svg>
-                                        <span>Quẹt thẻ:</span>
-                                    </span>
-                                    <div class="flex items-center space-x-1 flex-1 justify-end">
-                                        <input
-                                            id="pos-multi-pay-card"
-                                            type="text"
-                                            inputmode="numeric"
-                                            aria-label="Số tiền khách quẹt thẻ"
-                                            oninput="handleMultiPaymentInput('card', this.value)"
-                                            placeholder="0"
-                                            class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-slate-700"
-                                        />
-                                        <button
-                                            type="button"
-                                            onclick="clearMultiPayment('card')"
-                                            class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
-                                            title="Xóa"
-                                            aria-label="Xóa số tiền quẹt thẻ"
-                                        >
-                                            <svg
-                                                class="w-4 h-4"
-                                                viewBox="0 0 24 24"
-                                                fill="none"
-                                                stroke="currentColor"
-                                                stroke-width="2"
-                                            >
-                                                <path d="M18 6L6 18M6 6l12 12" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                                <!-- Summary: Debt or Change -->
+
                                 <div
-                                    id="pos-multi-summary"
-                                    class="pt-1 border-t border-gray-200/60"
-                                ></div>
+                                    class="space-y-1.5 bg-white/80 p-2.5 rounded-xl border border-gray-200/80"
+                                >
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-[11.5px] font-bold text-slate-800"
+                                            >Thông tin người nhận</span
+                                        >
+                                        <button
+                                            type="button"
+                                            onclick="fillPosDeliveryFromCustomer()"
+                                            class="text-[11px] font-semibold text-[#0066cc] hover:underline"
+                                        >
+                                            Lấy từ khách mua
+                                        </button>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                        <div>
+                                            <label
+                                                for="pos-dlv-receiver-name"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Người nhận *</label
+                                            >
+                                            <input
+                                                id="pos-dlv-receiver-name"
+                                                type="text"
+                                                maxlength="200"
+                                                oninput="
+                                                    updatePosDeliveryField(
+                                                        'receiverName',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="Họ tên người nhận"
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-receiver-phone"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >SĐT nhận *</label
+                                            >
+                                            <input
+                                                id="pos-dlv-receiver-phone"
+                                                type="tel"
+                                                maxlength="40"
+                                                oninput="
+                                                    updatePosDeliveryField(
+                                                        'receiverPhone',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="Số điện thoại"
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-mono focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label
+                                            for="pos-dlv-receiver-address"
+                                            class="block text-[11px] font-medium text-gray-600"
+                                            >Địa chỉ giao hàng *</label
+                                        >
+                                        <textarea
+                                            id="pos-dlv-receiver-address"
+                                            rows="2"
+                                            maxlength="200"
+                                            oninput="
+                                                updatePosDeliveryField(
+                                                    'receiverAddress',
+                                                    this.value
+                                                )
+                                            "
+                                            placeholder="Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành"
+                                            class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] focus:outline-none focus:border-[#0066cc]"
+                                        ></textarea>
+                                    </div>
+                                </div>
+                                <div
+                                    id="pos-dlv-vtp-fields"
+                                    class="space-y-1.5 bg-blue-50/50 p-2.5 rounded-xl border border-blue-200/60"
+                                >
+                                    <div class="grid grid-cols-3 gap-1.5">
+                                        <div>
+                                            <label
+                                                for="pos-dlv-service"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Dịch vụ VTP</label
+                                            >
+                                            <div class="flex items-center gap-1">
+                                                <select
+                                                    id="pos-dlv-service"
+                                                    onchange="
+                                                        updatePosDeliveryField(
+                                                            'service',
+                                                            this.value
+                                                        )
+                                                    "
+                                                    class="mt-0.5 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                                >
+                                                    <option value="">Đang tải dịch vụ…</option>
+                                                </select>
+                                                <button
+                                                    type="button"
+                                                    id="pos-dlv-service-refresh"
+                                                    onclick="refreshPosVtpServices()"
+                                                    title="Lấy lại dịch vụ theo địa chỉ & khối lượng"
+                                                    class="mt-0.5 h-[30px] w-[30px] flex-shrink-0 rounded-lg bg-white border border-gray-200 text-[#0066cc] hover:bg-blue-50 text-[13px] leading-none"
+                                                >
+                                                    ↻
+                                                </button>
+                                            </div>
+                                            <div
+                                                id="pos-dlv-service-hint"
+                                                class="text-[10.5px] text-gray-500 mt-0.5 leading-tight"
+                                            ></div>
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-weight"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Khối lượng (g)</label
+                                            >
+                                            <input
+                                                id="pos-dlv-weight"
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                oninput="
+                                                    updatePosDeliveryField('weightGram', this.value)
+                                                "
+                                                placeholder="200"
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] tabular-nums focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-payment-type"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Loại vận đơn</label
+                                            >
+                                            <select
+                                                id="pos-dlv-payment-type"
+                                                onchange="
+                                                    updatePosDeliveryField(
+                                                        'paymentType',
+                                                        this.value
+                                                    )
+                                                "
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                            >
+                                                <option value="3">Thu hộ tiền hàng</option>
+                                                <option value="2">Thu hộ hàng + cước</option>
+                                                <option value="1">Không thu hộ</option>
+                                                <option value="4">Thu hộ cước</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div
+                                    id="pos-dlv-self-fields"
+                                    class="hidden space-y-1.5 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/70"
+                                >
+                                    <div class="grid grid-cols-2 gap-1.5">
+                                        <div>
+                                            <label
+                                                for="pos-dlv-carrier-name"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Hình thức giao</label
+                                            >
+                                            <select
+                                                id="pos-dlv-carrier-name"
+                                                onchange="
+                                                    updatePosDeliveryField(
+                                                        'carrierName',
+                                                        this.value
+                                                    )
+                                                "
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                            >
+                                                <option value="Nhân viên tự giao">
+                                                    Nhân viên tự giao
+                                                </option>
+                                                <option value="Grab / Ahamove / XanhSM">
+                                                    Grab / Ahamove / XanhSM
+                                                </option>
+                                                <option value="Xe khách / Chành xe">
+                                                    Xe khách / Chành xe
+                                                </option>
+                                                <option value="Ship ngoài khác">
+                                                    Ship ngoài khác
+                                                </option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-shipment-code"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Mã đơn ngoài / Xe</label
+                                            >
+                                            <input
+                                                id="pos-dlv-shipment-code"
+                                                type="text"
+                                                maxlength="100"
+                                                oninput="
+                                                    updatePosDeliveryField(
+                                                        'shipmentCode',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="VD: GRAB-123, BKS..."
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-1.5">
+                                        <div>
+                                            <label
+                                                for="pos-dlv-shipper-name"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Người giao / Nhà xe</label
+                                            >
+                                            <input
+                                                id="pos-dlv-shipper-name"
+                                                type="text"
+                                                maxlength="120"
+                                                oninput="
+                                                    updatePosDeliveryField(
+                                                        'shipperName',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="Tên tài xế / nhân viên"
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-shipper-phone"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >SĐT người giao</label
+                                            >
+                                            <input
+                                                id="pos-dlv-shipper-phone"
+                                                type="tel"
+                                                maxlength="40"
+                                                oninput="
+                                                    updatePosDeliveryField(
+                                                        'shipperPhone',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="SĐT tài xế / nhà xe"
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] font-mono focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-            </div>
-            <div id="pos-delivery-financials-section" class="hidden space-y-2 mb-2">
-                <div class="space-y-1.5 bg-white/80 p-2.5 rounded-xl border border-gray-200/80 text-[12px]">
-                    <div class="grid grid-cols-2 gap-1.5">
-                        <div>
-                            <label for="pos-dlv-shipping-fee" class="block text-[11px] font-medium text-gray-600">Phí ship thu khách</label>
-                            <input id="pos-dlv-shipping-fee" type="text" inputmode="numeric" oninput="handlePosDeliveryMoneyInput('shippingFeeToCustomer', this.value)" placeholder="0" class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-semibold tabular-nums focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                        <div>
-                            <label for="pos-dlv-carrier-fee" class="block text-[11px] font-medium text-gray-600">Cước trả hãng/ship</label>
-                            <input id="pos-dlv-carrier-fee" type="text" inputmode="numeric" oninput="handlePosDeliveryMoneyInput('carrierFee', this.value)" placeholder="0" class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-semibold tabular-nums focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-1.5 pt-1 border-t border-gray-100">
-                        <div>
-                            <label for="pos-dlv-prepaid" class="block text-[11px] font-medium text-gray-600">Khách cọc / trả trước</label>
-                            <input id="pos-dlv-prepaid" type="text" inputmode="numeric" oninput="handlePosDeliveryMoneyInput('prepaid', this.value)" placeholder="0" class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-bold text-emerald-700 tabular-nums focus:outline-none focus:border-[#0066cc]" />
-                        </div>
-                        <div>
-                            <label for="pos-dlv-prepaid-method" class="block text-[11px] font-medium text-gray-600">Hình thức nhận cọc</label>
-                            <select id="pos-dlv-prepaid-method" onchange="updatePosDeliveryField('prepaidMethod', this.value)" class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]">
-                                <option value="transfer">Chuyển khoản (QR)</option>
-                                <option value="cash">Tiền mặt</option>
-                                <option value="card">Quẹt thẻ</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="flex items-center justify-between gap-1 pt-0.5">
-                        <div class="flex items-center gap-1">
-                            <button type="button" onclick="setPosDeliveryQuickPrepaid('cod100')" class="px-2 py-0.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 font-semibold text-[11px] transition">COD 100%</button>
-                            <button type="button" onclick="setPosDeliveryQuickPrepaid('paid100')" class="px-2 py-0.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#0066cc] font-semibold text-[11px] transition">Trả trước 100%</button>
-                        </div>
-                        <div class="text-right">
-                            <span class="text-[11px] text-gray-500">Thu hộ (COD):</span>
-                            <span id="pos-dlv-cod-amount" class="ml-1 font-black text-[14px] text-rose-600 tabular-nums">0 đ</span>
-                        </div>
-                    </div>
-                    <div class="pt-1 border-t border-gray-100">
-                        <label for="pos-dlv-note" class="block text-[11px] font-medium text-gray-600">Ghi chú giao hàng</label>
-                        <input id="pos-dlv-note" type="text" maxlength="200" oninput="updatePosDeliveryField('note', this.value)" placeholder="VD: Cho xem hàng, gọi trước khi giao..." class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]" />
-                        <div class="flex flex-wrap gap-1 mt-1">
-                            <button type="button" onclick="appendPosDeliveryNote('Cho xem hàng')" class="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-[#0066cc] text-[10.5px] font-medium transition">Cho xem hàng</button>
-                            <button type="button" onclick="appendPosDeliveryNote('Không cho xem hàng')" class="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-[#0066cc] text-[10.5px] font-medium transition">Không xem hàng</button>
-                            <button type="button" onclick="appendPosDeliveryNote('Hàng dễ vỡ')" class="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-[#0066cc] text-[10.5px] font-medium transition">Hàng dễ vỡ</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                            <div id="pos-counter-checkout-section">
+                                <div class="mb-2">
+                                    <div
+                                        class="bg-gray-100/90 p-0.5 rounded-xl flex items-center border border-gray-200/60 shadow-inner"
+                                    >
+                                        <button
+                                            type="button"
+                                            id="paymethod-cash"
+                                            onclick="setPosPaymentMethod('cash')"
+                                            class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg bg-white text-[#0066cc] font-bold text-[11.5px] transition-all"
+                                        >
+                                            Tiền mặt
+                                        </button>
+                                        <button
+                                            type="button"
+                                            id="paymethod-transfer"
+                                            onclick="setPosPaymentMethod('transfer')"
+                                            class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg text-gray-600 hover:text-gray-900 font-medium text-[11.5px] transition-all"
+                                        >
+                                            C.Khoản
+                                        </button>
+                                        <button
+                                            type="button"
+                                            id="paymethod-card"
+                                            onclick="setPosPaymentMethod('card')"
+                                            class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg text-gray-600 hover:text-gray-900 font-medium text-[11.5px] transition-all"
+                                        >
+                                            Quẹt thẻ
+                                        </button>
+                                        <button
+                                            type="button"
+                                            id="paymethod-multi"
+                                            onclick="setPosPaymentMethod('multi')"
+                                            class="pos-paymethod-btn flex-1 py-1.5 px-0.5 text-center rounded-lg text-gray-600 hover:text-gray-900 font-medium text-[11.5px] transition-all"
+                                            title="Thanh toán phối hợp nhiều hình thức (chuyển khoản, tiền mặt, thẻ, ghi nợ)"
+                                        >
+                                            Phối hợp
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Single Payment Input Container -->
+                                <div
+                                    id="pos-single-pay-container"
+                                    class="space-y-1.5 text-[12.5px] bg-white/60 p-2.5 rounded-xl border border-gray-200/60 mb-2"
+                                >
+                                    <div class="flex items-center justify-between">
+                                        <label
+                                            id="pos-tender-label"
+                                            for="pos-tender-input"
+                                            class="text-gray-600 font-medium"
+                                            >Tiền khách đưa</label
+                                        >
+                                        <div class="flex items-center space-x-1">
+                                            <input
+                                                id="pos-tender-input"
+                                                inputmode="numeric"
+                                                type="text"
+                                                oninput="handlePosTenderInput(this.value)"
+                                                placeholder="0"
+                                                class="w-32 text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[13px] focus:outline-none focus:border-[#0066cc] focus:ring-1 focus:ring-[#0066cc]/30 font-bold tabular-nums text-emerald-600"
+                                            />
+                                            <span class="text-gray-500 text-xs font-medium">đ</span>
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="flex items-center justify-between gap-1 flex-wrap pt-0.5"
+                                    >
+                                        <div
+                                            id="pos-smart-denominations"
+                                            class="flex flex-wrap items-center gap-1"
+                                        ></div>
+                                        <button
+                                            id="pos-exact-tender-btn"
+                                            type="button"
+                                            onclick="fillPosExactTender()"
+                                            class="min-h-7 px-2.5 py-0.5 rounded-lg border border-gray-300 text-blue-700 bg-white font-semibold text-[11.5px] hover:bg-blue-50 transition shadow-2xs"
+                                        >
+                                            Khách trả đủ
+                                        </button>
+                                    </div>
+                                    <div
+                                        class="flex items-center justify-between pt-1 border-t border-gray-100"
+                                    >
+                                        <span class="text-gray-600 font-medium"
+                                            >Tiền thừa trả khách</span
+                                        >
+                                        <div class="text-right">
+                                            <span
+                                                id="pos-change"
+                                                class="font-bold text-gray-800 text-[13.5px] tabular-nums"
+                                                >0</span
+                                            >
+                                            <span class="text-xs font-semibold text-gray-500 ml-0.5"
+                                                >đ</span
+                                            >
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Multi Payment Panel -->
+                                <div
+                                    id="pos-multi-pay-panel"
+                                    class="hidden space-y-1.5 bg-gray-50/80 p-2.5 rounded-xl border border-gray-200/70 mb-2"
+                                >
+                                    <div
+                                        class="text-[11.5px] font-bold text-gray-700 flex items-center justify-between pb-1 border-b border-gray-200/60"
+                                    >
+                                        <span>Chi tiết thanh toán phối hợp:</span>
+                                        <span
+                                            id="pos-multi-total-paid"
+                                            class="text-[#0066cc] font-mono font-bold text-[12px]"
+                                            >0 đ</span
+                                        >
+                                    </div>
+                                    <!-- Transfer Row -->
+                                    <div
+                                        class="flex items-center justify-between gap-1 text-[11.5px]"
+                                    >
+                                        <span
+                                            class="text-gray-600 font-medium flex items-center space-x-1.5 min-w-[85px]"
+                                        >
+                                            <svg
+                                                class="w-3.5 h-3.5 text-[#0066cc] flex-shrink-0"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                viewBox="0 0 24 24"
+                                                aria-hidden="true"
+                                            >
+                                                <path
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round"
+                                                    d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+                                                />
+                                            </svg>
+                                            <span>C.Khoản:</span>
+                                        </span>
+                                        <div class="flex items-center space-x-1 flex-1 justify-end">
+                                            <input
+                                                id="pos-multi-pay-transfer"
+                                                type="text"
+                                                inputmode="numeric"
+                                                aria-label="Số tiền khách chuyển khoản"
+                                                oninput="
+                                                    handleMultiPaymentInput('transfer', this.value)
+                                                "
+                                                placeholder="0"
+                                                class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-[#0066cc]"
+                                            />
+                                            <button
+                                                type="button"
+                                                onclick="clearMultiPayment('transfer')"
+                                                class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
+                                                title="Xóa"
+                                                aria-label="Xóa số tiền chuyển khoản"
+                                            >
+                                                <svg
+                                                    class="w-4 h-4"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                >
+                                                    <path d="M18 6L6 18M6 6l12 12" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <!-- Cash Row -->
+                                    <div
+                                        class="flex items-center justify-between gap-1 text-[11.5px]"
+                                    >
+                                        <span
+                                            class="text-gray-600 font-medium flex items-center space-x-1.5 min-w-[85px]"
+                                        >
+                                            <svg
+                                                class="w-3.5 h-3.5 text-emerald-600 flex-shrink-0"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                viewBox="0 0 24 24"
+                                                aria-hidden="true"
+                                            >
+                                                <rect x="2" y="6" width="20" height="12" rx="2" />
+                                                <circle cx="12" cy="12" r="2" />
+                                                <path d="M6 12h.01M18 12h.01" />
+                                            </svg>
+                                            <span>Tiền mặt:</span>
+                                        </span>
+                                        <div class="flex items-center space-x-1 flex-1 justify-end">
+                                            <input
+                                                id="pos-multi-pay-cash"
+                                                type="text"
+                                                inputmode="numeric"
+                                                aria-label="Số tiền khách trả bằng tiền mặt"
+                                                oninput="
+                                                    handleMultiPaymentInput('cash', this.value)
+                                                "
+                                                placeholder="0"
+                                                class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-emerald-600"
+                                            />
+                                            <button
+                                                type="button"
+                                                onclick="clearMultiPayment('cash')"
+                                                class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
+                                                title="Xóa"
+                                                aria-label="Xóa số tiền mặt"
+                                            >
+                                                <svg
+                                                    class="w-4 h-4"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                >
+                                                    <path d="M18 6L6 18M6 6l12 12" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <!-- Card Row -->
+                                    <div
+                                        class="flex items-center justify-between gap-1 text-[11.5px]"
+                                    >
+                                        <span
+                                            class="text-gray-600 font-medium flex items-center space-x-1.5 min-w-[85px]"
+                                        >
+                                            <svg
+                                                class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                viewBox="0 0 24 24"
+                                                aria-hidden="true"
+                                            >
+                                                <rect x="2" y="5" width="20" height="14" rx="2" />
+                                                <line x1="2" y1="10" x2="22" y2="10" />
+                                            </svg>
+                                            <span>Quẹt thẻ:</span>
+                                        </span>
+                                        <div class="flex items-center space-x-1 flex-1 justify-end">
+                                            <input
+                                                id="pos-multi-pay-card"
+                                                type="text"
+                                                inputmode="numeric"
+                                                aria-label="Số tiền khách quẹt thẻ"
+                                                oninput="
+                                                    handleMultiPaymentInput('card', this.value)
+                                                "
+                                                placeholder="0"
+                                                class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-slate-700"
+                                            />
+                                            <button
+                                                type="button"
+                                                onclick="clearMultiPayment('card')"
+                                                class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
+                                                title="Xóa"
+                                                aria-label="Xóa số tiền quẹt thẻ"
+                                            >
+                                                <svg
+                                                    class="w-4 h-4"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                >
+                                                    <path d="M18 6L6 18M6 6l12 12" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <!-- Summary: Debt or Change -->
+                                    <div
+                                        id="pos-multi-summary"
+                                        class="pt-1 border-t border-gray-200/60"
+                                    ></div>
+                                </div>
+                            </div>
+                            <div id="pos-delivery-financials-section" class="hidden space-y-2 mb-2">
+                                <div
+                                    class="space-y-1.5 bg-white/80 p-2.5 rounded-xl border border-gray-200/80 text-[12px]"
+                                >
+                                    <div class="grid grid-cols-2 gap-1.5">
+                                        <div>
+                                            <label
+                                                for="pos-dlv-shipping-fee"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Phí ship thu khách</label
+                                            >
+                                            <input
+                                                id="pos-dlv-shipping-fee"
+                                                type="text"
+                                                inputmode="numeric"
+                                                oninput="
+                                                    handlePosDeliveryMoneyInput(
+                                                        'shippingFeeToCustomer',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="0"
+                                                class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-semibold tabular-nums focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-carrier-fee"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Cước trả hãng/ship</label
+                                            >
+                                            <input
+                                                id="pos-dlv-carrier-fee"
+                                                type="text"
+                                                inputmode="numeric"
+                                                oninput="
+                                                    handlePosDeliveryMoneyInput(
+                                                        'carrierFee',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="0"
+                                                class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-semibold tabular-nums focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="grid grid-cols-2 gap-1.5 pt-1 border-t border-gray-100"
+                                    >
+                                        <div>
+                                            <label
+                                                for="pos-dlv-prepaid"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Khách cọc / trả trước</label
+                                            >
+                                            <input
+                                                id="pos-dlv-prepaid"
+                                                type="text"
+                                                inputmode="numeric"
+                                                oninput="
+                                                    handlePosDeliveryMoneyInput(
+                                                        'prepaid',
+                                                        this.value
+                                                    )
+                                                "
+                                                placeholder="0"
+                                                class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-bold text-emerald-700 tabular-nums focus:outline-none focus:border-[#0066cc]"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label
+                                                for="pos-dlv-prepaid-method"
+                                                class="block text-[11px] font-medium text-gray-600"
+                                                >Hình thức nhận cọc</label
+                                            >
+                                            <select
+                                                id="pos-dlv-prepaid-method"
+                                                onchange="
+                                                    updatePosDeliveryField(
+                                                        'prepaidMethod',
+                                                        this.value
+                                                    )
+                                                "
+                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                            >
+                                                <option value="transfer">Chuyển khoản (QR)</option>
+                                                <option value="cash">Tiền mặt</option>
+                                                <option value="card">Quẹt thẻ</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center justify-between gap-1 pt-0.5">
+                                        <div class="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onclick="setPosDeliveryQuickPrepaid('cod100')"
+                                                class="px-2 py-0.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 font-semibold text-[11px] transition"
+                                            >
+                                                COD 100%
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onclick="setPosDeliveryQuickPrepaid('paid100')"
+                                                class="px-2 py-0.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#0066cc] font-semibold text-[11px] transition"
+                                            >
+                                                Trả trước 100%
+                                            </button>
+                                        </div>
+                                        <div class="text-right">
+                                            <span class="text-[11px] text-gray-500"
+                                                >Thu hộ (COD):</span
+                                            >
+                                            <span
+                                                id="pos-dlv-cod-amount"
+                                                class="ml-1 font-black text-[14px] text-rose-600 tabular-nums"
+                                                >0 đ</span
+                                            >
+                                        </div>
+                                    </div>
+                                    <div class="pt-1 border-t border-gray-100">
+                                        <label
+                                            for="pos-dlv-note"
+                                            class="block text-[11px] font-medium text-gray-600"
+                                            >Ghi chú giao hàng</label
+                                        >
+                                        <input
+                                            id="pos-dlv-note"
+                                            type="text"
+                                            maxlength="200"
+                                            oninput="updatePosDeliveryField('note', this.value)"
+                                            placeholder="VD: Cho xem hàng, gọi trước khi giao..."
+                                            class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                        />
+                                        <div class="flex flex-wrap gap-1 mt-1">
+                                            <button
+                                                type="button"
+                                                onclick="appendPosDeliveryNote('Cho xem hàng')"
+                                                class="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-[#0066cc] text-[10.5px] font-medium transition"
+                                            >
+                                                Cho xem hàng
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onclick="
+                                                    appendPosDeliveryNote('Không cho xem hàng')
+                                                "
+                                                class="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-[#0066cc] text-[10.5px] font-medium transition"
+                                            >
+                                                Không xem hàng
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onclick="appendPosDeliveryNote('Hàng dễ vỡ')"
+                                                class="px-1.5 py-0.5 rounded bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-[#0066cc] text-[10.5px] font-medium transition"
+                                            >
+                                                Hàng dễ vỡ
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
                             <!-- VietQR Box -->
                             <div
@@ -5838,7 +6224,10 @@
                         id="receipt-slogan"
                         class="text-[11px] text-gray-500 italic mb-0.5 whitespace-pre-line hidden"
                     ></div>
-                    <div id="receipt-address" class="text-[11px] text-gray-600 whitespace-pre-line"></div>
+                    <div
+                        id="receipt-address"
+                        class="text-[11px] text-gray-600 whitespace-pre-line"
+                    ></div>
                     <div
                         id="receipt-phone"
                         class="text-[11px] text-gray-600 mb-1 whitespace-pre-line"

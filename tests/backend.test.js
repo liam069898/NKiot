@@ -2649,6 +2649,57 @@ test('Viettel Post config saves over the real API and webhook always answers 200
         DATA: { ORDER_NUMBER: 'X', ORDER_STATUS: 200 },
         TOKEN: 'wrong'
     });
+
+    test('deliverySale falls back to branch address when sender address is empty', () => {
+        const data = db.getAllData();
+        data.branches.find((b) => b.id === 'A').address = '12 Lê Lợi, Q1';
+        data.branches.find((b) => b.id === 'A').phone = '0911111111';
+        db.saveAllData(data);
+        const res = command('deliverySale', {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1 }],
+            carrierType: 'viettelpost',
+            receiverName: 'Khách',
+            receiverPhone: '0987654321',
+            receiverAddress: 'Đường Nguyễn Huệ, Q1'
+        }).result;
+        assert.equal(res.delivery.senderAddress, '12 Lê Lợi, Q1');
+        assert.equal(res.delivery.senderPhone, '0911111111');
+        assert.equal(res.delivery.senderName, 'A');
+    });
+
+    test('requeue endpoint resets a failed create_order task and answers 200', async () => {
+        const res = command('deliverySale', {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1 }],
+            carrierType: 'viettelpost',
+            receiverName: 'Khách',
+            receiverPhone: '0987654321',
+            receiverAddress: 'Đường Nguyễn Huệ, Q1'
+        }).result;
+        const deliveryId = res.delivery.id;
+        db.getDb()
+            .prepare(
+                "UPDATE delivery_tasks SET status='failed', lastError='Sender address is required' WHERE deliveryId=?"
+            )
+            .run(deliveryId);
+        const login = await request('POST', '/api/login', {
+            username: 'admin',
+            password: 'Test-password-123'
+        });
+        const cookie = login.headers['set-cookie'].split(';')[0];
+        const requeued = await request('POST', '/api/vtp/requeue', { id: deliveryId }, cookie, {
+            'x-nkiot-csrf': login.json.csrfToken
+        });
+        assert.equal(requeued.status, 200, requeued.body);
+        const task = db
+            .getDb()
+            .prepare('SELECT status, lastError FROM delivery_tasks WHERE deliveryId=?')
+            .get(deliveryId);
+        assert.equal(task.status, 'pending');
+        assert.equal(task.lastError, '');
+    });
+
     assert.equal(bad.status, 200);
     assert.equal(bad.json.reason, 'invalid_secret');
     const ok = await request('POST', '/api/vtp/webhook', {
@@ -2657,4 +2708,65 @@ test('Viettel Post config saves over the real API and webhook always answers 200
     });
     assert.equal(ok.status, 200);
     assert.equal(ok.json.reason, 'unknown_shipment');
+
+    test('Viettel Post label and action endpoints validate the delivery order', async () => {
+        const login = await request('POST', '/api/login', {
+            username: 'admin',
+            password: 'Test-password-123'
+        });
+        const cookie = login.headers['set-cookie'].split(';')[0];
+        const csrf = { 'x-nkiot-csrf': login.json.csrfToken };
+
+        // Đơn không tồn tại
+        const missingLabel = await request('POST', '/api/vtp/label', { id: 'NOPE' }, cookie, csrf);
+        assert.equal(missingLabel.status, 404);
+        const missingAction = await request(
+            'POST',
+            '/api/vtp/action',
+            { id: 'NOPE', action: 'cancel' },
+            cookie,
+            csrf
+        );
+        assert.equal(missingAction.status, 409);
+        assert.match(missingAction.json.error, /Không tìm thấy vận đơn/);
+
+        // Thao tác không hợp lệ
+        const badAction = await request(
+            'POST',
+            '/api/vtp/action',
+            { id: 'NOPE', action: 'bogus' },
+            cookie,
+            csrf
+        );
+        assert.equal(badAction.status, 409);
+
+        // Đơn VTP chưa có mã vận đơn: không in nhãn / không hủy qua hãng được
+        const res = command('deliverySale', {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1 }],
+            carrierType: 'viettelpost',
+            receiverName: 'Khách',
+            receiverPhone: '0987654321',
+            receiverAddress: 'Đường Nguyễn Huệ, Q1'
+        }).result;
+        const deliveryId = res.delivery.id;
+        const labelNoCode = await request(
+            'POST',
+            '/api/vtp/label',
+            { id: deliveryId },
+            cookie,
+            csrf
+        );
+        assert.equal(labelNoCode.status, 409);
+        assert.match(labelNoCode.json.error, /chưa có mã vận đơn/);
+        const cancelNoCode = await request(
+            'POST',
+            '/api/vtp/action',
+            { id: deliveryId, action: 'cancel' },
+            cookie,
+            csrf
+        );
+        assert.equal(cancelNoCode.status, 409);
+        assert.match(cancelNoCode.json.error, /chưa có mã vận đơn/);
+    });
 });

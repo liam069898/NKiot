@@ -838,6 +838,84 @@ async function handler(req, res) {
                     return json(res, 200, { success: true, config: vtpConfig.saveConfig(input) });
                 }
             }
+            if (url.pathname === '/api/vtp/services' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                const delivery = require('./delivery-service');
+                try {
+                    const services = await delivery.listServices(input);
+                    return json(res, 200, { success: true, services });
+                } catch (error) {
+                    // Trả 200 kèm danh sách rỗng + lý do để POS hiển thị, không chặn bán hàng.
+                    return json(res, 200, {
+                        success: true,
+                        services: [],
+                        warning: error.message || 'Không lấy được danh sách dịch vụ.'
+                    });
+                }
+            }
+            if (url.pathname === '/api/vtp/label' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                const id = String(input?.id || '').slice(0, 200);
+                if (!id) throw Object.assign(new Error('Thiếu mã đơn giao hàng.'), { status: 400 });
+                try {
+                    const label = await require('./delivery-service').labelUrl(id, {
+                        size: String(input?.size || 'A5').slice(0, 10),
+                        showPostage: input?.showPostage ? 1 : 0
+                    });
+                    return json(res, 200, { success: true, ...label });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/vtp/action' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                const id = String(input?.id || '').slice(0, 200);
+                const action = String(input?.action || '').slice(0, 30);
+                if (!id || !action)
+                    throw Object.assign(new Error('Thiếu đơn hoặc thao tác vận đơn.'), {
+                        status: 400
+                    });
+                const outcome = require('./delivery-service').enqueueOrderAction(
+                    id,
+                    action,
+                    String(input?.note || '').slice(0, 200)
+                );
+                if (!outcome.ok) {
+                    const messages = {
+                        unknown_action: 'Thao tác vận đơn không hợp lệ.',
+                        unknown_order: 'Không tìm thấy vận đơn.',
+                        self_delivery: 'Đơn tự giao không dùng thao tác của Viettel Post.',
+                        no_shipment_code: 'Đơn chưa có mã vận đơn Viettel Post.',
+                        not_cancellable: 'Chỉ hủy được đơn hãng chưa lấy hàng.',
+                        not_returning: 'Chỉ áp dụng cho đơn đang chờ chuyển hoàn (505).',
+                        not_cancelled: 'Chỉ xóa được đơn đã hủy.',
+                        action_pending: 'Đang có thao tác khác chờ xử lý cho đơn này.'
+                    };
+                    return json(res, 409, {
+                        success: false,
+                        error: messages[outcome.reason] || 'Không thực hiện được thao tác.'
+                    });
+                }
+                require('./delivery-service').scheduleDelivery(0);
+                return json(res, 200, { success: true, queued: true });
+            }
+            if (url.pathname === '/api/vtp/requeue' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                const id = String(input?.id || '').slice(0, 200);
+                if (!id) throw Object.assign(new Error('Thiếu mã đơn giao hàng.'), { status: 400 });
+                const delivery = require('./delivery-service');
+                const outcome = delivery.requeueCreateOrderTask(id);
+                if (!outcome.ok) return json(res, 409, { success: false, error: outcome.reason });
+                delivery.scheduleDelivery(0);
+                return json(res, 200, { success: true, requeued: true });
+            }
             const tokenActionMatch = /^\/api\/tokens\/([A-Za-z0-9_-]+)(?:\/revoke)?$/.exec(
                 url.pathname
             );
