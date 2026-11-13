@@ -739,14 +739,14 @@ function isModalSubmitting(modalId) {
     return Boolean(mid && modalSubmittingMap.get(mid));
 }
 
-function closeModalWithCheck(modalId, force = false) {
+async function closeModalWithCheck(modalId, force = false) {
     const modal = typeof modalId === 'string' ? document.getElementById(modalId) : modalId;
     if (!modal) return true;
     const mid = modal.id;
 
     if (mid === 'create-import-modal') {
         if (typeof closeCreateImport === 'function') {
-            closeCreateImport();
+            await closeCreateImport();
             return modal.classList.contains('hidden');
         }
     }
@@ -756,9 +756,12 @@ function closeModalWithCheck(modalId, force = false) {
     }
 
     if (!force && isModalDirty(mid)) {
-        const discard = confirm(
-            'Dữ liệu chưa được lưu. Bạn có chắc muốn đóng và hủy các thay đổi?'
-        );
+        const discard = await askAction({
+            title: 'Bỏ các thay đổi chưa lưu?',
+            message:
+                'Biểu mẫu đang có thay đổi chưa được lưu. Nếu đóng bây giờ, các thay đổi này sẽ bị hủy.',
+            confirmText: 'Hủy thay đổi'
+        });
         if (!discard) {
             return false;
         }
@@ -1111,8 +1114,8 @@ async function selectActiveBranch(branchName) {
     showToast(`Đã chuyển làm việc sang chi nhánh: ${branchName}`, 'info');
 }
 
-function closeBranchModal(force = false) {
-    if (!closeModalWithCheck('branch-modal', force)) return;
+async function closeBranchModal(force = false) {
+    if (!(await closeModalWithCheck('branch-modal', force))) return;
     const editId = document.getElementById('branch-edit-id');
     if (editId) editId.value = '';
     const hint = document.getElementById('branch-name-hint');
@@ -1420,13 +1423,17 @@ function showToast(msg, type = 'info') {
     }
     toast.classList.remove('-translate-y-24', 'opacity-0', 'pointer-events-none');
     toast.classList.add('translate-y-0', 'opacity-100');
+    const needsAttention = type === 'error' || type === 'warning';
     toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
     toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
-    msgEl.classList.toggle('truncate', type !== 'error');
-    document.getElementById('kv-toast-close')?.classList.toggle('hidden', type !== 'error');
+    // Cảnh báo/lỗi phải đọc trọn câu: không cắt chữ, cho phép xuống dòng.
+    msgEl.classList.toggle('truncate', !needsAttention);
+    document.getElementById('kv-toast-close')?.classList.toggle('hidden', !needsAttention);
     clearTimeout(toastTimer);
     if (type === 'error') return;
-    toastTimer = setTimeout(hideToast, 2800);
+    // Thời gian hiển thị theo độ dài câu để người dùng kịp đọc hết thông báo.
+    const readingMs = Math.min(9000, Math.max(2800, String(msg).length * 120));
+    toastTimer = setTimeout(hideToast, needsAttention ? readingMs : 2800);
 }
 
 function hideToast() {
@@ -3297,7 +3304,7 @@ function switchPosTab(index) {
     renderPosScreen();
 }
 
-function closePosTab(e, index) {
+async function closePosTab(e, index) {
     e.stopPropagation();
     const tab = state.posTabs[index];
     if (!tab || state.posTabs.length <= 1) return;
@@ -3309,13 +3316,18 @@ function closePosTab(e, index) {
         KVStore.updateDbStatus();
         return;
     }
-    if (
-        tab.cart.length &&
-        !confirm(
-            `Hủy ${tab.name} đang nhập gồm ${tab.cart.length} dòng hàng? Giỏ hàng này sẽ bị xóa.`
-        )
-    )
-        return;
+    if (tab.cart.length) {
+        const confirmed = await askAction({
+            title: `Hủy ${tab.name}?`,
+            message: `Giỏ hàng đang nhập gồm ${tab.cart.length} dòng. Nếu hủy, toàn bộ dòng hàng trong giỏ này sẽ bị xóa.`,
+            confirmText: 'Hủy giỏ hàng'
+        });
+        if (!confirmed) return;
+    }
+    // Tab có thể đã đổi vị trí trong lúc chờ người dùng xác nhận.
+    const currentIndex = state.posTabs.indexOf(tab);
+    if (currentIndex === -1) return;
+    index = currentIndex;
     state.posTabs.splice(index, 1);
     if (index < state.activePosTab) state.activePosTab--;
     else if (state.activePosTab >= state.posTabs.length)
@@ -4316,7 +4328,8 @@ async function checkoutPos() {
                 paymentMethod: tab.paymentMethod,
                 payments: paymentsPayload,
                 cod: false,
-                note: orderNote
+                note: orderNote,
+                copiedFrom: tab.copiedFrom || ''
             });
             showToast(`Đã lưu hóa đơn ${invoice.code}.`, 'success');
         }
@@ -4332,6 +4345,7 @@ async function checkoutPos() {
         tab.note = '';
         tab.delivery = isDelivery ? createDefaultDeliverySpec() : null;
         delete tab.branch;
+        delete tab.copiedFrom;
         const noteEl = document.getElementById('pos-order-note');
         if (noteEl) noteEl.value = '';
         refreshCurrentView();
@@ -9540,6 +9554,15 @@ const DELIVERY_STATUS_META = {
     cancelled: { label: 'Đã hủy', cls: 'kv-badge-danger' }
 };
 
+// Lấy lỗi tạo vận đơn gần nhất của đơn (nếu worker đánh dấu task failed).
+function getDeliveryCreateOrderError(order) {
+    const tasks = (KVStore.data?.delivery_tasks || []).filter(
+        (t) => t.deliveryId === order.id && t.action === 'create_order'
+    );
+    const failed = tasks.find((t) => t.status === 'failed');
+    return failed ? failed.lastError : '';
+}
+
 function getDeliveryCodState(order) {
     const codRec = (KVStore.data?.delivery_cod_records || []).find(
         (c) => c.deliveryId === order.id
@@ -9708,6 +9731,7 @@ function renderDeliveryRows(tbody, orders, isAll) {
         };
         const isSelf = order.carrierType === 'self';
         const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+        const orderCreateError = getDeliveryCreateOrderError(order);
         const codState = getDeliveryCodState(order).status;
         const codBadge =
             (order.codRequested || 0) <= 0
@@ -9738,6 +9762,7 @@ function renderDeliveryRows(tbody, orders, isAll) {
             <td class="py-2.5 px-3">
                 <span class="inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold ${isSelf ? 'bg-amber-50 text-amber-800 border border-amber-200/70' : 'bg-blue-50 text-[#0066cc] border border-blue-200/70'}">${carrierLabel}</span>
                 <div class="text-[11.5px] font-mono text-gray-600 mt-0.5">${order.shipmentCode || (isSelf ? order.shipperName || '—' : 'Chờ cấp mã')}</div>
+                ${trustedHTML(orderCreateError ? renderHTML`<div class="text-[11px] text-rose-600 font-medium mt-0.5 max-w-[220px] truncate" title="${orderCreateError}">⚠️ ${orderCreateError}</div>` : '')}
             </td>
             <td class="py-2.5 px-3">
                 <div class="font-semibold text-gray-900">${order.receiverName || '—'}</div>
@@ -10206,6 +10231,11 @@ function renderInvoiceDetailHtml(inv) {
             <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100">
                 <div class="text-[11.5px] text-gray-400">
                     Mã tra cứu: <span class="font-mono font-semibold text-gray-600">${escapeHTML(inv.code)}</span>
+                    ${
+                        inv.copiedFrom
+                            ? ` · <span class="text-[#0066cc] font-semibold">Sao chép từ ${escapeHTML(inv.copiedFrom)}${inv.copiedBy ? ` (bởi ${escapeHTML(inv.copiedBy)})` : ''}</span>`
+                            : ''
+                    }
                 </div>
                 <div class="flex items-center gap-2">
                     ${
@@ -10221,7 +10251,12 @@ function renderInvoiceDetailHtml(inv) {
                             <span>🖨️ In hóa đơn</span>
                         </button>
                     `
-                            : `<span class="text-rose-600 font-bold text-xs italic">Hóa đơn đã bị hủy</span>`
+                            : `
+                        <button type="button" onclick="copyCancelledInvoice('${escapeHTML(inv.code)}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>📋 Sao chép thành hóa đơn mới</span>
+                        </button>
+                        <span class="text-rose-600 font-bold text-xs italic">Hóa đơn đã bị hủy</span>
+                    `
                     }
                     <button type="button" onclick="collapseExpandedRow(this)" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold text-xs transition">
                         Thu gọn
@@ -10267,6 +10302,17 @@ function openInvoiceDetailModal(inv) {
         noteEl.className = noteText
             ? 'font-medium text-gray-900 break-words whitespace-pre-line'
             : 'text-gray-500 italic';
+    }
+
+    const copiedRow = document.getElementById('inv-detail-copied-row');
+    const copiedFromEl = document.getElementById('inv-detail-copied-from');
+    if (copiedRow && copiedFromEl) {
+        if (inv.copiedFrom) {
+            copiedFromEl.textContent = `${inv.copiedFrom}${inv.copiedBy ? ` (bởi ${inv.copiedBy})` : ''}`;
+            copiedRow.classList.remove('hidden');
+        } else {
+            copiedRow.classList.add('hidden');
+        }
     }
 
     // Status warning banner if cancelled or returned
@@ -10403,6 +10449,145 @@ async function cancelInvoice(code) {
     document.getElementById('invoice-detail-modal')?.classList.add('hidden');
     refreshCurrentView();
     showToast('Đã hủy và đối soát tiền/hàng còn lại.', 'success');
+}
+
+// Sao chép hóa đơn đã hủy sang màn POS để chỉnh sửa và bán lại.
+// Chỉ điền sẵn khách hàng, giảm giá và các dòng hàng (giá bán), không tự ghi gì vào kho/tiền.
+async function copyCancelledInvoice(code) {
+    const inv = (KVStore.data.invoices || []).find((i) => i.code === code || i.id === code);
+    if (!inv) {
+        showToast('Không tìm thấy hóa đơn!', 'error');
+        return;
+    }
+    if (inv.status !== 'cancelled') {
+        showToast('Chỉ sao chép được hóa đơn đã hủy.', 'warning');
+        return;
+    }
+    if (inv.cod || inv.channel === 'delivery') {
+        showToast('Đơn giao hàng không sao chép qua màn bán tại quầy.', 'warning');
+        return;
+    }
+    if (!hasPermission('pos')) {
+        showToast('Tài khoản không có quyền bán hàng tại quầy.', 'error');
+        return;
+    }
+    if (KVStore.user?.role !== 'admin') {
+        showToast('Chỉ Quản trị viên mới được sao chép hóa đơn.', 'error');
+        return;
+    }
+    const branch = inv.branch || FALLBACK_BRANCH;
+    if (!getUserAllowedBranches(KVStore.user).includes(branch)) {
+        showToast('Tài khoản chưa được cấp quyền chi nhánh của hóa đơn.', 'error');
+        return;
+    }
+
+    // Kiểm tra giỏ hàng đang soạn trước khi chuyển màn hình, tránh ghi đè bất ngờ.
+    const counterTab = state.posTabs[state.activePosTab];
+    if (state.posMode !== 'counter' && counterTab && counterTab.cart.length) {
+        const discard = await askAction({
+            title: 'Bỏ giỏ hàng đang soạn?',
+            message: `Giỏ ${counterTab.name} đang có ${counterTab.cart.length} dòng chưa thanh toán.`,
+            confirmText: 'Bỏ giỏ & sao chép'
+        });
+        if (!discard) return;
+    }
+
+    // Chuyển sang chế độ bán tại quầy và lấy tab đang soạn.
+    switchPosMode('counter');
+    const curTab = state.posTabs[state.activePosTab];
+    if (curTab.cart.length) {
+        const discard = await askAction({
+            title: 'Bỏ giỏ hàng đang soạn?',
+            message: `Giỏ ${curTab.name} đang có ${curTab.cart.length} dòng chưa thanh toán.`,
+            confirmText: 'Bỏ giỏ & sao chép'
+        });
+        if (!discard) return;
+    }
+
+    // Đồng bộ chi nhánh làm việc với chi nhánh của hóa đơn (giỏ đã trống sau xác nhận ở trên).
+    KVStore.data.settings.branch = branch;
+    sessionStorage.setItem('minikiot_branch', branch);
+    curTab.branch = branch;
+
+    curTab.cart = [];
+    curTab.customer = null;
+    curTab.discount = Number(inv.discount) || 0;
+    curTab.discountPercent = 0;
+    curTab.tenderEdited = false;
+    curTab.paymentMethod = 'cash';
+    curTab.multiPayments = { transfer: 0, cash: 0, card: 0 };
+    curTab.customerGiven = 0;
+    curTab.note = inv.note || '';
+    curTab.copiedFrom = inv.code;
+
+    // Điền khách hàng theo customerId hoặc phone (bỏ qua khách lẻ).
+    if (inv.customerId) {
+        curTab.customer =
+            (KVStore.data.customers || []).find((c) => c.id === inv.customerId) || null;
+    } else if (inv.phone && inv.phone !== 'Tại quầy') {
+        const matches = (KVStore.data.customers || []).filter(
+            (c) => c.phone === inv.phone && c.code !== RETAIL_CUSTOMER_CODE
+        );
+        if (matches.length === 1) curTab.customer = matches[0];
+    }
+
+    const branchProducts = (KVStore.data.products || []).filter(
+        (p) => (p.branch || FALLBACK_BRANCH) === branch
+    );
+    let warnings = [];
+    for (const it of inv.items || []) {
+        const prod = branchProducts.find((p) => p.code === it.code);
+        if (!prod) {
+            warnings.push(`"${it.name || it.code}" không còn tồn tại tại chi nhánh này`);
+            continue;
+        }
+        if (prod.status !== 'active') {
+            warnings.push(`"${prod.name}" đã ngừng kinh doanh`);
+        }
+        if ((Number(prod.stock) || 0) < (Number(it.qty) || 1)) {
+            warnings.push(`"${prod.name}" chỉ còn ${Number(prod.stock) || 0} tồn kho`);
+        }
+        if (
+            Array.isArray(it.imeis) &&
+            it.imeis.some((im) => !Array.isArray(prod.imeis) || !prod.imeis.includes(im))
+        ) {
+            warnings.push(`Một số IMEI của "${prod.name}" không còn trong kho, cần chọn lại`);
+        }
+        if (prod.price !== Number(it.price)) {
+            warnings.push(
+                `"${prod.name}" giá hiện tại ${formatVND(prod.price)} khác giá cũ ${formatVND(Number(it.price))}`
+            );
+        }
+        curTab.cart.push({
+            code: it.code,
+            name: it.name || it.code,
+            price: Number(it.price) || 0,
+            listPrice: prod ? Number(prod.price) || Number(it.price) || 0 : Number(it.price) || 0,
+            costPrice: prod ? Number(prod.costPrice) || 0 : Number(it.costPrice) || 0,
+            stock: prod ? Number(prod.stock) || 0 : 0,
+            qty: Number(it.qty) || 1,
+            hasImei: Boolean(it.hasImei || (Array.isArray(it.imeis) && it.imeis.length > 0)),
+            selectedImeis: Array.isArray(it.imeis) ? [...it.imeis] : [],
+            imeisExplicitlySelected: Array.isArray(it.imeis) && it.imeis.length > 0,
+            note: it.note || ''
+        });
+    }
+
+    document.getElementById('invoice-detail-modal')?.classList.add('hidden');
+    renderPosScreen();
+    if (warnings.length) {
+        showToast(
+            `Đã sao chép hóa đơn ${inv.code}. Lưu ý: ${warnings.slice(0, 3).join('; ')}${
+                warnings.length > 3 ? '…' : ''
+            }`,
+            'warning'
+        );
+    } else {
+        showToast(
+            `Đã sao chép hóa đơn ${inv.code} sang màn Bán hàng. Xác nhận lại thanh toán rồi lưu.`,
+            'success'
+        );
+    }
 }
 
 // 4.2 TRẢ HÀNG BÁN (SALES RETURN & REFUND WORKFLOW)
@@ -11046,16 +11231,25 @@ function renderImportDetailHtml(imp) {
             <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100">
                 <div class="text-[11.5px] text-gray-400">
                     Mã phiếu: <span class="font-mono font-semibold text-gray-600">${escapeHTML(imp.code)}</span>
+                    ${
+                        imp.copiedFrom
+                            ? ` · <span class="text-[#0066cc] font-semibold">Sao chép từ ${escapeHTML(imp.copiedFrom)}${imp.copiedBy ? ` (bởi ${escapeHTML(imp.copiedBy)})` : ''}</span>`
+                            : ''
+                    }
                 </div>
                 <div class="flex items-center gap-2">
                     ${
-                        !isCancelled
+                        isCancelled
                             ? `
+                        <button type="button" onclick="copyCancelledImport('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>📋 Sao chép thành phiếu mới</span>
+                        </button>
+                    `
+                            : `
                         <button type="button" onclick="cancelImport('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
                             <span>🚫 Hủy phiếu nhập</span>
                         </button>
                     `
-                            : ''
                     }
                     <button type="button" onclick="printImportReceipt('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-[#0066cc] hover:bg-blue-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
                         <span>🖨️ In phiếu nhập</span>
@@ -11085,6 +11279,17 @@ function viewImportDetail(code) {
     document.getElementById('imp-detail-creator').textContent = imp.creator || 'Quản lý kho';
     document.getElementById('imp-detail-note').textContent = imp.note || 'Không có';
 
+    const copiedRow = document.getElementById('imp-detail-copied-row');
+    const copiedFromEl = document.getElementById('imp-detail-copied-from');
+    if (copiedRow && copiedFromEl) {
+        if (imp.copiedFrom) {
+            copiedFromEl.textContent = `${imp.copiedFrom}${imp.copiedBy ? ` (bởi ${imp.copiedBy})` : ''}`;
+            copiedRow.classList.remove('hidden');
+        } else {
+            copiedRow.classList.add('hidden');
+        }
+    }
+
     // Status banner & cancel button toggle
     const banner = document.getElementById('imp-detail-status-banner');
     const cancelBtn = document.getElementById('imp-detail-cancel-btn');
@@ -11107,6 +11312,11 @@ function viewImportDetail(code) {
         } else {
             cancelBtn.classList.remove('hidden');
         }
+    }
+    const copyBtn = document.getElementById('imp-detail-copy-btn');
+    if (copyBtn) {
+        copyBtn.classList.toggle('hidden', imp.status !== 'cancelled');
+        copyBtn.onclick = () => copyCancelledImport(imp.code);
     }
 
     const tbody = document.getElementById('imp-detail-tbody');
@@ -11293,6 +11503,101 @@ async function cancelImport(code) {
     showToast('Đã hủy phiếu nhập thành công!', 'success');
 }
 
+// Sao chép phiếu nhập đã hủy sang phiếu nhập mới để chỉnh sửa và lưu lại.
+// Không ghi kho/tiền gì ở đây — chỉ điền sẵn dữ liệu (kèm IMEI và ảnh) vào form tạo phiếu.
+async function copyCancelledImport(code) {
+    const imp = (KVStore.data.imports || []).find((i) => i.code === code || i.id === code);
+    if (!imp) {
+        showToast('Không tìm thấy phiếu nhập!', 'error');
+        return;
+    }
+    if (imp.status !== 'cancelled') {
+        showToast('Chỉ sao chép được phiếu nhập đã hủy.', 'warning');
+        return;
+    }
+    if (!hasPermission('imports')) {
+        showToast('Tài khoản không có quyền nhập hàng.', 'error');
+        return;
+    }
+    if (KVStore.user?.role !== 'admin') {
+        showToast('Chỉ Quản trị viên mới được sao chép phiếu nhập.', 'error');
+        return;
+    }
+    if (importSaving || importRequestId || importUploads) {
+        showToast('Đang có phiếu nhập chưa hoàn tất. Hãy xử lý trước.', 'warning');
+        return;
+    }
+    if (currentImportItems.length) {
+        const discard = await askAction({
+            title: 'Bỏ phiếu nhập đang soạn?',
+            message: `Phiếu nhập đang có ${currentImportItems.length} dòng chưa lưu. Sao chép phiếu ${imp.code} sẽ xóa toàn bộ nội dung đang soạn.`,
+            confirmText: 'Bỏ & sao chép'
+        });
+        if (!discard) return;
+    }
+
+    const branches = getUserAllowedBranches(KVStore.user);
+    const branch = branches.includes(imp.branch) ? imp.branch : branches[0] || '';
+    if (!branch) {
+        showToast('Tài khoản chưa được cấp quyền chi nhánh.', 'error');
+        return;
+    }
+
+    importOwner = KVStore.user?.id;
+    importRequestId = null;
+    importBranch = branch;
+    importCopiedFrom = imp.code;
+
+    const select = document.getElementById('import-branch');
+    select.innerHTML =
+        renderHTML`<option value="">Chọn kho nhận…</option>` +
+        branches.map((b) => renderHTML`<option value="${b}">${b}</option>`).join('');
+    select.value = branch;
+
+    const bySupplierId = imp.supplierId
+        ? (KVStore.data.suppliers || []).find((s) => s.id === imp.supplierId)
+        : null;
+    const supplierCode = bySupplierId?.code || imp.nccCode || '';
+    document.getElementById('import-supplier-search').value = '';
+    populateImportSuppliers(supplierCode);
+    document.getElementById('import-ncc-select').value = supplierCode;
+
+    // Không tự điền lại số tiền đã trả của phiếu cũ: bắt buộc xác nhận lại thanh toán
+    // cho phiếu mới để tránh ghi kép phiếu chi Sổ quỹ.
+    document.getElementById('import-payment-state').value = 'unpaid';
+    document.getElementById('import-payment-method').value = 'bank';
+    document.getElementById('import-paid-input').value = '0';
+    document.getElementById('import-note').value = imp.note || '';
+
+    currentImportItems = (imp.items || []).map((it) => ({
+        code: it.code,
+        name: it.name || it.code,
+        qty: Number(it.qty) || 0,
+        price: Number(it.price) || 0,
+        total: (Number(it.qty) || 0) * (Number(it.price) || 0),
+        hasImei: Boolean(it.hasImei || (Array.isArray(it.imeis) && it.imeis.length > 0)),
+        imeis: Array.isArray(it.imeis) ? [...it.imeis] : [],
+        imeiDetails:
+            it.imeiDetails && typeof it.imeiDetails === 'object' && !Array.isArray(it.imeiDetails)
+                ? JSON.parse(JSON.stringify(it.imeiDetails))
+                : {},
+        images: Array.isArray(it.images) ? [...it.images] : [],
+        videoUrl: it.videoUrl || '',
+        condition: it.condition || 'new',
+        conditionDetail: it.conditionDetail || ''
+    }));
+
+    document.getElementById('import-detail-modal')?.classList.add('hidden');
+    clearImportSearchInput();
+    renderImportItemsTable();
+    document.getElementById('create-import-modal').classList.remove('hidden');
+    setImportSaving(false);
+    importStatus(
+        `Đã sao chép phiếu ${imp.code}. Kiểm tra hàng/IMEI/giá và xác nhận lại thanh toán trước khi hoàn thành.`
+    );
+    setTimeout(() => document.getElementById('import-modal-search-input')?.focus(), 100);
+}
+
 let currentImportItems = [];
 
 let importSaving = false;
@@ -11301,6 +11606,7 @@ let importOwner = null;
 let importBranch = '';
 let importMatches = [];
 let importMatchIndex = -1;
+let importCopiedFrom = '';
 function getImportBranch() {
     return document.getElementById('import-branch')?.value || '';
 }
@@ -11311,29 +11617,35 @@ function importStatus(message, target) {
         target.scrollIntoView?.({ block: 'nearest' });
     }
 }
-function closeCreateImport() {
+async function closeCreateImport() {
     if (importSaving || importUploads) return;
-    if (
-        (currentImportItems.length || document.getElementById('import-note').value) &&
-        !confirm(
-            'Đóng phiếu chưa hoàn thành? Nội dung chỉ được giữ trong phiên này, tải lại trang sẽ mất.'
-        )
-    )
-        return;
+    if (currentImportItems.length || document.getElementById('import-note').value) {
+        const discard = await askAction({
+            title: 'Đóng phiếu nhập chưa hoàn thành?',
+            message:
+                'Nội dung phiếu chỉ được giữ trong phiên làm việc này. Tải lại trang hoặc đóng phiếu sẽ làm mất các dòng đang soạn.',
+            confirmText: 'Đóng phiếu'
+        });
+        if (!discard) return;
+    }
     document.getElementById('create-import-modal').classList.add('hidden');
 }
-function changeImportBranch() {
+async function changeImportBranch() {
     if (importSaving || importRequestId || importUploads) {
         document.getElementById('import-branch').value = importBranch;
         return;
     }
     const select = document.getElementById('import-branch');
-    if (
-        currentImportItems.length &&
-        !confirm('Đổi kho nhận sẽ xóa danh sách hàng đang soạn. Tiếp tục?')
-    ) {
-        select.value = importBranch;
-        return;
+    if (currentImportItems.length) {
+        const confirmed = await askAction({
+            title: 'Đổi kho nhận hàng?',
+            message: 'Danh sách hàng đang soạn sẽ bị xóa khi đổi kho nhận. Bạn có muốn tiếp tục?',
+            confirmText: 'Đổi kho nhận'
+        });
+        if (!confirmed) {
+            select.value = importBranch;
+            return;
+        }
     }
     importBranch = select.value;
     currentImportItems = [];
@@ -11355,6 +11667,7 @@ function openCreateImportModal() {
     if (!resume) {
         currentImportItems = [];
         importBranch = branches.includes(getCurrentBranch()) ? getCurrentBranch() : '';
+        importCopiedFrom = '';
         document.getElementById('import-supplier-search').value = '';
         populateImportSuppliers();
         document.getElementById('import-payment-state').value = 'unpaid';
@@ -12279,6 +12592,7 @@ function setImportSaving(saving) {
 function finishImport(receipt) {
     currentImportItems = [];
     importRequestId = null;
+    importCopiedFrom = '';
     document.getElementById('import-note').value = '';
     document.getElementById('create-import-modal').classList.add('hidden');
     refreshCurrentView();
@@ -12362,7 +12676,8 @@ async function saveNewImport() {
             items,
             paid,
             paymentMethod: document.getElementById('import-payment-method').value,
-            note: document.getElementById('import-note').value
+            note: document.getElementById('import-note').value,
+            copiedFrom: importCopiedFrom
         });
         finishImport(receipt);
     } catch (error) {
@@ -15669,7 +15984,10 @@ async function saveVtpConfig(e) {
             password: document.getElementById('vtp-password').value,
             webhookSecret: document.getElementById('vtp-webhook-secret').value
         };
-        await KVStore.request('/api/vtp/config', { method: 'POST', body: input });
+        await KVStore.request('/api/vtp/config', {
+            method: 'POST',
+            body: JSON.stringify(input)
+        });
         status.textContent = 'Đã lưu cấu hình Viettel Post.';
         showToast('Đã lưu kết nối Viettel Post.', 'success');
         document.getElementById('vtp-password').value = '';

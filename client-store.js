@@ -383,12 +383,17 @@ const KVStore = {
             );
             checkout.setAttribute('aria-busy', String(working));
             const label = checkout.querySelector('span');
-            if (label)
+            if (label) {
+                const baseLabel =
+                    typeof state !== 'undefined' && state.posMode === 'delivery'
+                        ? 'XUẤT ĐƠN GIAO'
+                        : 'THANH TOÁN';
                 label.textContent = this._sending
                     ? 'ĐANG LƯU…'
                     : pending
                       ? 'CHỜ XÁC NHẬN'
-                      : 'THANH TOÁN';
+                      : baseLabel;
+            }
         }
     },
     showRecovery() {

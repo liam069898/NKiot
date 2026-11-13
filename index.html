@@ -269,16 +269,61 @@
                 border-bottom: 1px solid rgba(255, 255, 255, 0.18) !important;
             }
             .glass-btn-primary {
-                background: #0066cc !important;
+                background: #0066cc;
                 border-radius: var(--ios-r-control) !important;
                 color: #ffffff !important;
                 font-weight: 600 !important;
                 border: none !important;
                 box-shadow: none !important;
-                transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1) !important;
+                cursor: pointer;
+                transition:
+                    transform 0.15s cubic-bezier(0.2, 0, 0, 1),
+                    background-color 0.15s ease !important;
             }
-            .glass-btn-primary:active {
+            .glass-btn-primary:hover:not(:disabled) {
+                background: #0052a3;
+            }
+            .glass-btn-primary:active:not(:disabled) {
                 transform: scale(0.97) !important;
+            }
+            .glass-btn-primary:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+            /* Nút thanh toán POS giữ màu xanh lá hành động chính, ưu tiên cao
+               hơn .glass-btn-primary để không bị đè màu xanh dương. */
+            #pos-checkout-btn {
+                background: #1e7b4f !important;
+            }
+            #pos-checkout-btn:hover:not(:disabled) {
+                background: #16653f !important;
+            }
+            /* Nút "Bán hàng" trên thanh điều hướng: nền trắng, phản hồi hover rõ. */
+            #pos-nav-btn {
+                background: #ffffff !important;
+                color: #004d99 !important;
+                border: 1px solid rgba(255, 255, 255, 0.9) !important;
+                box-shadow: none !important;
+            }
+            #pos-nav-btn:hover {
+                background: #e8f1fb !important;
+            }
+            #pos-nav-btn:active {
+                transform: scale(0.97);
+            }
+            /* Biến thể màu cho nút nghiệp vụ thu/chi. Cần selector riêng vì
+               .glass-btn-primary nạp sau tailwind.css sẽ đè các lớp bg-* của Tailwind. */
+            .glass-btn-primary.is-income {
+                background: #047857 !important;
+            }
+            .glass-btn-primary.is-income:hover:not(:disabled) {
+                background: #036548 !important;
+            }
+            .glass-btn-primary.is-expense {
+                background: #dc2626 !important;
+            }
+            .glass-btn-primary.is-expense:hover:not(:disabled) {
+                background: #b91c1c !important;
             }
             .glass-btn-secondary {
                 background: rgba(255, 255, 255, 0.95) !important;
@@ -293,8 +338,25 @@
                     transform 0.15s cubic-bezier(0.2, 0, 0, 1),
                     background-color 0.15s ease !important;
             }
-            .glass-btn-secondary:active {
+            .glass-btn-secondary:hover:not(:disabled) {
+                background: #f1f5f9 !important;
+                border-color: #94a3b8 !important;
+                color: #0f172a !important;
+            }
+            .glass-btn-secondary:active:not(:disabled) {
                 transform: scale(0.97) !important;
+            }
+            .glass-btn-secondary:disabled {
+                opacity: 0.55;
+                cursor: not-allowed;
+            }
+            /* Vòng focus nhìn thấy rõ cho toàn bộ nút hành động (WCAG 2.4.7). */
+            .glass-btn-primary:focus-visible,
+            .glass-btn-secondary:focus-visible,
+            #pos-nav-btn:focus-visible,
+            #pos-checkout-btn:focus-visible {
+                outline: 2px solid #0f172a;
+                outline-offset: 2px;
             }
 
             .kv-checkbox {
@@ -1458,7 +1520,7 @@
                             <span
                                 id="top-branch-name"
                                 class="max-w-[75px] sm:max-w-[140px] truncate"
-                                >Kalo HCM</span
+                                >—</span
                             >
                             <span
                                 id="top-branch-lock-icon"
@@ -1572,7 +1634,7 @@
                                 <span
                                     id="header-user-name"
                                     class="font-bold text-[11.5px] text-gray-800"
-                                    >Trần Văn Nhất</span
+                                    >—</span
                                 >
                                 <span
                                     id="header-user-role"
@@ -1606,7 +1668,7 @@
                                         id="dropdown-user-name"
                                         class="font-bold text-[13px] text-gray-900 truncate"
                                     >
-                                        Trần Văn Nhất
+                                        —
                                     </div>
                                     <div
                                         id="dropdown-user-role"
@@ -1618,7 +1680,7 @@
                                         id="dropdown-user-branch"
                                         class="text-[11.5px] text-gray-500 font-medium"
                                     >
-                                        Chi nhánh: Kalo HCM
+                                        Chi nhánh: —
                                     </div>
                                 </div>
                             </div>
@@ -2033,18 +2095,11 @@
                         id="pos-nav-btn"
                         type="button"
                         onclick="openCounterPos()"
-                        style="
-                            background: #ffffff !important;
-                            color: #004d99 !important;
-                            border: 1px solid rgba(255, 255, 255, 0.9) !important;
-                            box-shadow: none !important;
-                        "
                         class="hover:bg-slate-50 font-bold px-2 sm:px-3 h-7.5 rounded-xl inline-flex items-center space-x-1 sm:space-x-1.5 transition text-[11.5px] sm:text-[12.5px] whitespace-nowrap flex-shrink-0"
                         title="Bán hàng"
                     >
                         <svg
                             class="w-3.5 h-3.5"
-                            style="color: #004d99 !important"
                             fill="currentColor"
                             viewBox="0 0 20 20"
                             aria-hidden="true"
@@ -2053,10 +2108,7 @@
                                 d="M3 1a1 1 0 000 2h1.22l.305 1.222a.997.997 0 00.01.042l1.358 5.43-.893.892C3.74 11.846 4.632 14 6.414 14H15a1 1 0 000-2H6.414l1-1H14a1 1 0 00.894-.553l3-6A1 1 0 0017 3H6.28l-.31-1.243A1 1 0 005 1H3zM16 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM6.5 18a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"
                             />
                         </svg>
-                        <span
-                            style="color: #004d99 !important; font-weight: 700 !important"
-                            >Bán hàng</span
-                        >
+                        <span>Bán hàng</span>
                     </button>
                 </div>
             </nav>
@@ -3458,6 +3510,7 @@
                     <div class="flex items-center space-x-2 self-end sm:self-auto flex-shrink-0">
                         <select
                             id="import-status-filter"
+                            aria-label="Lọc phiếu nhập theo trạng thái"
                             onchange="renderImports()"
                             class="bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 px-3 text-[12px] text-gray-700 font-medium focus:outline-none focus:border-[#0066cc] shadow-xs"
                         >
@@ -3468,6 +3521,7 @@
                         </select>
                         <select
                             id="import-date-filter"
+                            aria-label="Lọc phiếu nhập theo thời gian"
                             onchange="renderImports()"
                             class="bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 px-3 text-[12px] text-gray-700 font-medium focus:outline-none focus:border-[#0066cc] shadow-xs"
                         >
@@ -3987,7 +4041,7 @@
                     >
                         <button
                             onclick="openCreateReceiptModal()"
-                            class="glass-btn-primary font-semibold px-3 sm:px-3.5 py-1.5 rounded-xl text-white flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-[12.5px] sm:text-[13px]"
+                            class="glass-btn-primary is-income font-semibold px-3 sm:px-3.5 py-1.5 rounded-xl text-white flex items-center space-x-1.5 text-[12.5px] sm:text-[13px]"
                         >
                             <svg
                                 class="w-4 h-4"
@@ -4006,7 +4060,7 @@
                         </button>
                         <button
                             onclick="openCreatePaymentModal()"
-                            class="glass-btn-primary font-semibold px-3 sm:px-3.5 py-1.5 rounded-xl text-white flex items-center space-x-1.5 bg-red-600 hover:bg-red-700 text-[12.5px] sm:text-[13px]"
+                            class="glass-btn-primary is-expense font-semibold px-3 sm:px-3.5 py-1.5 rounded-xl text-white flex items-center space-x-1.5 text-[12.5px] sm:text-[13px]"
                         >
                             <svg
                                 class="w-4 h-4"
@@ -4299,7 +4353,7 @@
                             <div class="text-[11.5px] text-gray-500 font-medium">
                                 Chi nhánh:
                                 <span id="rep-branch-name" class="font-bold text-[#0066cc]"
-                                    >Kalo HCM</span
+                                    >—</span
                                 >
                                 <span id="rep-date-summary" class="ml-1 text-gray-400 font-normal"
                                     >| Tháng này</span
@@ -4813,7 +4867,7 @@
                         class="font-medium text-[12px] hidden md:inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-xl bg-white/10 text-white/95 border border-white/20"
                     >
                         <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        <span id="pos-header-user-name">Trần Văn Nhất</span>
+                        <span id="pos-header-user-name">—</span>
                     </span>
 
                     <!-- Subdued Management Button (Tông màu hơi chìm) -->
@@ -4988,7 +5042,7 @@
                                     class="font-bold text-gray-800 inline-flex items-center space-x-1.5"
                                 >
                                     <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                    <span id="pos-cashier-name">Trần Văn Nhất</span>
+                                    <span id="pos-cashier-name">—</span>
                                 </span>
                                 <div class="relative">
                                     <select
@@ -5343,6 +5397,8 @@
                                         <input
                                             id="pos-multi-pay-transfer"
                                             type="text"
+                                            inputmode="numeric"
+                                            aria-label="Số tiền khách chuyển khoản"
                                             oninput="
                                                 handleMultiPaymentInput('transfer', this.value)
                                             "
@@ -5354,6 +5410,7 @@
                                             onclick="clearMultiPayment('transfer')"
                                             class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
                                             title="Xóa"
+                                            aria-label="Xóa số tiền chuyển khoản"
                                         >
                                             <svg
                                                 class="w-4 h-4"
@@ -5390,6 +5447,8 @@
                                         <input
                                             id="pos-multi-pay-cash"
                                             type="text"
+                                            inputmode="numeric"
+                                            aria-label="Số tiền khách trả bằng tiền mặt"
                                             oninput="handleMultiPaymentInput('cash', this.value)"
                                             placeholder="0"
                                             class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-emerald-600"
@@ -5399,6 +5458,7 @@
                                             onclick="clearMultiPayment('cash')"
                                             class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
                                             title="Xóa"
+                                            aria-label="Xóa số tiền mặt"
                                         >
                                             <svg
                                                 class="w-4 h-4"
@@ -5434,6 +5494,8 @@
                                         <input
                                             id="pos-multi-pay-card"
                                             type="text"
+                                            inputmode="numeric"
+                                            aria-label="Số tiền khách quẹt thẻ"
                                             oninput="handleMultiPaymentInput('card', this.value)"
                                             placeholder="0"
                                             class="w-28 text-right bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[12px] focus:outline-none focus:border-[#0066cc] font-semibold tabular-nums text-slate-700"
@@ -5443,6 +5505,7 @@
                                             onclick="clearMultiPayment('card')"
                                             class="w-5 h-5 rounded-md flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-gray-100 text-xs font-bold transition"
                                             title="Xóa"
+                                            aria-label="Xóa số tiền quẹt thẻ"
                                         >
                                             <svg
                                                 class="w-4 h-4"
@@ -5574,7 +5637,7 @@
                                 id="pos-checkout-btn"
                                 type="button"
                                 onclick="checkoutPos()"
-                                class="flex-1 glass-btn-primary font-bold text-[15px] h-[46px] rounded-xl transition tracking-wide text-white inline-flex items-center justify-center space-x-1.5 bg-[#1e7b4f] hover:bg-[#16653f]"
+                                class="flex-1 glass-btn-primary font-bold text-[15px] h-[46px] rounded-xl transition tracking-wide text-white inline-flex items-center justify-center space-x-1.5"
                             >
                                 <svg
                                     class="w-4 h-4"
@@ -5770,22 +5833,16 @@
                     <div
                         id="receipt-store-name"
                         class="font-bold text-[15px] uppercase whitespace-pre-line"
-                    >
-                        Kalo HCM
-                    </div>
+                    ></div>
                     <div
                         id="receipt-slogan"
                         class="text-[11px] text-gray-500 italic mb-0.5 whitespace-pre-line hidden"
                     ></div>
-                    <div id="receipt-address" class="text-[11px] text-gray-600 whitespace-pre-line">
-                        103 Võ Văn Tần, Q.3, TP.HCM
-                    </div>
+                    <div id="receipt-address" class="text-[11px] text-gray-600 whitespace-pre-line"></div>
                     <div
                         id="receipt-phone"
                         class="text-[11px] text-gray-600 mb-1 whitespace-pre-line"
-                    >
-                        Hotline: 1900 6522
-                    </div>
+                    ></div>
                     <div
                         id="receipt-tax-code"
                         class="text-[11.5px] text-gray-600 mb-1 whitespace-pre-line hidden"
@@ -7977,6 +8034,11 @@
                     <div class="col-span-2">
                         Ghi chú: <span id="imp-detail-note" class="text-gray-600"></span>
                     </div>
+                    <div id="imp-detail-copied-row" class="col-span-2 hidden">
+                        <span class="text-[#0066cc] font-semibold">
+                            Sao chép từ: <span id="imp-detail-copied-from"></span>
+                        </span>
+                    </div>
                 </div>
                 <div
                     class="rounded-xl overflow-hidden border border-gray-200/60 mb-3 max-h-48 overflow-y-auto"
@@ -8026,6 +8088,13 @@
                             class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium text-[13px] transition flex items-center space-x-1.5"
                         >
                             <span>Hủy phiếu</span>
+                        </button>
+                        <button
+                            id="imp-detail-copy-btn"
+                            type="button"
+                            class="hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium text-[13px] transition flex items-center space-x-1.5"
+                        >
+                            <span>📋 Sao chép thành phiếu mới</span>
                         </button>
                         <button
                             onclick="
@@ -8395,6 +8464,11 @@
                     <div class="col-span-2">
                         Ghi chú: <span id="inv-detail-note" class="text-gray-700"></span>
                     </div>
+                    <div id="inv-detail-copied-row" class="col-span-2 hidden">
+                        <span class="text-[#0066cc] font-semibold">
+                            Sao chép từ: <span id="inv-detail-copied-from"></span>
+                        </span>
+                    </div>
                 </div>
                 <div class="rounded-xl overflow-hidden border border-gray-200/60 mb-3">
                     <table class="w-full text-left text-[12.5px] border-collapse">
@@ -8587,15 +8661,9 @@
                     id="printable-return-receipt"
                     class="overflow-y-auto flex-1 text-center font-mono text-[12px] text-gray-800 p-2"
                 >
-                    <div id="ret-rec-store-name" class="font-bold text-[15px] uppercase">
-                        Kalo HCM
-                    </div>
-                    <div id="ret-rec-address" class="text-[11px] text-gray-600">
-                        103 Võ Văn Tần, Q.3, TP.HCM
-                    </div>
-                    <div id="ret-rec-phone" class="text-[11px] text-gray-600 mb-2">
-                        Hotline: 1900 6522
-                    </div>
+                    <div id="ret-rec-store-name" class="font-bold text-[15px] uppercase"></div>
+                    <div id="ret-rec-address" class="text-[11px] text-gray-600"></div>
+                    <div id="ret-rec-phone" class="text-[11px] text-gray-600 mb-2"></div>
                     <div class="border-b border-dashed border-gray-400 my-2"></div>
                     <div class="font-bold text-[14px] uppercase mb-1 text-orange-700">
                         PHIẾU TRẢ HÀNG
@@ -10180,7 +10248,7 @@
                         </button>
                         <button
                             type="submit"
-                            class="glass-btn-primary px-5 py-2 text-white rounded-xl font-bold text-[13px] bg-emerald-600 hover:bg-emerald-700 flex items-center space-x-1.5 transition"
+                            class="glass-btn-primary is-income px-5 py-2 text-white rounded-xl font-bold text-[13px] flex items-center space-x-1.5 transition"
                         >
                             <span>Lập phiếu thu</span>
                         </button>
@@ -10358,7 +10426,7 @@
                         </button>
                         <button
                             type="submit"
-                            class="glass-btn-primary px-5 py-2 text-white rounded-xl font-bold text-[13px] bg-red-600 hover:bg-red-700 flex items-center space-x-1.5 transition"
+                            class="glass-btn-primary is-expense px-5 py-2 text-white rounded-xl font-bold text-[13px] flex items-center space-x-1.5 transition"
                         >
                             <span>Lập phiếu chi</span>
                         </button>
@@ -10803,6 +10871,8 @@
                 <!-- Error Banner -->
                 <div
                     id="login-error-msg"
+                    role="alert"
+                    aria-live="assertive"
                     class="hidden mb-3.5 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-[12px] flex items-center space-x-2"
                 >
                     <svg
@@ -11449,7 +11519,7 @@
                         </button>
                         <button
                             type="submit"
-                            class="glass-btn-primary px-6 py-2 text-white rounded-xl font-bold bg-[#0066cc] hover:bg-[#0055b3]"
+                            class="glass-btn-primary px-6 py-2 text-white rounded-xl font-bold"
                         >
                             <span>Lưu nhân viên</span>
                         </button>

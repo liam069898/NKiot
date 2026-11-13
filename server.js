@@ -304,19 +304,63 @@ async function handler(req, res) {
         if (url.pathname.startsWith('/api/')) {
             // Webhook Viettel Post: không cần phiên đăng nhập, xác thực bằng secret riêng.
             if (url.pathname === '/api/vtp/webhook' && req.method === 'POST') {
-                const secret = process.env.NKIOT_VTP_WEBHOOK_SECRET || '';
+                // Viettel Post yêu cầu luôn nhận HTTP 200; nút "Kiểm tra kết nối" của hãng có thể
+                // gửi body rỗng/không phải JSON, nên không để lỗi đọc body thành 400/415.
+                let input;
+                try {
+                    input = await body(req);
+                } catch {
+                    return json(res, 200, {
+                        success: true,
+                        recorded: false,
+                        reason: 'no_payload'
+                    });
+                }
+                // Secret có thể lưu qua giao diện (đã mã hóa trong app_meta) hoặc biến môi trường.
+                let secret = '';
+                try {
+                    const vtpConfig = require('./viettelpost-config');
+                    secret = vtpConfig.getResolvedConfig().webhookSecret || '';
+                } catch {}
+                if (!secret) secret = process.env.NKIOT_VTP_WEBHOOK_SECRET || '';
                 if (!secret)
-                    return json(res, 404, { success: false, error: 'Không cấu hình webhook.' });
-                const sent = Buffer.from(
-                    String(req.headers.authorization || '').replace(/^Bearer\s+/i, '')
-                );
-                const expected = Buffer.from(secret);
-                if (sent.length !== expected.length || !crypto.timingSafeEqual(sent, expected))
-                    return json(res, 401, { success: false, error: 'Webhook không hợp lệ.' });
-                const input = await body(req);
+                    return json(res, 200, {
+                        success: true,
+                        recorded: false,
+                        reason: 'webhook_not_configured'
+                    });
+                // Theo tài liệu Viettel Post, secret do cửa hàng cung cấp được gửi trong trường
+                // TOKEN của body; Authorization là token JWT của hãng. Vẫn chấp nhận header
+                // Authorization cho môi trường tự đối soát nội bộ.
+                const sent =
+                    (typeof input?.TOKEN === 'string' && input.TOKEN) ||
+                    String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+                const sentBuf = Buffer.from(String(sent));
+                const expectedBuf = Buffer.from(secret);
+                if (
+                    sentBuf.length !== expectedBuf.length ||
+                    !crypto.timingSafeEqual(sentBuf, expectedBuf)
+                ) {
+                    // Trả 200 để hãng không retry; ghi rõ lý do không hợp lệ.
+                    return json(res, 200, {
+                        success: true,
+                        recorded: false,
+                        reason: 'invalid_secret'
+                    });
+                }
                 const delivery = require('./delivery-service');
-                const outcome = delivery.handleWebhook(input);
-                // Luôn trả 200 để Viettel Post không retry với sự kiện trùng/không rõ.
+                let outcome;
+                try {
+                    outcome = delivery.handleWebhook(input);
+                } catch (error) {
+                    // Luôn trả 200 để Viettel Post không retry với sự kiện lỗi/trùng/không rõ.
+                    console.error('Webhook Viettel Post lỗi:', error.message);
+                    return json(res, 200, {
+                        success: true,
+                        recorded: false,
+                        reason: 'bad_payload'
+                    });
+                }
                 return json(res, 200, { success: true, ...outcome });
             }
             if (req.headers.origin) {

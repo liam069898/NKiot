@@ -1524,6 +1524,15 @@ function deleteExpiredSessions(now = Date.now()) {
     } catch {}
 }
 
+// Tăng số hiệu phiên bản dữ liệu lên 1. Dùng cho các ghi ngoài transaction POS
+// (worker vận đơn / webhook) để client đang mở biết có thay đổi và tải lại delta.
+// snapshotKey được đặt lại để readSnapshot() build lại view mới ở lần đọc kế tiếp.
+function bumpRevision() {
+    const d = getDb();
+    d.prepare("UPDATE app_meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'").run();
+    snapshotKey = '';
+}
+
 module.exports = {
     assertReadableRecords,
     ENTITY_TABLES,
@@ -1531,6 +1540,7 @@ module.exports = {
     closeDb,
     initDb,
     getAllData,
+    bumpRevision,
     readSnapshot,
     readForWrite,
     readSaleForWrite,

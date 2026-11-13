@@ -53,12 +53,22 @@ before(async () => {
                     message: 'OK',
                     data: { services: [] }
                 });
-            if (req.url === '/v2/order/createOrder')
+            if (req.url === '/v2/order/createOrder') {
+                if (req.headers.token === 'invalid-token')
+                    return respond(res, { status: 200, error: true, message: 'Token invalid' });
                 return respond(res, {
                     status: 200,
                     error: false,
                     message: 'OK',
                     data: { ORDER_NUMBER: 'VP123', MONEY_COLLECTION: 1500000 }
+                });
+            }
+            if (req.url === '/v2/order/createOrderNlp')
+                return respond(res, {
+                    status: 200,
+                    error: false,
+                    message: 'OK',
+                    data: { ORDER_NUMBER: 'VPNLP1' }
                 });
             if (req.url === '/v2/order/printing-code')
                 return respond(res, {
@@ -87,11 +97,12 @@ after(async () => {
 
 test('viettelpost client uses Token header and the documented envelope', async () => {
     const client = require('../viettelpost-client');
+    // Không có token cấu sẵn: client phải tự Login + ownerconnect để lấy token dài hạn.
     const out = await client.createOrder({ ORDER_NUMBER: 'REF1', CHECK_UNIQUE: true });
     assert.equal(out.data.ORDER_NUMBER, 'VP123');
     const call = requests.find((r) => r.url === '/v2/order/createOrder');
     assert.equal(call.headers['content-type'], 'application/json;charset=UTF-8');
-    assert.equal(call.headers.token, undefined, 'login token not yet set');
+    assert.equal(call.headers.token, 'long-token', 'phải gọi kèm token dài hạn');
     assert.equal(call.body.CHECK_UNIQUE, true);
 });
 
@@ -118,4 +129,35 @@ test('viettelpost login and ownerconnect reuse username/password', async () => {
     assert.equal(long.data.token, 'long-token');
     const connect = requests.find((r) => r.url === '/v2/user/ownerconnect');
     assert.equal(connect.headers.token, 'short-token');
+});
+
+test('client bytes() trims UTF-8 text without splitting multibyte characters', () => {
+    const client = require('../viettelpost-client');
+    const short = client.bytes('Địa chỉ tiếng Việt có dấu rất dài', 20);
+    assert.ok(Buffer.byteLength(short, 'utf8') <= 20);
+    // Không cắt giữa chừng một ký tự nhiều byte (trả về chuỗi UTF-8 hợp lệ).
+    assert.ok(!short.includes('\ufffd'));
+    assert.equal(client.bytes('', 150), '');
+    assert.equal(client.bytes(undefined, 150), '');
+    // Chuỗi ngắn hơn giới hạn giữ nguyên (đã trim khoảng trắng).
+    assert.equal(client.bytes('  Abc  ', 150), 'Abc');
+});
+
+test('createOrder auto-refreshes an invalid token and retries once', async () => {
+    const client = require('../viettelpost-client');
+    const previous = process.env.NKIOT_VTP_TOKEN;
+    process.env.NKIOT_VTP_TOKEN = 'invalid-token';
+    delete require.cache[require.resolve('../viettelpost-client')];
+    const freshClient = require('../viettelpost-client');
+    const beforeLogin = requests.filter((r) => r.url === '/v2/user/Login').length;
+    const out = await freshClient.createOrder({ ORDER_NUMBER: 'REF-RETRY' });
+    assert.equal(out.data.ORDER_NUMBER, 'VP123');
+    // Lần gọi đầu thất bại vì token hỏng, sau khi làm mới phải gọi lại thành công.
+    const calls = requests.filter((r) => r.url === '/v2/order/createOrder');
+    assert.ok(calls.length >= 2, 'phải thử lại sau khi làm mới token');
+    const last = calls[calls.length - 1];
+    assert.equal(last.headers.token, 'long-token');
+    assert.ok(requests.filter((r) => r.url === '/v2/user/Login').length > beforeLogin);
+    process.env.NKIOT_VTP_TOKEN = previous;
+    delete require.cache[require.resolve('../viettelpost-client')];
 });

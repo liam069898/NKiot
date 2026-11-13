@@ -326,7 +326,9 @@ function sale(data, user, input, options = {}) {
         paymentMethod: invoicePaymentMethod,
         note: input.note || '',
         cod,
-        channel
+        channel,
+        copiedFrom: input.copiedFrom || '',
+        copiedBy: input.copiedFrom ? user.name || '' : ''
     };
     data.invoices.unshift(invoice);
     if (!retail) {
@@ -641,7 +643,9 @@ function importGoods(data, user, input) {
         note: input.note || '',
         status: 'imported',
         creator: user.name,
-        branch: br
+        branch: br,
+        copiedFrom: input.copiedFrom || '',
+        copiedBy: input.copiedFrom ? user.name || '' : ''
     };
     supplier.debt = amount(supplier.debt + total - paid);
     supplier.totalBought = amount(supplier.totalBought + total);
@@ -1485,13 +1489,17 @@ function deliverySale(data, user, input) {
     return { invoice: inv, delivery };
 }
 
-function cancelDeliveryOrder(data, user, input) {
+function cancelDeliveryOrder(data, user, input, internal = false) {
     requirePermission(user, 'shipping');
     const id = text(input.id, 200);
     const order = (data.delivery_orders || []).find((o) => o.id === id || o.code === id);
     if (!order) fail('Không tìm thấy đơn giao hàng.');
     branch(data, user, order.branch);
     if (order.status === 'cancelled') fail('Đơn giao hàng đã hủy.', 409);
+    // Đơn Viettel Post đã gửi sang hãng phải hủy qua hãng trước; chỉ webhook/đối soát nội bộ
+    // (internal) mới được hủy trực tiếp để đảo kho/tiền khi hãng xác nhận đã hủy.
+    if (!internal && order.carrierType === 'viettelpost' && order.status === 'submitted')
+        fail('Đơn đã gửi sang Viettel Post. Hãy hủy qua hãng vận chuyển trước.', 409);
     if (!['confirmed', 'submitted'].includes(order.status))
         fail('Đơn đã bàn giao/đang vận chuyển; dùng nghiệp vụ hoàn hàng.', 409);
 
@@ -1570,10 +1578,18 @@ function updateDeliveryOrderStatus(data, user, input) {
         fail('Đơn giao hàng đã kết thúc, không thể chuyển trạng thái.', 409);
 
     const nextStatus = text(input.status, 40);
-    if (!['handed_over', 'delivered', 'returning'].includes(nextStatus))
-        fail('Trạng thái vận đơn cập nhật không hợp lệ.');
-    if (order.status === 'delivered' && nextStatus === 'handed_over')
-        fail('Đơn đã giao thành công, không thể lùi về đang giao.', 409);
+    // Máy trạng thái chặt: không cho nhảy bước, không cho lùi trạng thái cuối.
+    const allowedTransitions = {
+        confirmed: ['handed_over'],
+        submitted: ['handed_over'],
+        handed_over: ['delivered', 'returning'],
+        delivered: [],
+        returning: [],
+        returned: [],
+        cancelled: []
+    };
+    if (!(allowedTransitions[order.status] || []).includes(nextStatus))
+        fail(`Không thể chuyển đơn từ trạng thái hiện tại sang "${nextStatus}".`, 409);
 
     const now = new Date().toISOString();
     order.status = nextStatus;
@@ -1683,6 +1699,8 @@ function settleDeliveryCodOrder(data, user, input) {
     branch(data, user, order.branch);
     if (['cancelled', 'returned'].includes(order.status))
         fail('Không thể đối soát COD cho đơn đã hủy hoặc đã hoàn.', 409);
+    if (!['handed_over', 'delivered'].includes(order.status))
+        fail('Chỉ đối soát COD khi đơn đã bàn giao đi giao.', 409);
     if (order.codRequested <= 0) fail('Đơn giao hàng này không có tiền thu hộ COD.', 409);
 
     const codRec = (data.delivery_cod_records || []).find((c) => c.deliveryId === order.id);
@@ -1707,12 +1725,7 @@ function settleDeliveryCodOrder(data, user, input) {
     }
     order.codStatus = 'settled';
     order.codSettledAt = now;
-    if (
-        input.markDelivered !== false &&
-        ['confirmed', 'submitted', 'handed_over'].includes(order.status)
-    ) {
-        order.status = 'delivered';
-    }
+    if (order.status === 'handed_over') order.status = 'delivered';
     order.updatedAt = now;
 
     const inv = (data.invoices || []).find(
@@ -1988,5 +2001,7 @@ module.exports = {
     branchOf,
     recordActivity,
     syncSharedAvailability,
-    productHasHistory
+    productHasHistory,
+    cancelDeliveryOrder,
+    returnDeliveryOrder
 };

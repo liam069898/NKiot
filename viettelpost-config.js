@@ -47,13 +47,27 @@ function decrypt(value) {
 // Giá trị thật dùng khi gọi API (password/token đã giải mã).
 function getResolvedConfig() {
     const stored = getConfig();
+    const webhookSecret = stored.webhookSecret || process.env.NKIOT_VTP_WEBHOOK_SECRET || '';
     return {
         baseUrl: stored.baseUrl || process.env.NKIOT_VTP_BASE_URL || '',
         username: stored.username || process.env.NKIOT_VTP_USERNAME || '',
         password: stored.password ? decrypt(stored.password) : process.env.NKIOT_VTP_PASSWORD || '',
         token: stored.token ? decrypt(stored.token) : process.env.NKIOT_VTP_TOKEN || '',
-        webhookSecret: stored.webhookSecret || process.env.NKIOT_VTP_WEBHOOK_SECRET || ''
+        webhookSecret
     };
+}
+
+// Lưu token đã lấy từ Login/ownerconnect để tái sử dụng; token trong cấu hình đã mã hóa.
+// Chỉ gọi từ backend, không bao giờ gửi token về trình duyệt.
+function saveToken(token) {
+    if (typeof token !== 'string' || !token) return;
+    const next = { ...getConfig() };
+    next.token = encrypt(token.trim());
+    const d = db.getDb();
+    d.prepare('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)').run(
+        CFG_META,
+        JSON.stringify(next)
+    );
 }
 
 function getConfig() {
@@ -95,4 +109,4 @@ function saveConfig(input) {
     return publicStatus();
 }
 
-module.exports = { getConfig, getResolvedConfig, saveConfig, publicStatus };
+module.exports = { getConfig, getResolvedConfig, saveConfig, saveToken, publicStatus };

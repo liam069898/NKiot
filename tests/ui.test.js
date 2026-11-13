@@ -1249,6 +1249,68 @@ test('Import cancellation updates UI, hides cancel button, shows status banner a
     }
 });
 
+test('copy cancelled import and cancelled invoice prefill new receipt/POS cart', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // --- 1. Sao chép phiếu nhập đã hủy ---
+        w.eval(`
+            KVStore.data.imports = [{
+                id: 'PN_DUP', code: 'PN_DUP', branch: getCurrentBranch(), status: 'cancelled',
+                nccCode: 'S', nccName: 'Supplier', supplierId: 'S',
+                needPay: 60000, paid: 20000, paymentMethod: 'transfer',
+                note: 'Ghi chú nhập cũ',
+                items: [{
+                    code: 'SP_DUP', name: 'Sản phẩm nhập', qty: 2, price: 30000, hasImei: true,
+                    imeis: ['DUP-IMEI-1', 'DUP-IMEI-2'],
+                    imeiDetails: { 'DUP-IMEI-1': { images: ['/uploads/a.png'], condition: 'good' } },
+                    images: [], videoUrl: '', condition: 'new', conditionDetail: ''
+                }]
+            }];
+            KVStore.data.suppliers = [{ id: 'S', code: 'S', name: 'Supplier', phone: '', debt: 0, totalBought: 0 }];
+            KVStore.data.products = [{ id: 'SP_DUP', code: 'SP_DUP', name: 'Sản phẩm nhập', branch: getCurrentBranch(), costPrice: 25000, hasImei: true, imeis: [] }];
+            currentImportItems = [];
+        `);
+        w.copyCancelledImport('PN_DUP');
+        const importModal = w.document.getElementById('create-import-modal');
+        assert.ok(!importModal.classList.contains('hidden'), 'Import modal phải mở khi sao chép');
+        assert.equal(w.document.getElementById('import-ncc-select').value, 'S');
+        // Thanh toán không được tự điền lại từ phiếu cũ (tránh ghi kép phiếu chi).
+        assert.equal(w.document.getElementById('import-payment-state').value, 'unpaid');
+        assert.equal(w.document.getElementById('import-paid-input').value, '0');
+        assert.equal(w.document.getElementById('import-note').value, 'Ghi chú nhập cũ');
+        const copied = w.eval('currentImportItems[0]');
+        assert.equal(copied.code, 'SP_DUP');
+        assert.deepEqual(Array.from(copied.imeis), ['DUP-IMEI-1', 'DUP-IMEI-2']);
+        assert.equal(copied.imeiDetails['DUP-IMEI-1'].condition, 'good');
+        assert.equal(w.eval('importCopiedFrom'), 'PN_DUP');
+
+        // --- 2. Sao chép hóa đơn đã hủy sang POS ---
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'HD_DUP', code: 'HD_DUP', branch: getCurrentBranch(), status: 'cancelled',
+                channel: 'counter', cod: false, discount: 10000, note: 'Ghi chú bán cũ',
+                customerId: null, customer: 'Khách lẻ', phone: 'Tại quầy',
+                items: [{ code: 'SP_POS', name: 'Hàng bán', qty: 1, price: 90000, note: 'Gói quà' }]
+            }];
+            KVStore.data.products = [{ id: 'SP_POS', code: 'SP_POS', name: 'Hàng bán', branch: getCurrentBranch(), price: 90000, costPrice: 50000, stock: 5, hasImei: false, imeis: [], status: 'active' }];
+        `);
+        w.copyCancelledInvoice('HD_DUP');
+        assert.equal(w.eval('state.posMode'), 'counter');
+        const tab = w.eval('state.posTabs[state.activePosTab]');
+        assert.equal(tab.cart.length, 1);
+        assert.equal(tab.cart[0].code, 'SP_POS');
+        assert.equal(tab.cart[0].price, 90000);
+        assert.equal(tab.cart[0].note, 'Gói quà');
+        assert.equal(tab.discount, 10000);
+        assert.equal(tab.note, 'Ghi chú bán cũ');
+        assert.equal(tab.customerGiven, 0);
+        assert.equal(tab.copiedFrom, 'HD_DUP');
+    } finally {
+        dom.window.close();
+    }
+});
+
 test('Create import modal searches products, adds non-IMEI and IMEI items, and saves new import receipt', async () => {
     const dom = browser(),
         w = dom.window;
@@ -1838,29 +1900,43 @@ test('manual tender survives quantity, price, discount and removal changes inclu
         w.close();
     }
 });
-test('closing populated tabs asks first, pending tabs cannot close, and active tab identity stays stable', () => {
+test('closing populated tabs asks first, pending tabs cannot close, and active tab identity stays stable', async () => {
     const dom = browser(),
         w = dom.window;
     try {
+        const doc = w.document;
+        const dialog = doc.getElementById('action-dialog');
+        const dialogOpen = () => !dialog.classList.contains('hidden');
+        const cancelDialog = () => doc.getElementById('action-dialog-cancel').click();
+        const confirmDialog = () =>
+            doc.getElementById('action-dialog-form').dispatchEvent(new w.Event('submit'));
+
         w.addPosNewTab();
         w.eval('addPosCartItem(KVStore.data.products.find(p=>p.stock>0))');
         const event = { stopPropagation() {} };
-        let asked = 0;
-        w.confirm = () => {
-            asked++;
-            return false;
-        };
-        w.closePosTab(event, 1);
-        assert.equal(asked, 1);
+
+        // Hủy ở hộp xác nhận: giữ nguyên tab
+        const closing = w.closePosTab(event, 1);
+        assert.ok(dialogOpen(), 'Giỏ có hàng phải mở hộp xác nhận trước khi đóng tab');
+        cancelDialog();
+        assert.equal(await closing, undefined);
         assert.equal(w.eval('state.posTabs.length'), 2);
-        w.confirm = () => true;
+
+        // Tab đang chờ xác nhận server: chặn đóng, không hỏi xác nhận
         w.eval("state.posTabs[1].pendingRequestId='waiting'");
-        w.closePosTab(event, 1);
+        await w.closePosTab(event, 1);
+        assert.ok(!dialogOpen());
         assert.equal(w.eval('state.posTabs.length'), 2);
         w.eval('delete state.posTabs[1].pendingRequestId');
+
+        // Xác nhận đóng: tab bị xóa, tab đang chọn giữ nguyên danh tính
         w.addPosNewTab();
         const active = w.eval('state.posTabs[state.activePosTab].id');
-        w.closePosTab(event, 1);
+        const closingConfirmed = w.closePosTab(event, 1);
+        assert.ok(dialogOpen());
+        confirmDialog();
+        await closingConfirmed;
+        assert.ok(!dialogOpen());
         assert.equal(w.eval('state.posTabs[state.activePosTab].id'), active);
         w.addPosNewTab();
         assert.equal(w.eval('new Set(state.posTabs.map(t=>t.id)).size'), 3);
@@ -2181,7 +2257,7 @@ test('import workspace preserves partial payment, derives serial quantity and co
     }
 });
 
-test('import branch is explicit and ambiguous search requires a deliberate selection', () => {
+test('import branch is explicit and ambiguous search requires a deliberate selection', async () => {
     const dom = browser(),
         w = dom.window;
     try {
@@ -2201,9 +2277,13 @@ test('import branch is explicit and ambiguous search requires a deliberate selec
         w.handleImportSearchKeydown({ key: 'Enter', preventDefault() {} });
         assert.equal(w.eval('currentImportItems.length'), 1);
         const oldBranch = branch.value;
-        w.confirm = () => false;
+        // Đổi kho khi đang có hàng: phải hỏi xác nhận qua hộp thoại trong app.
         branch.selectedIndex = 2;
-        w.changeImportBranch();
+        const switching = w.changeImportBranch();
+        const dialog = w.document.getElementById('action-dialog');
+        assert.ok(!dialog.classList.contains('hidden'), 'Phải hỏi xác nhận trước khi đổi kho');
+        w.document.getElementById('action-dialog-cancel').click();
+        await switching;
         assert.equal(branch.value, oldBranch);
     } finally {
         w.close();
@@ -3435,30 +3515,28 @@ test('Phase 1 UX/UI: U1 POS viewport zoom, U2 Nav More on 320px & keyboard, U3 F
         assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'false');
         assert.ok(navMoreMenu.classList.contains('hidden'));
 
-        // U3: Form dirty protection
-        let confirmCalled = false;
-        let confirmReturnValue = false;
-        w.confirm = () => {
-            confirmCalled = true;
-            return confirmReturnValue;
-        };
+        // U3: Form dirty protection (hộp thoại xác nhận nội bộ, không dùng confirm())
+        const actionDialog = doc.getElementById('action-dialog');
+        const discardPromptOpen = () => !actionDialog.classList.contains('hidden');
+        const cancelDiscard = () => doc.getElementById('action-dialog-cancel').click();
+        const acceptDiscard = () =>
+            doc.getElementById('action-dialog-form').dispatchEvent(new w.Event('submit'));
 
-        // 1. Open customer modal and close immediately without editing -> No confirm prompt
-        confirmCalled = false;
+        // 1. Open customer modal and close immediately without editing -> No prompt
         w.openAddCustomerModal();
         const custModal = doc.getElementById('customer-modal');
         assert.ok(!custModal.classList.contains('hidden'));
-        w.closeModalWithCheck('customer-modal');
-        assert.ok(!confirmCalled, 'Clean modal should close without confirm prompt');
+        await w.closeModalWithCheck('customer-modal');
+        assert.ok(!discardPromptOpen(), 'Clean modal should close without confirm prompt');
         assert.ok(custModal.classList.contains('hidden'));
 
         // 2. Open customer modal, edit a field, attempt to close -> Prompts confirm
-        confirmCalled = false;
-        confirmReturnValue = false; // User selects "Tiếp tục chỉnh sửa"
         w.openAddCustomerModal();
         doc.getElementById('cust-name').value = 'Khách Hàng Mới Chưa Lưu';
-        w.closeModalWithCheck('customer-modal');
-        assert.ok(confirmCalled, 'Dirty modal must prompt confirm before discarding');
+        const closingDirty = w.closeModalWithCheck('customer-modal');
+        assert.ok(discardPromptOpen(), 'Dirty modal must prompt confirm before discarding');
+        cancelDiscard(); // User selects "Tiếp tục chỉnh sửa"
+        assert.equal(await closingDirty, false);
         assert.ok(
             !custModal.classList.contains('hidden'),
             'Modal must stay open if user declines discard'
@@ -3470,27 +3548,27 @@ test('Phase 1 UX/UI: U1 POS viewport zoom, U2 Nav More on 320px & keyboard, U3 F
         );
 
         // 3. User hits Escape on dirty modal -> Also prompts confirm
-        confirmCalled = false;
-        confirmReturnValue = false;
         w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        assert.ok(confirmCalled, 'Escape key on dirty modal must prompt confirm');
+        assert.ok(discardPromptOpen(), 'Escape key on dirty modal must prompt confirm');
+        cancelDiscard();
+        await new Promise((resolve) => setTimeout(resolve, 0));
         assert.ok(!custModal.classList.contains('hidden'));
 
         // 4. User accepts discard -> Modal closes
-        confirmCalled = false;
-        confirmReturnValue = true;
-        w.closeModalWithCheck('customer-modal');
-        assert.ok(confirmCalled);
+        const closingAccepted = w.closeModalWithCheck('customer-modal');
+        assert.ok(discardPromptOpen());
+        acceptDiscard();
+        assert.equal(await closingAccepted, true);
         assert.ok(custModal.classList.contains('hidden'));
 
         // 5. While submitting, modal cannot be closed
         w.openAddCustomerModal();
         w.setModalSubmitting('customer-modal', true);
-        const closed = w.closeModalWithCheck('customer-modal');
+        const closed = await w.closeModalWithCheck('customer-modal');
         assert.equal(closed, false, 'Modal cannot be closed while save is in flight');
         assert.ok(!custModal.classList.contains('hidden'));
         w.setModalSubmitting('customer-modal', false);
-        w.closeModalWithCheck('customer-modal', true); // Force close
+        await w.closeModalWithCheck('customer-modal', true); // Force close
         assert.ok(custModal.classList.contains('hidden'));
     } finally {
         w.close();

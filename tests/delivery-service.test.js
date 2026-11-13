@@ -79,6 +79,39 @@ test('handleWebhook ignores unknown shipment without throwing', () => {
     assert.equal(outcome.reason, 'unknown_shipment');
 });
 
+test('applyStatus maps Viettel Post codes correctly and never steps backwards', () => {
+    // 200 -> handed_over
+    assert.equal(delivery.applyStatus({ status: 'confirmed' }, 200).status, 'handed_over');
+    assert.equal(delivery.applyStatus({ status: 'submitted' }, 200).status, 'handed_over');
+    // 501 -> delivered (chỉ sau khi bàn giao/đã gửi hãng)
+    assert.equal(delivery.applyStatus({ status: 'handed_over' }, 501).status, 'delivered');
+    assert.equal(delivery.applyStatus({ status: 'confirmed' }, 501).status, 'confirmed');
+    // 504 -> returning (chuyển hoàn người gửi), không phải giao thành công
+    assert.equal(delivery.applyStatus({ status: 'handed_over' }, 504).status, 'returning');
+    // 505 chỉ là "yêu cầu chuyển hoàn", cửa hàng còn quyền chọn hoàn/phát tiếp: không tự đổi trạng thái
+    assert.equal(delivery.applyStatus({ status: 'handed_over' }, 505).status, 'handed_over');
+    // 503 -> không tự đổi trạng thái
+    assert.equal(delivery.applyStatus({ status: 'handed_over' }, 503).status, 'handed_over');
+    // 101/107/201 -> cancelled (chỉ trước bàn giao)
+    assert.equal(delivery.applyStatus({ status: 'confirmed' }, 101).status, 'cancelled');
+    assert.equal(delivery.applyStatus({ status: 'submitted' }, 107).status, 'cancelled');
+    // Không lùi trạng thái: đã giao thì sự kiện hủy/hoàn không ghi đè
+    assert.equal(delivery.applyStatus({ status: 'delivered' }, 101).status, 'delivered');
+    assert.equal(delivery.applyStatus({ status: 'delivered' }, 504).status, 'delivered');
+    assert.equal(delivery.applyStatus({ status: 'returning' }, 501).status, 'returning');
+});
+
+test('mapVtpStatus maps documented codes to internal statuses', () => {
+    assert.equal(delivery.mapVtpStatus(200), 'handed_over');
+    assert.equal(delivery.mapVtpStatus(501), 'delivered');
+    assert.equal(delivery.mapVtpStatus(504), 'returning');
+    // 505 = yêu cầu chuyển hoàn (chờ cửa hàng chọn), chưa phải "đang hoàn"
+    assert.equal(delivery.mapVtpStatus(505), null);
+    assert.equal(delivery.mapVtpStatus(503), null);
+    assert.equal(delivery.mapVtpStatus(107), 'cancelled');
+    assert.equal(delivery.mapVtpStatus(300), null);
+});
+
 test('processPendingTasks marks unknown on client failure and done on success', async () => {
     const id = seedDelivery('confirmed');
     db.getDb()
@@ -98,9 +131,10 @@ test('processPendingTasks marks unknown on client failure and done on success', 
             new Date().toISOString(),
             new Date().toISOString()
         );
-    const original = vtp.createOrder;
-    vtp.createOrder = async () => {
-        throw new Error('timeout');
+    const original = vtp.createOrderNlp;
+    vtp.createOrderNlp = async () => {
+        // Lỗi mạng/timeout: không biết hãng đã nhận chưa, giữ unknown để thử lại có giới hạn.
+        throw Object.assign(new Error('timeout'), { network: true });
     };
     process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.vn';
     try {
@@ -111,7 +145,47 @@ test('processPendingTasks marks unknown on client failure and done on success', 
             'unknown'
         );
     } finally {
-        vtp.createOrder = original;
+        vtp.createOrderNlp = original;
+        delete process.env.NKIOT_VTP_BASE_URL;
+    }
+});
+
+test('create_order task stops retrying after a carrier-side error and surfaces it as failed', async () => {
+    const id = seedDelivery('confirmed');
+    // attempt đã đủ ngưỡng: lỗi nghiệp vụ từ hãng phải chuyển thành failed (không retry vô hạn).
+    db.getDb()
+        .prepare(
+            `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+            `T-${id}`,
+            id,
+            'create_order',
+            '{}',
+            2,
+            Date.now() - 1000,
+            'unknown',
+            '',
+            new Date().toISOString(),
+            new Date().toISOString()
+        );
+    const original = vtp.createOrderNlp;
+    vtp.createOrderNlp = async () => {
+        throw new Error('Incorrect data: ORDER_SERVICE');
+    };
+    process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.vn';
+    try {
+        await delivery.processPendingTasks();
+        const row = db
+            .getDb()
+            .prepare('SELECT status, lastError, nextAttemptAt FROM delivery_tasks WHERE id=?')
+            .get(`T-${id}`);
+        assert.equal(row.status, 'failed');
+        assert.match(row.lastError, /ORDER_SERVICE/);
+        assert.equal(row.nextAttemptAt, null);
+    } finally {
+        vtp.createOrderNlp = original;
         delete process.env.NKIOT_VTP_BASE_URL;
     }
 });

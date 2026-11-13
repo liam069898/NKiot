@@ -14,7 +14,8 @@ process.env.MINIKIOT_ADMIN_PASSWORD = 'Test-password-123';
 const db = require('../db'),
     { hashPassword } = require('../security'),
     app = require('../application'),
-    { handler } = require('../server');
+    { handler } = require('../server'),
+    deliveryService = require('../delivery-service');
 const { defaultData } = require('../data');
 let admin;
 function fixture() {
@@ -2196,6 +2197,55 @@ test('delivery requires shipping permission and valid receiver phone', () => {
     );
 });
 
+test('copiedFrom/copiedBy traceability survives SQLite roundtrip for sale and import', () => {
+    const inv = command('sale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1 }],
+        given: 100000,
+        paymentMethod: 'cash',
+        copiedFrom: 'HD000001'
+    }).result;
+    assert.equal(inv.copiedFrom, 'HD000001');
+    assert.ok(inv.copiedBy, 'phải ghi lại người sao chép');
+
+    // Sản phẩm không IMEI để import không vướng ràng buộc serial.
+    const data = db.getAllData();
+    data.products.push({
+        id: 'SP_NON_IMEI',
+        code: 'SP_NON_IMEI',
+        name: 'Sản phẩm không IMEI',
+        branch: 'A',
+        stock: 0,
+        price: 80000,
+        costPrice: 0,
+        unit: 'Chiếc',
+        category: 'Test',
+        status: 'active',
+        hasImei: false,
+        imeis: []
+    });
+    db.saveAllData(data);
+
+    const imp = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP_NON_IMEI', qty: 1, price: 50000 }],
+        paid: 50000,
+        paymentMethod: 'cash',
+        copiedFrom: 'PN000001'
+    }).result;
+    assert.equal(imp.copiedFrom, 'PN000001');
+    assert.ok(imp.copiedBy);
+
+    const reloaded = db.getAllData();
+    const savedInv = reloaded.invoices.find((i) => i.id === inv.id);
+    const savedImp = reloaded.imports.find((i) => i.id === imp.id);
+    assert.equal(savedInv.copiedFrom, 'HD000001');
+    assert.equal(savedInv.copiedBy, inv.copiedBy);
+    assert.equal(savedImp.copiedFrom, 'PN000001');
+    assert.equal(savedImp.copiedBy, imp.copiedBy);
+});
+
 test('catalog stock and cost edits on products with transaction history are rejected (F2)', () => {
     sell(); // creates an invoice history for product SP in branch A
     const data = db.getAllData();
@@ -2353,6 +2403,141 @@ test('deliverySale supports Viettel Post and self-delivery atomically and cancel
     assert.equal(afterCancel.customers[0].debt, 150000);
 });
 
+test('delivery status transitions are strict: no skipping steps, no COD before handover, no VTP cancel after submit', () => {
+    const data = db.getAllData();
+    const shipStaff = {
+        ...admin,
+        id: 'SHIP_STRICT',
+        username: 'shipstrict',
+        role: 'custom',
+        branch: 'A',
+        branches: ['A'],
+        status: 'active',
+        permissions: { shipping: true }
+    };
+    data.users.push(shipStaff);
+    db.saveAllData(data);
+
+    const makeOrder = () => {
+        const imei = db.getAllData().products[0].imeis[0];
+        return command(
+            'deliverySale',
+            {
+                branch: 'A',
+                items: [{ code: 'SP', qty: 1, imeis: [imei] }],
+                given: 0,
+                carrierType: 'self',
+                receiverName: 'Khách Kiểm Thử',
+                receiverPhone: '0988111222',
+                receiverAddress: 'TP.HCM'
+            },
+            app.revision(),
+            crypto.randomUUID(),
+            shipStaff
+        ).result.delivery;
+    };
+
+    // Không thể nhảy thẳng sang delivered từ confirmed.
+    const o1 = makeOrder();
+    assert.throws(
+        () =>
+            command(
+                'updateDeliveryStatus',
+                { id: o1.id, status: 'delivered' },
+                app.revision(),
+                crypto.randomUUID(),
+                shipStaff
+            ),
+        /Không thể chuyển/
+    );
+    // Không thể nhảy thẳng sang returning từ confirmed.
+    assert.throws(
+        () =>
+            command(
+                'updateDeliveryStatus',
+                { id: o1.id, status: 'returning' },
+                app.revision(),
+                crypto.randomUUID(),
+                shipStaff
+            ),
+        /Không thể chuyển/
+    );
+    // Chưa bàn giao thì không được đối soát COD.
+    assert.throws(
+        () =>
+            command(
+                'settleDeliveryCod',
+                { id: o1.id, method: 'cash' },
+                app.revision(),
+                crypto.randomUUID(),
+                shipStaff
+            ),
+        /bàn giao/
+    );
+
+    // Đơn Viettel Post đã gửi hãng (submitted) không được hủy nội bộ trực tiếp.
+    const o2 = makeOrder();
+    db.getDb()
+        .prepare(
+            'UPDATE delivery_orders SET extra=\'{"carrierType":"viettelpost"}\', status=\'submitted\' WHERE id=?'
+        )
+        .run(o2.id);
+    assert.throws(
+        () =>
+            command(
+                'cancelDelivery',
+                { id: o2.id },
+                app.revision(),
+                crypto.randomUUID(),
+                shipStaff
+            ),
+        /hủy qua hãng/
+    );
+});
+
+test('carrier cancellation webhook reverses the invoice and restores stock/IMEI', () => {
+    const targetImei = db.getAllData().products[0].imeis[0];
+    const initialStock = db.getAllData().products[0].stock;
+    const res = command('deliverySale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1, imeis: [targetImei] }],
+        given: 30000,
+        paymentMethod: 'transfer',
+        carrierType: 'viettelpost',
+        receiverName: 'Người Nhận Webhook',
+        receiverPhone: '0909111333',
+        receiverAddress: 'Hà Nội'
+    }).result;
+
+    const order = res.delivery;
+    assert.equal(order.status, 'confirmed');
+    assert.ok(db.getAllData().products[0].imeis.includes(targetImei) === false);
+
+    // Giả lập hãng đã cấp mã vận đơn rồi xác nhận hủy (107).
+    db.getDb()
+        .prepare('UPDATE delivery_orders SET shipmentCode=? WHERE id=?')
+        .run('VP-CANCEL-1', order.id);
+    const outcome = deliveryService.handleWebhook({
+        DATA: {
+            ORDER_NUMBER: 'VP-CANCEL-1',
+            ORDER_STATUS: 107,
+            STATUS_NAME: 'Hủy đơn hàng',
+            ORDER_STATUSDATE: '11/11/2026 10:00:00'
+        }
+    });
+
+    assert.equal(outcome.recorded, true);
+    const after = db.getAllData();
+    assert.equal(after.delivery_orders.find((o) => o.id === order.id).status, 'cancelled');
+    assert.equal(
+        after.invoices.find((i) => i.id === res.invoice.id).status,
+        'cancelled',
+        'Webhook hủy phải hủy luôn hóa đơn gốc'
+    );
+    assert.equal(after.products[0].stock, initialStock, 'Phải hoàn lại tồn kho');
+    assert.ok(after.products[0].imeis.includes(targetImei), 'Phải hoàn lại IMEI');
+});
+
 test('self-delivery lifecycle: no VTP task, COD settlement books cashbook receipt, returnDelivery restores IMEI, and /api/invoices filters channel', async () => {
     const targetImei = db.getAllData().products[0].imeis[0];
     const selfRes = command('deliverySale', {
@@ -2401,6 +2586,7 @@ test('self-delivery lifecycle: no VTP task, COD settlement books cashbook receip
         receiverPhone: '0977000111',
         receiverAddress: 'Hà Nội'
     }).result.delivery;
+    command('updateDeliveryStatus', { id: retOrder.id, status: 'handed_over' });
     command('updateDeliveryStatus', { id: retOrder.id, status: 'returning' });
     const returned = command('returnDelivery', { id: retOrder.id }).result;
     assert.equal(returned.status, 'returned');
@@ -2430,4 +2616,45 @@ test('self-delivery lifecycle: no VTP task, COD settlement books cashbook receip
     assert.ok(onlyDelivery.json.rows.length >= 2);
     assert.ok(onlyCounter.json.rows.every((r) => r.channel === 'counter'));
     assert.ok(onlyDelivery.json.rows.every((r) => r.channel === 'delivery'));
+});
+
+test('Viettel Post config saves over the real API and webhook always answers 200', async () => {
+    const login = await request('POST', '/api/login', {
+        username: 'admin',
+        password: 'Test-password-123'
+    });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const csrf = { 'x-nkiot-csrf': login.json.csrfToken };
+    const saved = await request(
+        'POST',
+        '/api/vtp/config',
+        {
+            baseUrl: 'https://partnerdev.viettelpost.vn',
+            username: '0933177454',
+            password: 'pw-secret',
+            webhookSecret: 'wh-secret'
+        },
+        cookie,
+        csrf
+    );
+    assert.equal(saved.status, 200, saved.body);
+    assert.equal(saved.json.config.configured, true);
+    assert.ok(!saved.body.includes('pw-secret'), 'không trả mật khẩu về trình duyệt');
+
+    // "Kiểm tra kết nối" của hãng có thể gửi body rỗng: vẫn phải nhận 200.
+    const empty = await request('POST', '/api/vtp/webhook');
+    assert.equal(empty.status, 200);
+    assert.equal(empty.json.recorded, false);
+    const bad = await request('POST', '/api/vtp/webhook', {
+        DATA: { ORDER_NUMBER: 'X', ORDER_STATUS: 200 },
+        TOKEN: 'wrong'
+    });
+    assert.equal(bad.status, 200);
+    assert.equal(bad.json.reason, 'invalid_secret');
+    const ok = await request('POST', '/api/vtp/webhook', {
+        DATA: { ORDER_NUMBER: 'NOPE', ORDER_STATUS: 200 },
+        TOKEN: 'wh-secret'
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json.reason, 'unknown_shipment');
 });
