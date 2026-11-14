@@ -297,6 +297,10 @@ async function processTask(task) {
         await processOrderAction(task, record);
         return;
     }
+    if (task.action === 'edit_order') {
+        await processOrderEdit(task, record);
+        return;
+    }
     if (record.status !== 'confirmed') {
         finishTask(task.id, { status: 'done' });
         return;
@@ -413,6 +417,45 @@ async function processOrderAction(task, record) {
     }
 }
 
+// Xử lý yêu cầu sửa thông tin đơn trên hệ thống hãng (A3).
+async function processOrderEdit(task, record) {
+    let patch = {};
+    try {
+        patch = JSON.parse(task.payload || '{}');
+    } catch {}
+    const attempt = (Number(task.attempt) || 0) + 1;
+    const fail = (message) => finishTask(task.id, { status: 'failed', lastError: message });
+    if (!record.shipmentCode) return fail('Đơn chưa có mã vận đơn Viettel Post để sửa.');
+    if (record.status !== 'submitted')
+        return fail('Chỉ sửa được đơn hãng chưa lấy hàng (đã gửi hãng).');
+    if (!patch || !Object.keys(patch).length) return fail('Không có thông tin cần cập nhật.');
+    try {
+        await vtp.editOrder(buildEditPayload({ ...record, ...patch }));
+        const fields = Object.keys(patch);
+        db.getDb()
+            .prepare(
+                `UPDATE delivery_orders SET ${fields.map((k) => `${k}=?`).join(',')}, updatedAt=? WHERE id=?`
+            )
+            .run(...fields.map((k) => patch[k]), nowIso(), record.id);
+        finishTask(task.id, { status: 'done' });
+    } catch (error) {
+        const detail = String(error.message || error).slice(0, 500);
+        if (error.network) {
+            finishTask(task.id, {
+                status: 'unknown',
+                lastError: detail,
+                nextAttemptAt: attempt < MAX_NETWORK_RETRY ? Date.now() + RETRY_MS : null
+            });
+            return;
+        }
+        finishTask(task.id, {
+            status: attempt < MAX_CREATE_ORDER_RETRY ? 'unknown' : 'failed',
+            lastError: detail,
+            nextAttemptAt: attempt < MAX_CREATE_ORDER_RETRY ? Date.now() + RETRY_MS : null
+        });
+    }
+}
+
 async function processPendingTasks() {
     if (running) return running;
     running = (async () => {
@@ -486,10 +529,16 @@ function handleWebhook(payload) {
         .slice(0, 32)}`;
     const already = d.prepare('SELECT 1 FROM delivery_status_history WHERE id=?').get(id);
     if (!already) {
+        // Lưu kèm chi tiết hành trình (C2) và ảnh giao hàng POD nếu hãng gửi.
+        const pods = Array.isArray(data.POD?.IMAGES) ? data.POD.IMAGES.filter(Boolean) : [];
+        // C3: gộp lý do phát thất bại (mã 20–47) vào ghi chú để hiển thị tiếng Việt.
+        const reasonText = failureReasonText(data.REASON_CODE);
+        const noteText = [text(data.NOTE, 300), reasonText].filter(Boolean).join(' — ');
         d.prepare(
             `INSERT INTO delivery_status_history
-             (id, deliveryId, orderNumber, statusCode, statusName, statusDate, reasonCode, note, receivedAt, processedAt)
-             VALUES (?,?,?,?,?,?,?,?,?,?)`
+             (id, deliveryId, orderNumber, statusCode, statusName, statusDate, reasonCode, note, receivedAt, processedAt,
+              location, employeeName, employeePhone, expectedDelivery, podImages)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(
             id,
             record.id,
@@ -498,11 +547,19 @@ function handleWebhook(payload) {
             text(data.STATUS_NAME, 200),
             statusDate,
             data.REASON_CODE != null ? text(String(data.REASON_CODE), 50) : null,
-            text(data.NOTE, 500),
+            text(noteText, 500),
             nowIso(),
-            nowIso()
+            nowIso(),
+            text(data.LOCATION_CURRENTLY || data.LOCALION_CURRENTLY, 500),
+            text(data.EMPLOYEE_NAME, 120),
+            text(data.EMPLOYEE_PHONE, 40),
+            text(data.EXPECTED_DELIVERY, 200),
+            pods.length ? JSON.stringify(pods.slice(0, 10)) : ''
         );
     }
+    // C1: đối soát COD theo số tiền hãng báo đã thu. Chỉ ghi nhận "hãng đã thu",
+    // KHÔNG coi là đã về tài khoản; đối soát tiền về vẫn do cửa hàng xác nhận.
+    if (!already) reconcileCod(record.id, data);
     const next = applyStatus({ ...record }, statusCode);
     if (next.status === record.status)
         return { recorded: true, deliveryId: record.id, status: statusCode, unchanged: true };
@@ -628,6 +685,217 @@ async function labelUrl(orderId, { size = 'A5', showPostage = 0 } = {}) {
     return { url, expiresAt, printCode };
 }
 
+// ===== C3: Lý do phát thất bại theo bảng của Viettel Post =====
+const VTP_FAILURE_REASONS = {
+    20: 'Khách từ chối nhận: sai màu sắc',
+    21: 'Khách từ chối nhận: sai kích thước',
+    22: 'Khách từ chối nhận: sai kiểu dáng',
+    23: 'Khách từ chối nhận: chất lượng kém',
+    25: 'Khách từ chối nhận: sai số lượng',
+    26: 'Khách từ chối nhận: sai tiền thu hộ',
+    27: 'Sai định dạng số điện thoại người nhận',
+    30: 'Khách hàng không có nhu cầu nhận hàng',
+    31: 'Khách hàng không đặt đơn',
+    32: 'Khách từ chối nhận: sai địa chỉ',
+    35: 'Người nhận hẹn phát lại',
+    36: 'Không liên lạc được khách hàng nhận',
+    37: 'Bưu tá hẹn phát lại',
+    38: 'Khách hàng đến bưu cục nhận',
+    43: 'Người gửi yêu cầu chuyển hoàn',
+    46: 'Phát thất bại nhiều lần: người nhận hẹn phát lại',
+    47: 'Phát thất bại nhiều lần: không liên lạc được'
+};
+function failureReasonText(code) {
+    if (code === null || code === undefined || code === '') return '';
+    return VTP_FAILURE_REASONS[String(code).trim()] || '';
+}
+
+// ===== C1: Đối soát COD từ webhook =====
+// Chỉ ghi nhận "hãng đã thu" và cảnh báo lệch; KHÔNG tự coi là tiền đã về tài khoản.
+function reconcileCod(deliveryId, data) {
+    const d = db.getDb();
+    const rec = d.prepare('SELECT * FROM delivery_cod_records WHERE deliveryId=?').get(deliveryId);
+    if (!rec || ['settled', 'cancelled'].includes(rec.status)) return;
+    const expected = Number(rec.codRequested) || 0;
+    const collected = Number(data.MONEY_COLLECTION);
+    if (!expected || !Number.isFinite(collected) || collected <= 0) return;
+    const now = nowIso();
+    const status = collected >= expected ? 'carrier_collected' : 'disputed';
+    const note =
+        collected >= expected
+            ? `Hãng báo đã thu ${collected}đ (dự kiến ${expected}đ). Chờ tiền về tài khoản để đối soát.`
+            : `Hãng thu ${collected}đ, thiếu ${expected - collected}đ so với dự kiến ${expected}đ.`;
+    d.prepare(
+        'UPDATE delivery_cod_records SET codCollected=?, status=?, note=?, updatedAt=? WHERE id=?'
+    ).run(collected, status, text(note, 500), now, rec.id);
+    // codStatus nằm trong cột `extra` (JSON) của delivery_orders, không phải cột riêng.
+    const row = d.prepare('SELECT extra FROM delivery_orders WHERE id=?').get(deliveryId);
+    if (row) {
+        let extra = {};
+        try {
+            extra = JSON.parse(row.extra || '{}');
+        } catch {}
+        extra.codStatus = status;
+        d.prepare('UPDATE delivery_orders SET extra=?, updatedAt=? WHERE id=?').run(
+            JSON.stringify(extra),
+            now,
+            deliveryId
+        );
+    }
+    db.bumpRevision();
+}
+
+// ===== A3: Sửa thông tin vận đơn đã gửi hãng =====
+const EDITABLE_FIELDS = [
+    'receiverName',
+    'receiverPhone',
+    'receiverAddress',
+    'note',
+    'weightGram',
+    'codRequested'
+];
+
+function buildEditPayload(record) {
+    const cod = record.paymentType === 3 || record.paymentType === 2;
+    const items = Array.isArray(record.items) ? record.items : [];
+    const totalQty = items.reduce((n, it) => n + (Number(it.qty) || 0), 0);
+    return {
+        ORDER_NUMBER: record.shipmentCode,
+        SENDER_FULLNAME: vtp.bytes(record.senderName, 150),
+        SENDER_PHONE: vtp.bytes(record.senderPhone, 20),
+        SENDER_ADDRESS: vtp.bytes(record.senderAddress, 150),
+        RECEIVER_FULLNAME: vtp.bytes(record.receiverName, 150),
+        RECEIVER_PHONE: vtp.bytes(record.receiverPhone, 20),
+        RECEIVER_ADDRESS: vtp.bytes(record.receiverAddress, 150),
+        PRODUCT_NAME: vtp.bytes(
+            items.length === 1 ? items[0].name || items[0].code : 'Hàng hóa',
+            150
+        ),
+        PRODUCT_QUANTITY: totalQty || 1,
+        PRODUCT_PRICE: Math.max(0, Number(record.productTotal) || 0),
+        PRODUCT_WEIGHT: Number(record.weightGram) || 50,
+        ORDER_PAYMENT: record.paymentType || 1,
+        ORDER_SERVICE: vtp.bytes(record.service || '', 20),
+        ORDER_SERVICE_ADD: vtp.bytes(record.serviceAdd || '', 20),
+        MONEY_COLLECTION: cod ? Number(record.codRequested) || 0 : 0,
+        ORDER_NOTE: vtp.bytes(record.note || '', 150),
+        PRODUCT_TYPE: record.productType || 'HH'
+    };
+}
+
+// Xếp yêu cầu sửa vận đơn (chỉ khi hãng chưa lấy hàng).
+function enqueueOrderEdit(deliveryId, changes = {}) {
+    const d = db.getDb();
+    const order = d
+        .prepare('SELECT * FROM delivery_orders WHERE id=? OR code=?')
+        .get(deliveryId, deliveryId);
+    if (!order) return { ok: false, reason: 'unknown_order' };
+    if (order.carrierType === 'self') return { ok: false, reason: 'self_delivery' };
+    if (!order.shipmentCode) return { ok: false, reason: 'no_shipment_code' };
+    if (order.status !== 'submitted') return { ok: false, reason: 'not_editable' };
+    const patch = {};
+    for (const key of EDITABLE_FIELDS) {
+        if (changes[key] === undefined || changes[key] === '') continue;
+        if (key === 'weightGram' || key === 'codRequested') {
+            const n = Number(changes[key]);
+            if (!Number.isFinite(n) || n < 0) return { ok: false, reason: 'invalid_value' };
+            patch[key] = Math.round(n);
+        } else {
+            patch[key] = text(String(changes[key]), 200).trim();
+        }
+    }
+    if (!Object.keys(patch).length) return { ok: false, reason: 'nothing_to_change' };
+    const pending = d
+        .prepare(
+            "SELECT 1 FROM delivery_tasks WHERE deliveryId=? AND action IN ('edit_order','update_order') AND status IN ('pending','running')"
+        )
+        .get(order.id);
+    if (pending) return { ok: false, reason: 'action_pending' };
+    const now = nowIso();
+    d.prepare(
+        `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+        `VTP-EDIT-${order.id}-${Date.now()}`,
+        order.id,
+        'edit_order',
+        JSON.stringify(patch),
+        0,
+        Date.now(),
+        'pending',
+        '',
+        now,
+        now
+    );
+    db.bumpRevision();
+    return { ok: true, fields: Object.keys(patch) };
+}
+
+// ===== A4: Tính cước một dịch vụ cụ thể (kèm dịch vụ cộng thêm) =====
+async function quoteService(input) {
+    const res = await vtp.getPriceNlp({
+        SENDER_ADDRESS: vtp.bytes(input?.senderAddress, 150),
+        RECEIVER_ADDRESS: vtp.bytes(input?.receiverAddress, 150),
+        PRODUCT_TYPE: input?.productType === 'TH' ? 'TH' : 'HH',
+        PRODUCT_WEIGHT: Number(input?.weightGram) || 50,
+        PRODUCT_PRICE: Math.max(0, Number(input?.productTotal) || 0),
+        MONEY_COLLECTION: Math.max(0, Number(input?.codRequested) || 0),
+        ORDER_SERVICE: vtp.bytes(input?.service || '', 20),
+        ORDER_SERVICE_ADD: vtp.bytes(input?.serviceAdd || '', 20),
+        NATIONAL_TYPE: 1
+    });
+    const data = res?.data && typeof res.data === 'object' ? res.data : res || {};
+    return {
+        price: Number(data.MONEY_TOTAL ?? data.MONEY_TOTAL_FEE ?? 0) || 0,
+        fee: Number(data.MONEY_TOTAL_FEE ?? 0) || 0,
+        vat: Number(data.MONEY_VAT ?? 0) || 0,
+        collectionFee: Number(data.MONEY_COLLECTION_FEE ?? 0) || 0,
+        etaHours: data.KPI_HT ?? null
+    };
+}
+
+// ===== D4: In nhãn hàng loạt (tối đa 100 vận đơn/lần) =====
+async function batchLabelUrl(orderIds, { size = 'A5', showPostage = 0 } = {}) {
+    const d = db.getDb();
+    const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(String))].slice(0, 100);
+    const orders = [];
+    for (const id of ids) {
+        const o = d
+            .prepare('SELECT id, shipmentCode FROM delivery_orders WHERE id=? OR code=?')
+            .get(id, id);
+        if (o && o.shipmentCode) orders.push(o);
+    }
+    if (!orders.length) {
+        const error = new Error('Không có vận đơn nào đã có mã để in.');
+        error.status = 409;
+        throw error;
+    }
+    const expiresAt = Date.now() + LABEL_TTL_MS;
+    const res = await vtp.printingCode(
+        orders.map((o) => o.shipmentCode),
+        expiresAt
+    );
+    const printCode = typeof res?.message === 'string' ? res.message.trim() : '';
+    if (!printCode) {
+        const error = new Error('Viettel Post không trả mã in vận đơn.');
+        error.status = 502;
+        throw error;
+    }
+    const now = nowIso();
+    for (const o of orders)
+        d.prepare(
+            'UPDATE delivery_orders SET printCode=?, printExpiresAt=?, updatedAt=? WHERE id=?'
+        ).run(printCode, expiresAt, now, o.id);
+    db.bumpRevision();
+    const host = /partnerdev/i.test(vtp.currentBaseUrl()) ? LABEL_HOST_DEV : LABEL_HOST_PROD;
+    const type = LABEL_TYPES[String(size).toUpperCase()] || LABEL_TYPES.A5;
+    return {
+        url: `${host}/DigitalizePrint/report.do?type=${encodeURIComponent(type)}&bill=${encodeURIComponent(printCode)}&showPostage=${showPostage ? 1 : 0}`,
+        count: orders.length,
+        expiresAt
+    };
+}
+
 module.exports = {
     enabled,
     processPendingTasks,
@@ -637,6 +905,10 @@ module.exports = {
     mapVtpStatus,
     listServices,
     enqueueOrderAction,
+    enqueueOrderEdit,
+    quoteService,
+    batchLabelUrl,
     labelUrl,
+    failureReasonText,
     requeueCreateOrderTask
 };

@@ -319,6 +319,25 @@ const MIGRATIONS = [
                 CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires);
             `);
         }
+    },
+    {
+        version: 13,
+        name: 'delivery_history_details',
+        up(db) {
+            // Lưu thêm chi tiết hành trình từ webhook Viettel Post: vị trí, bưu tá,
+            // thời gian dự kiến, mã lý do phát thất bại và ảnh giao hàng (POD).
+            for (const column of [
+                'location TEXT',
+                'employeeName TEXT',
+                'employeePhone TEXT',
+                'expectedDelivery TEXT',
+                'podImages TEXT'
+            ]) {
+                try {
+                    db.exec(`ALTER TABLE delivery_status_history ADD COLUMN ${column}`);
+                } catch {}
+            }
+        }
     }
 ];
 

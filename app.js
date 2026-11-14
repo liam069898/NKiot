@@ -16,6 +16,7 @@ function createDefaultDeliverySpec() {
         carrierFee: 0,
         prepaid: 0,
         prepaidMethod: 'transfer',
+        payer: 'customer',
         note: ''
     };
 }
@@ -2362,9 +2363,6 @@ function syncPosDeliveryPanel(grandTotal = 0) {
     document
         .getElementById('pos-delivery-financials-section')
         ?.classList.toggle('hidden', !isDelivery);
-    document
-        .getElementById('pos-shipping-fee-summary-row')
-        ?.classList.toggle('hidden', !isDelivery);
 
     const checkoutBtn = document.getElementById('pos-checkout-btn');
     const checkoutLbl = document.getElementById('pos-checkout-btn-label');
@@ -2433,12 +2431,59 @@ function syncPosDeliveryPanel(grandTotal = 0) {
     const prepaid = Math.min(totalCollectable, Number(d.prepaid) || 0);
     const cod = Math.max(0, totalCollectable - prepaid);
 
+    // Ẩn/hiện theo ngữ cảnh: cước trả hãng chỉ cần khi tự giao; ô trả trước chỉ khi có cọc.
+    const payer = d.payer === 'shop' ? 'shop' : 'customer';
+    const customerPayerBtn = document.getElementById('pos-dlv-payer-customer');
+    const shopPayerBtn = document.getElementById('pos-dlv-payer-shop');
+    if (customerPayerBtn) {
+        customerPayerBtn.setAttribute('aria-pressed', String(payer === 'customer'));
+        customerPayerBtn.className =
+            payer === 'customer'
+                ? 'px-2 py-0.5 rounded-md text-[11px] font-semibold bg-white text-[#0066cc] shadow-2xs transition'
+                : 'px-2 py-0.5 rounded-md text-[11px] font-medium text-gray-600 hover:text-gray-900 transition';
+    }
+    if (shopPayerBtn) {
+        shopPayerBtn.setAttribute('aria-pressed', String(payer === 'shop'));
+        shopPayerBtn.className =
+            payer === 'shop'
+                ? 'px-2 py-0.5 rounded-md text-[11px] font-semibold bg-white text-amber-700 shadow-2xs transition'
+                : 'px-2 py-0.5 rounded-md text-[11px] font-medium text-gray-600 hover:text-gray-900 transition';
+    }
+    document.getElementById('pos-dlv-carrier-fee-wrap')?.classList.toggle('hidden', !isSelf);
+    document.getElementById('pos-dlv-prepaid-detail')?.classList.toggle('hidden', !(prepaid > 0));
+    const prepaidNoneBtn = document.getElementById('pos-dlv-prepaid-none');
+    const prepaidFullBtn = document.getElementById('pos-dlv-prepaid-full');
+    if (prepaidNoneBtn) prepaidNoneBtn.setAttribute('aria-pressed', String(!(prepaid > 0)));
+    if (prepaidFullBtn)
+        prepaidFullBtn.setAttribute(
+            'aria-pressed',
+            String(prepaid > 0 && prepaid >= totalCollectable)
+        );
+
+    // Suy ra loại vận đơn thay vì bắt người dùng chọn tay:
+    // không thu hộ = 1; khách trả ship (COD gồm cước) = 2; shop trả ship = 3.
+    const derivedPaymentType = cod <= 0 ? 1 : payer === 'shop' ? 3 : 2;
+    if (d.paymentType !== derivedPaymentType) d.paymentType = derivedPaymentType;
+    const paymentTypeEl = document.getElementById('pos-dlv-payment-type');
+    if (paymentTypeEl) paymentTypeEl.value = String(derivedPaymentType);
+
     const shipSumEl = document.getElementById('pos-summary-shipping-fee');
     if (shipSumEl) shipSumEl.textContent = `${formatVND(shippingFee)} đ`;
     const grandEl = document.getElementById('pos-grand-total');
     if (grandEl) grandEl.textContent = formatVND(totalCollectable);
     const codEl = document.getElementById('pos-dlv-cod-amount');
     if (codEl) codEl.textContent = `${formatVND(cod)} đ`;
+    // Nhãn nút xuất đơn ghi kèm COD để nhân viên đọc được ngay.
+    if (checkoutLbl && isDelivery) {
+        const reason = !String(d.receiverName || '').trim()
+            ? 'Thiếu tên người nhận'
+            : !String(d.receiverPhone || '').trim()
+              ? 'Thiếu SĐT người nhận'
+              : !String(d.receiverAddress || '').trim()
+                ? 'Thiếu địa chỉ giao'
+                : '';
+        checkoutLbl.textContent = reason || `XUẤT ĐƠN GIAO · COD ${formatVND(cod)} đ`;
+    }
 
     const qrBox = document.getElementById('pos-vietqr-container');
     if (prepaid > 0 && (d.prepaidMethod || 'transfer') === 'transfer') {
@@ -4036,21 +4081,73 @@ function refreshPosVtpServices() {
                 const opt = document.createElement('option');
                 opt.value = s.code;
                 opt.textContent = `${s.name} (${s.code}) · ${formatVND(s.price)} đ · ${s.time}`;
+                opt.dataset.price = String(s.price || 0);
+                opt.dataset.time = s.time || '';
                 select.appendChild(opt);
             });
             const pick = services.find((s) => s.code === d.service) || services[0];
             select.value = pick.code;
             select.dataset.loaded = '1';
+            renderPosVtpServiceCards(services, pick.code);
             if (pick.code !== d.service) {
                 d.service = pick.code;
                 savePosDraft();
             }
-            if (hint) hint.textContent = `${services.length} dịch vụ khả dụng cho tuyến này.`;
+            if (hint) {
+                // D1: hiện cước + thời gian giao của dịch vụ đang chọn, kèm nút điền phí ship.
+                hint.innerHTML = `${services.length} dịch vụ khả dụng · Cước <strong>${formatVND(pick.price)} đ</strong> · ${pick.time}
+                    <button type="button" onclick="applyVtpServiceFee()" class="ml-1 text-[#0066cc] font-semibold underline">Thu khách = cước</button>`;
+            }
         })
         .catch((error) => {
             if (seq !== vtpServicesSeq) return;
             if (hint) hint.textContent = error.message;
         });
+}
+
+// D1 + A4: điền phí ship thu khách theo cước của dịch vụ đang chọn.
+async function applyVtpServiceFee() {
+    const curTab = state.posTabs[state.activePosTab];
+    const select = document.getElementById('pos-dlv-service');
+    if (!curTab || !select) return;
+    const opt = select.options[select.selectedIndex];
+    if (!opt || !opt.value) {
+        showToast('Chưa chọn dịch vụ Viettel Post.', 'warning');
+        return;
+    }
+    const d = curTab.delivery || createDefaultDeliverySpec();
+    const sender = getPosSenderInfo(curTab.branch);
+    if (!sender.address || !String(d.receiverAddress || '').trim()) {
+        showToast('Cần có địa chỉ cửa hàng và địa chỉ giao hàng để tính cước.', 'warning');
+        return;
+    }
+    const subtotal = curTab.cart.reduce((a, c) => a + c.qty * c.price, 0);
+    const total = Math.max(0, subtotal - (curTab.discount || 0));
+    const cod = Math.max(
+        0,
+        total + (Number(d.shippingFeeToCustomer) || 0) - (Number(d.prepaid) || 0)
+    );
+    let price = Number(opt.dataset.price) || 0;
+    try {
+        const res = await KVStore.request('/api/vtp/quote', {
+            method: 'POST',
+            body: JSON.stringify({
+                senderAddress: sender.address,
+                receiverAddress: d.receiverAddress,
+                weightGram: Number(d.weightGram) || 200,
+                productTotal: total,
+                codRequested: cod,
+                service: opt.value
+            })
+        });
+        if (res?.quote?.price > 0) price = res.quote.price;
+    } catch {}
+    if (!price) {
+        showToast('Không lấy được cước của dịch vụ này.', 'warning');
+        return;
+    }
+    handlePosDeliveryMoneyInput('shippingFeeToCustomer', price);
+    showToast(`Đã điền phí ship ${formatVND(price)} đ theo cước dịch vụ ${opt.value}.`, 'success');
 }
 
 function updatePosDeliveryField(field, value) {
@@ -4105,6 +4202,84 @@ function setPosDeliveryQuickPrepaid(preset) {
     const totalCollectable = grand + (Number(curTab.delivery.shippingFeeToCustomer) || 0);
     curTab.delivery.prepaid = preset === 'paid100' ? totalCollectable : 0;
     renderPosScreen();
+}
+
+// ===== Giao diện Bán giao hàng tối ưu: chọn nhanh khối lượng / ai trả ship / dịch vụ dạng thẻ =====
+function setPosDeliveryWeight(grams) {
+    const input = document.getElementById('pos-dlv-weight');
+    if (input) input.value = String(grams);
+    updatePosDeliveryField('weightGram', String(grams));
+}
+
+function setPosDeliveryPayer(mode) {
+    const curTab = state.posTabs[state.activePosTab];
+    if (!curTab) return;
+    if (!curTab.delivery) curTab.delivery = createDefaultDeliverySpec();
+    const d = curTab.delivery;
+    d.payer = mode === 'shop' ? 'shop' : 'customer';
+    // Shop trả ship: khách không bị cộng phí, COD chỉ còn tiền hàng.
+    if (d.payer === 'shop') d.shippingFeeToCustomer = 0;
+    savePosDraft();
+    renderPosScreen();
+}
+
+function highlightPosVtpServiceCard(code) {
+    document.querySelectorAll('#pos-dlv-service-cards [data-service]').forEach((btn) => {
+        const active = btn.dataset.service === code;
+        btn.setAttribute('aria-pressed', String(active));
+        btn.className = active
+            ? 'w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border-2 border-[#0066cc] bg-white text-left transition'
+            : 'w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white/70 hover:border-blue-300 text-left transition';
+    });
+}
+
+function selectPosVtpService(code) {
+    const curTab = state.posTabs[state.activePosTab];
+    const select = document.getElementById('pos-dlv-service');
+    if (!curTab || !select) return;
+    select.value = code;
+    updatePosDeliveryField('service', code);
+    highlightPosVtpServiceCard(code);
+    const d = curTab.delivery || {};
+    const fee = Number(d.shippingFeeToCustomer) || 0;
+    // Khách trả ship và chưa nhập phí: tự điền theo cước dịch vụ vừa chọn.
+    if (d.payer !== 'shop' && !fee) applyVtpServiceFee();
+}
+
+function renderPosVtpServiceCards(services, selectedCode) {
+    const wrap = document.getElementById('pos-dlv-service-cards');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    services.forEach((s) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.service = s.code;
+        btn.setAttribute('aria-pressed', 'false');
+        btn.className =
+            'w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white/70 hover:border-blue-300 text-left transition';
+        const left = document.createElement('div');
+        left.className = 'min-w-0';
+        const name = document.createElement('div');
+        name.className = 'text-[12px] font-semibold text-gray-900 truncate';
+        name.textContent = s.name;
+        const code = document.createElement('div');
+        code.className = 'text-[10.5px] font-mono text-gray-500';
+        code.textContent = s.code;
+        left.append(name, code);
+        const right = document.createElement('div');
+        right.className = 'text-right flex-shrink-0';
+        const price = document.createElement('div');
+        price.className = 'text-[12.5px] font-bold text-[#0066cc] tabular-nums';
+        price.textContent = `${formatVND(s.price)} đ`;
+        const time = document.createElement('div');
+        time.className = 'text-[10.5px] text-gray-500';
+        time.textContent = s.time || '';
+        right.append(price, time);
+        btn.append(left, right);
+        btn.onclick = () => selectPosVtpService(s.code);
+        wrap.appendChild(btn);
+    });
+    highlightPosVtpServiceCard(selectedCode);
 }
 
 function appendPosDeliveryNote(phrase) {
@@ -9858,9 +10033,13 @@ function renderDeliveryRows(tbody, orders, isAll) {
                 ? '<span class="text-[10.5px] text-gray-400">Không COD</span>'
                 : codState === 'settled'
                   ? '<span class="text-[10.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Đã đối soát</span>'
-                  : ['cancelled', 'returned'].includes(order.status)
-                    ? '<span class="text-[10.5px] text-gray-400">Đã đóng</span>'
-                    : '<span class="text-[10.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Chờ thu COD</span>';
+                  : codState === 'carrier_collected'
+                    ? '<span class="text-[10.5px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">Hãng đã thu</span>'
+                    : codState === 'disputed'
+                      ? '<span class="text-[10.5px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded">Lệch COD</span>'
+                      : ['cancelled', 'returned'].includes(order.status)
+                        ? '<span class="text-[10.5px] text-gray-400">Đã đóng</span>'
+                        : '<span class="text-[10.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Chờ thu COD</span>';
 
         const tr = document.createElement('tr');
         tr.dataset.exportKey = String(key);
@@ -9946,6 +10125,12 @@ function buildDeliveryDetailActionButtons(order, key, codState) {
             actionBtns.push(
                 renderHTML`<button type="button" onclick="vtpOrderAction('${key}', 'cancel', { message: 'Gửi yêu cầu hủy vận đơn ${order.shipmentCode} tới Viettel Post? Chỉ hủy được khi hãng chưa lấy hàng. Tồn kho sẽ được hoàn khi hãng xác nhận.' })" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 rounded-xl text-[12px] font-semibold transition">Hủy qua Viettel Post</button>`.toString()
             );
+            // A3: sửa thông tin nhận/COD/khối lượng khi hãng chưa lấy hàng.
+            if (order.status === 'submitted') {
+                actionBtns.push(
+                    renderHTML`<button type="button" onclick="openVtpEditModal('${key}')" class="px-3 py-1.5 bg-white hover:bg-blue-50 text-[#0066cc] border border-blue-200 rounded-xl text-[12px] font-semibold transition">Sửa vận đơn</button>`.toString()
+                );
+            }
         } else {
             actionBtns.push(
                 renderHTML`<button type="button" onclick="cancelPosDelivery('${key}')" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 rounded-xl text-[12px] font-semibold transition">Hủy đơn &amp; Hoàn kho</button>`.toString()
@@ -9993,7 +10178,7 @@ function renderDeliveryDetailHtml(order) {
     const key = order.id || order.code;
     const isSelf = order.carrierType === 'self';
     const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
-    const { status: codState } = getDeliveryCodState(order);
+    const { status: codState, record: codRec } = getDeliveryCodState(order);
     const inv = (KVStore.data?.invoices || []).find(
         (i) => i.id === order.invoiceId || i.code === order.invoiceCode
     );
@@ -10016,11 +10201,53 @@ function renderDeliveryDetailHtml(order) {
     );
     const historyHtml = history.length
         ? history
-              .map((h) =>
-                  renderHTML`<div class="flex justify-between gap-2 text-[11.5px] py-1 border-b border-gray-100 last:border-0"><span class="font-medium text-gray-800">• ${h.statusName || `Mã ${h.statusCode}`}${h.note ? ` — ${h.note}` : ''}</span><span class="font-mono text-gray-400 flex-shrink-0">${formatDeliveryTime(h.statusDate)}</span></div>`.toString()
-              )
+              .map((h) => {
+                  const pods = (() => {
+                      try {
+                          const list = JSON.parse(h.podImages || '[]');
+                          return Array.isArray(list) ? list.filter(Boolean) : [];
+                      } catch {
+                          return [];
+                      }
+                  })();
+                  const meta = [
+                      h.location,
+                      h.employeeName ? `Bưu tá: ${h.employeeName}` : '',
+                      h.employeePhone ? `SĐT: ${h.employeePhone}` : '',
+                      h.expectedDelivery ? `Dự kiến: ${h.expectedDelivery}` : ''
+                  ]
+                      .filter(Boolean)
+                      .join(' · ');
+                  return renderHTML`<div class="py-1 border-b border-gray-100 last:border-0 text-[11.5px]">
+                        <div class="flex justify-between gap-2">
+                            <span class="font-medium text-gray-800">• ${h.statusName || `Mã ${h.statusCode}`}${h.note ? ` — ${h.note}` : ''}</span>
+                            <span class="font-mono text-gray-400 flex-shrink-0">${formatDeliveryTime(h.statusDate)}</span>
+                        </div>
+                        ${trustedHTML(meta ? renderHTML`<div class="text-[10.5px] text-gray-500 pl-3">${meta}</div>` : '')}
+                        ${trustedHTML(
+                            pods.length
+                                ? renderHTML`<div class="flex flex-wrap gap-1 pl-3 pt-1">${pods
+                                      .slice(0, 4)
+                                      .map(
+                                          (url) =>
+                                              renderHTML`<a href="${safeMediaUrl(url) || '#'}" target="_blank" rel="noopener" class="text-[10.5px] text-[#0066cc] underline">Ảnh giao hàng</a>`
+                                      )
+                                      .join(' ')}</div>`
+                                : ''
+                        )}
+                    </div>`.toString();
+              })
               .join('')
         : '<div class="text-[11.5px] text-gray-400 italic">Chưa có lịch sử cập nhật.</div>';
+
+    // C3: cảnh báo lần phát thất bại gần nhất (506/507) để nhân viên liên hệ khách.
+    const lastFailure = history.find((h) => [506, 507].includes(Number(h.statusCode)));
+    const failureBanner = lastFailure
+        ? renderHTML`<div class="bg-amber-50 border border-amber-200 text-amber-900 text-[11.5px] rounded-xl px-3 py-2">
+              <strong>Phát thất bại:</strong> ${lastFailure.note || lastFailure.statusName || 'Không rõ lý do'}
+              <span class="text-amber-700">— liên hệ khách để hẹn lại hoặc chờ hãng phát tiếp.</span>
+          </div>`
+        : '';
 
     return renderHTML`
         <div class="bg-white rounded-2xl p-3.5 border border-gray-200/80 shadow-xs space-y-3">
@@ -10032,6 +10259,7 @@ function renderDeliveryDetailHtml(order) {
                 </div>
                 <div class="flex flex-wrap items-center gap-1.5">${trustedHTML(buildDeliveryDetailActionButtons(order, key, codState))}</div>
             </div>
+            ${trustedHTML(failureBanner)}
             <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
                 <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/70 space-y-1">
                     <div class="text-[10.5px] font-bold text-gray-400 uppercase">Người nhận &amp; Giao vận</div>
@@ -10045,7 +10273,17 @@ function renderDeliveryDetailHtml(order) {
                     <div class="flex justify-between"><span>Tiền hàng:</span><span class="font-mono font-bold">${formatVND(order.productTotal || 0)} đ</span></div>
                     <div class="flex justify-between"><span>Phí ship thu khách:</span><span class="font-mono font-semibold">${formatVND(order.shippingFeeToCustomer || 0)} đ</span></div>
                     <div class="flex justify-between text-emerald-700"><span>Khách trả trước:</span><span class="font-mono font-bold">${formatVND(order.prepaid || 0)} đ</span></div>
-                    <div class="flex justify-between text-rose-600 font-bold border-t border-blue-200/60 pt-1"><span>Thu hộ (COD):</span><span class="font-mono">${formatVND(order.codRequested || 0)} đ (${codState === 'settled' ? 'Đã đối soát' : 'Chưa đối soát'})</span></div>
+                    <div class="flex justify-between text-rose-600 font-bold border-t border-blue-200/60 pt-1"><span>Thu hộ (COD):</span><span class="font-mono">${formatVND(order.codRequested || 0)} đ (${codState === 'settled' ? 'Đã đối soát' : codState === 'carrier_collected' ? 'Hãng đã thu, chờ tiền về' : codState === 'disputed' ? 'Lệch tiền cần kiểm tra' : 'Chưa đối soát'})</span></div>
+                    ${trustedHTML(
+                        codRec && Number(codRec.codCollected) > 0
+                            ? renderHTML`<div class="flex justify-between text-blue-800"><span>Hãng báo đã thu:</span><span class="font-mono">${formatVND(codRec.codCollected)} đ</span></div>`
+                            : ''
+                    )}
+                    ${trustedHTML(
+                        codRec?.note && ['carrier_collected', 'disputed'].includes(codState)
+                            ? renderHTML`<div class="text-[11px] text-gray-600 italic">${codRec.note}</div>`
+                            : ''
+                    )}
                 </div>
                 <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/70 space-y-1 max-h-36 overflow-y-auto">
                     <div class="text-[10.5px] font-bold text-gray-400 uppercase">Hành trình vận đơn</div>
@@ -10128,6 +10366,56 @@ async function printDeliveryLabel(id) {
     printRegion('printable-delivery-label', true, 'k80');
 }
 
+// ===== D4: in nhãn hàng loạt cho các đơn đang hiển thị (tối đa 100) =====
+async function printDeliveryLabelsBatch() {
+    const branch = getCurrentBranch();
+    const isAll = branch === ALL_BRANCHES;
+    const q = (document.getElementById('delivery-search-input')?.value || '').trim().toLowerCase();
+    const carrierFilter = document.getElementById('delivery-carrier-filter')?.value || 'all';
+    const dateFilter = document.getElementById('delivery-date-filter')?.value || 'all';
+    const ids = (KVStore.data?.delivery_orders || [])
+        .filter((o) => {
+            if (o.carrierType === 'self' || !o.shipmentCode) return false;
+            if (!isAll && (o.branch || FALLBACK_BRANCH) !== branch) return false;
+            if (carrierFilter !== 'all' && carrierFilter !== 'viettelpost') return false;
+            if (
+                dateFilter !== 'all' &&
+                !matchesDateFilter(formatDeliveryTime(o.createdAt), dateFilter)
+            )
+                return false;
+            if (!matchDeliveryStatusCard(o, deliveryStatusFilter)) return false;
+            if (q) {
+                const hay =
+                    `${o.code || ''} ${o.invoiceCode || ''} ${o.shipmentCode || ''} ${o.receiverName || ''} ${o.receiverPhone || ''}`.toLowerCase();
+                if (!hay.includes(q)) return false;
+            }
+            return true;
+        })
+        .map((o) => o.id || o.code)
+        .slice(0, 100);
+
+    if (!ids.length) {
+        showToast(
+            'Không có vận đơn Viettel Post nào (đã có mã) để in trong bộ lọc hiện tại.',
+            'warning'
+        );
+        return;
+    }
+    const win = window.open('', '_blank');
+    try {
+        const res = await KVStore.request('/api/vtp/label-batch', {
+            method: 'POST',
+            body: JSON.stringify({ ids, size: 'A5', showPostage: 1 })
+        });
+        if (win) win.location.href = res.url;
+        else window.open(res.url, '_blank');
+        showToast(`Đã mở nhãn in cho ${res.count} vận đơn.`, 'success');
+    } catch (error) {
+        if (win) win.close();
+        showToast(error.message, 'error');
+    }
+}
+
 async function cancelPosDelivery(id) {
     if (
         !(await askAction({
@@ -10192,6 +10480,57 @@ async function vtpOrderAction(id, action, { title, message, confirmText } = {}) 
         renderDelivery();
     } catch (error) {
         showToast(error.message, 'error');
+    }
+}
+
+// ===== A3: mở form sửa thông tin vận đơn đã gửi hãng =====
+function openVtpEditModal(id) {
+    const order = (KVStore.data?.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    const modal = document.getElementById('vtp-edit-modal');
+    if (!order || !modal) return;
+    document.getElementById('vtp-edit-id').value = order.id || order.code;
+    document.getElementById('vtp-edit-name').value = order.receiverName || '';
+    document.getElementById('vtp-edit-phone').value = order.receiverPhone || '';
+    document.getElementById('vtp-edit-address').value = order.receiverAddress || '';
+    document.getElementById('vtp-edit-weight').value = Number(order.weightGram) || 200;
+    document.getElementById('vtp-edit-cod').value = Number(order.codRequested) || 0;
+    document.getElementById('vtp-edit-note').value = order.note || '';
+    document.getElementById('vtp-edit-hint').textContent =
+        `Mã vận đơn ${order.shipmentCode || '—'}. Chỉ sửa được khi Viettel Post chưa lấy hàng.`;
+    document.getElementById('vtp-edit-status').textContent = '';
+    modal.classList.remove('hidden');
+    captureModalSnapshot('vtp-edit-modal');
+    setTimeout(() => document.getElementById('vtp-edit-name')?.focus(), 50);
+}
+
+async function submitVtpEdit(event) {
+    event.preventDefault();
+    const status = document.getElementById('vtp-edit-status');
+    const id = document.getElementById('vtp-edit-id').value;
+    const payload = {
+        id,
+        receiverName: document.getElementById('vtp-edit-name').value.trim(),
+        receiverPhone: document.getElementById('vtp-edit-phone').value.trim(),
+        receiverAddress: document.getElementById('vtp-edit-address').value.trim(),
+        note: document.getElementById('vtp-edit-note').value.trim(),
+        weightGram: Number(document.getElementById('vtp-edit-weight').value) || 0,
+        codRequested: Number(document.getElementById('vtp-edit-cod').value) || 0
+    };
+    if (!payload.receiverName || !payload.receiverPhone || !payload.receiverAddress) {
+        status.textContent = 'Vui lòng nhập đủ tên, số điện thoại và địa chỉ người nhận.';
+        return;
+    }
+    try {
+        await KVStore.request('/api/vtp/edit', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        closeModalWithCheck('vtp-edit-modal', true);
+        showToast('Đã gửi yêu cầu sửa vận đơn tới Viettel Post.', 'success');
+        await forceSyncDatabase();
+        renderDelivery();
+    } catch (error) {
+        status.textContent = error.message;
     }
 }
 

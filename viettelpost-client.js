@@ -249,6 +249,11 @@ async function createOrderNlp(payload) {
     return requestWithAuth('POST', '/v2/order/createOrderNlp', { body: payload });
 }
 
+// Sửa thông tin đơn đã tạo (chỉ khi hãng chưa lấy hàng, ORDER_STATUS < 200).
+async function editOrder(payload) {
+    return requestWithAuth('POST', '/v2/order/edit', { body: payload });
+}
+
 // TYPE: 1 duyệt đơn, 2 đồng ý hoàn, 3 phát tiếp, 4 hủy, 5 xóa đơn đã hủy.
 async function updateOrder(type, orderNumber, note = '') {
     return requestWithAuth('POST', '/v2/order/UpdateOrder', {
@@ -280,6 +285,7 @@ module.exports = {
     getPriceNlp,
     createOrder,
     createOrderNlp,
+    editOrder,
     updateOrder,
     printingCode,
     bytes

@@ -847,7 +847,12 @@ function writeDeliverySideTables(d, data) {
             'reasonCode',
             'note',
             'receivedAt',
-            'processedAt'
+            'processedAt',
+            'location',
+            'employeeName',
+            'employeePhone',
+            'expectedDelivery',
+            'podImages'
         ],
         (r) => [
             r.id || '',
@@ -859,7 +864,12 @@ function writeDeliverySideTables(d, data) {
             r.reasonCode || null,
             r.note || '',
             r.receivedAt || '',
-            r.processedAt || null
+            r.processedAt || null,
+            r.location || '',
+            r.employeeName || '',
+            r.employeePhone || '',
+            r.expectedDelivery || '',
+            r.podImages || ''
         ]
     );
     upsert(

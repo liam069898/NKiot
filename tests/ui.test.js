@@ -4118,3 +4118,101 @@ test('Phase 4 UX/UI: U8 permission-aware forms & status, U9 typography and touch
         w.close();
     }
 });
+
+test('delivery POS derives payment type and exposes payer/weight/prepaid controls', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(
+            'KVStore.data.products[0].hasImei=false;KVStore.data.products[0].imeis=[];KVStore.data.products[0].stock=5;'
+        );
+        w.openDeliveryPos();
+        w.addPosCartItem(w.eval('KVStore.data.products[0]'));
+        w.setPosDeliveryCarrierType('viettelpost');
+
+        // Mặc định khách trả phí ship
+        assert.equal(w.eval('state.posTabs[0].delivery.payer'), 'customer');
+
+        // Nút chọn nhanh khối lượng
+        w.setPosDeliveryWeight(500);
+        assert.equal(w.eval('state.posTabs[0].delivery.weightGram'), 500);
+        assert.equal(doc.getElementById('pos-dlv-weight').value, '500');
+
+        // Khách trả ship + có phí => thu hộ hàng + cước (loại 2); VTP không cần ô cước trả hãng
+        w.handlePosDeliveryMoneyInput('shippingFeeToCustomer', '25000');
+        assert.equal(w.eval('state.posTabs[0].delivery.paymentType'), 2);
+        assert.equal(
+            doc.getElementById('pos-dlv-carrier-fee-wrap').classList.contains('hidden'),
+            true
+        );
+
+        // Shop trả ship => phí 0 và thu hộ tiền hàng (loại 3)
+        w.setPosDeliveryPayer('shop');
+        assert.equal(w.eval('state.posTabs[0].delivery.shippingFeeToCustomer'), 0);
+        assert.equal(w.eval('state.posTabs[0].delivery.paymentType'), 3);
+
+        // Khách trả trước toàn bộ => không thu hộ (loại 1), hiện ô tiền trả trước
+        w.setPosDeliveryPayer('customer');
+        w.handlePosDeliveryMoneyInput('shippingFeeToCustomer', '0');
+        w.setPosDeliveryQuickPrepaid('paid100');
+        assert.equal(w.eval('state.posTabs[0].delivery.paymentType'), 1);
+        assert.equal(
+            doc.getElementById('pos-dlv-prepaid-detail').classList.contains('hidden'),
+            false
+        );
+
+        // Tự giao: hiện ô cước trả hãng/ship
+        w.setPosDeliveryCarrierType('self');
+        assert.equal(
+            doc.getElementById('pos-dlv-carrier-fee-wrap').classList.contains('hidden'),
+            false
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('delivery POS renders Viettel Post services as selectable cards', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.openDeliveryPos();
+        w.setPosDeliveryCarrierType('viettelpost');
+        w.eval(
+            "KVStore.data.settings.address='1 Lê Lợi, Q1, HCM';state.posTabs[0].delivery.receiverAddress='123 Lê Lợi, Q1, HCM';state.posTabs[0].delivery.weightGram=200;"
+        );
+        w.eval(`
+            window.__vtpOriginalRequest = KVStore.request;
+            KVStore.request = async () => ({
+                success: true,
+                services: [
+                    { code: 'LCOD', name: 'Tiết kiệm', price: 34720, time: '72 giờ' },
+                    { code: 'NCOD', name: 'Nhanh', price: 43120, time: '36 giờ' }
+                ],
+                quote: null
+            });
+        `);
+        try {
+            w.refreshPosVtpServices();
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const cards = doc.querySelectorAll('#pos-dlv-service-cards [data-service]');
+            assert.equal(cards.length, 2, 'phải render 2 thẻ dịch vụ');
+            assert.match(cards[0].textContent, /Tiết kiệm/);
+            assert.match(cards[0].textContent, /34\.720|34720/);
+            w.selectPosVtpService('NCOD');
+            assert.equal(w.eval('state.posTabs[0].delivery.service'), 'NCOD');
+            assert.equal(
+                doc
+                    .querySelector('#pos-dlv-service-cards [data-service="NCOD"]')
+                    .getAttribute('aria-pressed'),
+                'true'
+            );
+        } finally {
+            w.eval('KVStore.request = window.__vtpOriginalRequest;');
+        }
+    } finally {
+        w.close();
+    }
+});

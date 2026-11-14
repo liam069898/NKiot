@@ -3453,6 +3453,15 @@
                             Làm mới
                         </button>
                         <button
+                            id="delivery-batch-label-btn"
+                            type="button"
+                            onclick="printDeliveryLabelsBatch()"
+                            title="In nhãn Viettel Post cho các đơn đang hiển thị (tối đa 100)"
+                            class="px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 font-semibold text-[12.5px] transition"
+                        >
+                            In nhãn hàng loạt
+                        </button>
+                        <button
                             id="delivery-open-pos-btn"
                             type="button"
                             onclick="openDeliveryPos()"
@@ -5265,15 +5274,11 @@
                                 >
                                     <div class="flex items-center justify-between">
                                         <span class="text-[11.5px] font-bold text-slate-800"
-                                            >Thông tin người nhận</span
+                                            >① Thông tin người nhận</span
                                         >
-                                        <button
-                                            type="button"
-                                            onclick="fillPosDeliveryFromCustomer()"
-                                            class="text-[11px] font-semibold text-[#0066cc] hover:underline"
+                                        <span class="text-[10.5px] text-gray-500"
+                                            >Chọn khách ở ô tìm kiếm để tự điền</span
                                         >
-                                            Lấy từ khách mua
-                                        </button>
                                     </div>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                         <div>
@@ -5343,41 +5348,7 @@
                                     class="space-y-1.5 bg-blue-50/50 p-2.5 rounded-xl border border-blue-200/60"
                                 >
                                     <div class="grid grid-cols-3 gap-1.5">
-                                        <div>
-                                            <label
-                                                for="pos-dlv-service"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >Dịch vụ VTP</label
-                                            >
-                                            <div class="flex items-center gap-1">
-                                                <select
-                                                    id="pos-dlv-service"
-                                                    onchange="
-                                                        updatePosDeliveryField(
-                                                            'service',
-                                                            this.value
-                                                        )
-                                                    "
-                                                    class="mt-0.5 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-1.5 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
-                                                >
-                                                    <option value="">Đang tải dịch vụ…</option>
-                                                </select>
-                                                <button
-                                                    type="button"
-                                                    id="pos-dlv-service-refresh"
-                                                    onclick="refreshPosVtpServices()"
-                                                    title="Lấy lại dịch vụ theo địa chỉ & khối lượng"
-                                                    class="mt-0.5 h-[30px] w-[30px] flex-shrink-0 rounded-lg bg-white border border-gray-200 text-[#0066cc] hover:bg-blue-50 text-[13px] leading-none"
-                                                >
-                                                    ↻
-                                                </button>
-                                            </div>
-                                            <div
-                                                id="pos-dlv-service-hint"
-                                                class="text-[10.5px] text-gray-500 mt-0.5 leading-tight"
-                                            ></div>
-                                        </div>
-                                        <div>
+                                        <div class="col-span-1">
                                             <label
                                                 for="pos-dlv-weight"
                                                 class="block text-[11px] font-medium text-gray-600"
@@ -5394,8 +5365,63 @@
                                                 placeholder="200"
                                                 class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] tabular-nums focus:outline-none focus:border-[#0066cc]"
                                             />
+                                            <div class="flex gap-1 mt-1">
+                                                <button
+                                                    type="button"
+                                                    onclick="setPosDeliveryWeight(200)"
+                                                    class="px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10.5px] text-gray-600 hover:border-[#0066cc]"
+                                                >
+                                                    200
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onclick="setPosDeliveryWeight(500)"
+                                                    class="px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10.5px] text-gray-600 hover:border-[#0066cc]"
+                                                >
+                                                    500
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onclick="setPosDeliveryWeight(1000)"
+                                                    class="px-1.5 py-0.5 rounded bg-white border border-gray-200 text-[10.5px] text-gray-600 hover:border-[#0066cc]"
+                                                >
+                                                    1kg
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div>
+                                        <div class="col-span-3">
+                                            <div class="flex items-center justify-between mb-1">
+                                                <label
+                                                    for="pos-dlv-service"
+                                                    class="block text-[11px] font-medium text-gray-600"
+                                                    >② Dịch vụ giao hàng</label
+                                                >
+                                                <button
+                                                    type="button"
+                                                    id="pos-dlv-service-refresh"
+                                                    onclick="refreshPosVtpServices()"
+                                                    title="Lấy lại dịch vụ theo địa chỉ & khối lượng"
+                                                    class="text-[10.5px] font-semibold text-[#0066cc] hover:underline"
+                                                >
+                                                    ↻ Tải lại
+                                                </button>
+                                            </div>
+                                            <div id="pos-dlv-service-cards" class="space-y-1"></div>
+                                            <select
+                                                id="pos-dlv-service"
+                                                onchange="
+                                                    updatePosDeliveryField('service', this.value)
+                                                "
+                                                class="hidden"
+                                            >
+                                                <option value="">Đang tải dịch vụ…</option>
+                                            </select>
+                                            <div
+                                                id="pos-dlv-service-hint"
+                                                class="text-[10.5px] text-gray-500 mt-1 leading-tight"
+                                            ></div>
+                                        </div>
+                                        <div class="hidden">
                                             <label
                                                 for="pos-dlv-payment-type"
                                                 class="block text-[11px] font-medium text-gray-600"
@@ -5802,6 +5828,35 @@
                                 <div
                                     class="space-y-1.5 bg-white/80 p-2.5 rounded-xl border border-gray-200/80 text-[12px]"
                                 >
+                                    <div class="flex items-center justify-between gap-1">
+                                        <span class="text-[11px] font-medium text-gray-600"
+                                            >③ Ai trả phí ship?</span
+                                        >
+                                        <div
+                                            role="group"
+                                            aria-label="Ai trả phí ship"
+                                            class="flex items-center gap-1 bg-gray-100/90 p-0.5 rounded-lg border border-gray-200/70"
+                                        >
+                                            <button
+                                                type="button"
+                                                id="pos-dlv-payer-customer"
+                                                onclick="setPosDeliveryPayer('customer')"
+                                                aria-pressed="true"
+                                                class="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-white text-[#0066cc] shadow-2xs transition"
+                                            >
+                                                Khách trả
+                                            </button>
+                                            <button
+                                                type="button"
+                                                id="pos-dlv-payer-shop"
+                                                onclick="setPosDeliveryPayer('shop')"
+                                                aria-pressed="false"
+                                                class="px-2 py-0.5 rounded-md text-[11px] font-medium text-gray-600 hover:text-gray-900 transition"
+                                            >
+                                                Shop trả (freeship)
+                                            </button>
+                                        </div>
+                                    </div>
                                     <div class="grid grid-cols-2 gap-1.5">
                                         <div>
                                             <label
@@ -5823,7 +5878,7 @@
                                                 class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-semibold tabular-nums focus:outline-none focus:border-[#0066cc]"
                                             />
                                         </div>
-                                        <div>
+                                        <div id="pos-dlv-carrier-fee-wrap" class="hidden">
                                             <label
                                                 for="pos-dlv-carrier-fee"
                                                 class="block text-[11px] font-medium text-gray-600"
@@ -5844,92 +5899,106 @@
                                             />
                                         </div>
                                     </div>
-                                    <div
-                                        class="grid grid-cols-2 gap-1.5 pt-1 border-t border-gray-100"
-                                    >
-                                        <div>
-                                            <label
-                                                for="pos-dlv-prepaid"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >Khách cọc / trả trước</label
+                                    <div class="pt-1 border-t border-gray-100 space-y-1.5">
+                                        <div class="flex items-center justify-between gap-1">
+                                            <span class="text-[11px] font-medium text-gray-600"
+                                                >Khách trả trước</span
                                             >
-                                            <input
-                                                id="pos-dlv-prepaid"
-                                                type="text"
-                                                inputmode="numeric"
-                                                oninput="
-                                                    handlePosDeliveryMoneyInput(
-                                                        'prepaid',
-                                                        this.value
-                                                    )
-                                                "
-                                                placeholder="0"
-                                                class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-bold text-emerald-700 tabular-nums focus:outline-none focus:border-[#0066cc]"
-                                            />
+                                            <div class="flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    id="pos-dlv-prepaid-none"
+                                                    onclick="setPosDeliveryQuickPrepaid('cod100')"
+                                                    aria-pressed="true"
+                                                    class="px-2 py-0.5 rounded-lg border border-gray-200 bg-gray-50 text-gray-700 font-semibold text-[11px] transition"
+                                                >
+                                                    Không
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    id="pos-dlv-prepaid-full"
+                                                    onclick="setPosDeliveryQuickPrepaid('paid100')"
+                                                    aria-pressed="false"
+                                                    class="px-2 py-0.5 rounded-lg border border-blue-200 bg-blue-50 text-[#0066cc] font-semibold text-[11px] transition"
+                                                >
+                                                    Toàn bộ
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label
-                                                for="pos-dlv-prepaid-method"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >Hình thức nhận cọc</label
-                                            >
-                                            <select
-                                                id="pos-dlv-prepaid-method"
-                                                onchange="
-                                                    updatePosDeliveryField(
-                                                        'prepaidMethod',
-                                                        this.value
-                                                    )
-                                                "
-                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
-                                            >
-                                                <option value="transfer">Chuyển khoản (QR)</option>
-                                                <option value="cash">Tiền mặt</option>
-                                                <option value="card">Quẹt thẻ</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-center justify-between gap-1 pt-0.5">
-                                        <div class="flex items-center gap-1">
-                                            <button
-                                                type="button"
-                                                onclick="setPosDeliveryQuickPrepaid('cod100')"
-                                                class="px-2 py-0.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-700 font-semibold text-[11px] transition"
-                                            >
-                                                COD 100%
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onclick="setPosDeliveryQuickPrepaid('paid100')"
-                                                class="px-2 py-0.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#0066cc] font-semibold text-[11px] transition"
-                                            >
-                                                Trả trước 100%
-                                            </button>
-                                        </div>
-                                        <div class="text-right">
-                                            <span class="text-[11px] text-gray-500"
-                                                >Thu hộ (COD):</span
-                                            >
-                                            <span
-                                                id="pos-dlv-cod-amount"
-                                                class="ml-1 font-black text-[14px] text-rose-600 tabular-nums"
-                                                >0 đ</span
-                                            >
-                                        </div>
-                                    </div>
-                                    <div class="pt-1 border-t border-gray-100">
-                                        <label
-                                            for="pos-dlv-note"
-                                            class="block text-[11px] font-medium text-gray-600"
-                                            >Ghi chú giao hàng</label
+                                        <div
+                                            id="pos-dlv-prepaid-detail"
+                                            class="hidden grid grid-cols-2 gap-1.5"
                                         >
+                                            <div>
+                                                <label
+                                                    for="pos-dlv-prepaid"
+                                                    class="block text-[11px] font-medium text-gray-600"
+                                                    >Số tiền trả trước</label
+                                                >
+                                                <input
+                                                    id="pos-dlv-prepaid"
+                                                    type="text"
+                                                    inputmode="numeric"
+                                                    oninput="
+                                                        handlePosDeliveryMoneyInput(
+                                                            'prepaid',
+                                                            this.value
+                                                        )
+                                                    "
+                                                    placeholder="0"
+                                                    class="mt-0.5 w-full text-right bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12.5px] font-bold text-emerald-700 tabular-nums focus:outline-none focus:border-[#0066cc]"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label
+                                                    for="pos-dlv-prepaid-method"
+                                                    class="block text-[11px] font-medium text-gray-600"
+                                                    >Hình thức nhận cọc</label
+                                                >
+                                                <select
+                                                    id="pos-dlv-prepaid-method"
+                                                    onchange="
+                                                        updatePosDeliveryField(
+                                                            'prepaidMethod',
+                                                            this.value
+                                                        )
+                                                    "
+                                                    class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                                >
+                                                    <option value="transfer">
+                                                        Chuyển khoản (QR)
+                                                    </option>
+                                                    <option value="cash">Tiền mặt</option>
+                                                    <option value="card">Quẹt thẻ</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="rounded-xl border-2 border-rose-200 bg-rose-50/70 px-3 py-2 flex items-center justify-between gap-2"
+                                    >
+                                        <span class="text-[12px] font-bold text-rose-900"
+                                            >Thu hộ khi giao (COD)</span
+                                        >
+                                        <span
+                                            id="pos-dlv-cod-amount"
+                                            class="font-black text-[18px] text-rose-600 tabular-nums leading-none"
+                                            >0 đ</span
+                                        >
+                                    </div>
+                                    <details class="pt-1 border-t border-gray-100">
+                                        <summary
+                                            class="cursor-pointer text-[11px] font-medium text-gray-600 select-none"
+                                        >
+                                            Ghi chú giao hàng (tùy chọn)
+                                        </summary>
                                         <input
                                             id="pos-dlv-note"
                                             type="text"
                                             maxlength="200"
                                             oninput="updatePosDeliveryField('note', this.value)"
                                             placeholder="VD: Cho xem hàng, gọi trước khi giao..."
-                                            class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                            class="mt-1 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
                                         />
                                         <div class="flex flex-wrap gap-1 mt-1">
                                             <button
@@ -5956,7 +6025,7 @@
                                                 Hàng dễ vỡ
                                             </button>
                                         </div>
-                                    </div>
+                                    </details>
                                 </div>
                             </div>
 
@@ -13020,6 +13089,130 @@
                             class="px-5 py-2 rounded-xl bg-[#0066cc] hover:bg-blue-700 text-white font-bold text-[13px]"
                         >
                             Lưu kết nối
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- MODAL SỬA THÔNG TIN VẬN ĐƠN VIETTEL POST (A3) -->
+        <!-- ========================================== -->
+        <div
+            id="vtp-edit-modal"
+            class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[160] flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vtp-edit-title"
+        >
+            <div
+                class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col border border-white/80"
+            >
+                <div class="flex justify-between items-center mb-3 border-b border-gray-100 pb-2">
+                    <h2 id="vtp-edit-title" class="font-bold text-[16px] text-gray-900">
+                        Sửa thông tin vận đơn
+                    </h2>
+                    <button
+                        type="button"
+                        onclick="closeModalWithCheck('vtp-edit-modal')"
+                        aria-label="Đóng"
+                        class="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-bold"
+                    >
+                        ✕
+                    </button>
+                </div>
+                <p id="vtp-edit-hint" class="text-[11.5px] text-gray-500 mb-2"></p>
+                <form
+                    id="vtp-edit-form"
+                    onsubmit="submitVtpEdit(event)"
+                    class="space-y-2.5 text-[12.5px]"
+                >
+                    <input type="hidden" id="vtp-edit-id" />
+                    <div>
+                        <label for="vtp-edit-name" class="block font-semibold text-gray-700 mb-1"
+                            >Tên người nhận</label
+                        >
+                        <input
+                            id="vtp-edit-name"
+                            type="text"
+                            maxlength="150"
+                            class="w-full border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-[#0066cc]"
+                        />
+                    </div>
+                    <div>
+                        <label for="vtp-edit-phone" class="block font-semibold text-gray-700 mb-1"
+                            >SĐT người nhận</label
+                        >
+                        <input
+                            id="vtp-edit-phone"
+                            type="tel"
+                            maxlength="20"
+                            class="w-full border border-gray-200 rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-[#0066cc]"
+                        />
+                    </div>
+                    <div>
+                        <label for="vtp-edit-address" class="block font-semibold text-gray-700 mb-1"
+                            >Địa chỉ giao</label
+                        >
+                        <textarea
+                            id="vtp-edit-address"
+                            rows="2"
+                            maxlength="150"
+                            class="w-full border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-[#0066cc]"
+                        ></textarea>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2.5">
+                        <div>
+                            <label
+                                for="vtp-edit-weight"
+                                class="block font-semibold text-gray-700 mb-1"
+                                >Khối lượng (g)</label
+                            >
+                            <input
+                                id="vtp-edit-weight"
+                                type="number"
+                                min="1"
+                                max="1000000"
+                                class="w-full border border-gray-200 rounded-xl px-3 py-2 tabular-nums focus:outline-none focus:border-[#0066cc]"
+                            />
+                        </div>
+                        <div>
+                            <label for="vtp-edit-cod" class="block font-semibold text-gray-700 mb-1"
+                                >Tiền thu hộ (đ)</label
+                            >
+                            <input
+                                id="vtp-edit-cod"
+                                type="number"
+                                min="0"
+                                class="w-full border border-gray-200 rounded-xl px-3 py-2 tabular-nums focus:outline-none focus:border-[#0066cc]"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label for="vtp-edit-note" class="block font-semibold text-gray-700 mb-1"
+                            >Ghi chú giao hàng</label
+                        >
+                        <input
+                            id="vtp-edit-note"
+                            type="text"
+                            maxlength="150"
+                            class="w-full border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:border-[#0066cc]"
+                        />
+                    </div>
+                    <div id="vtp-edit-status" class="text-[11.5px] text-gray-500"></div>
+                    <div class="flex justify-end gap-2 pt-2 border-t border-gray-100">
+                        <button
+                            type="button"
+                            onclick="closeModalWithCheck('vtp-edit-modal')"
+                            class="glass-btn-secondary px-4 py-2 text-gray-700 rounded-xl font-medium"
+                        >
+                            Hủy
+                        </button>
+                        <button
+                            type="submit"
+                            class="glass-btn-primary px-5 py-2 text-white rounded-xl font-bold"
+                        >
+                            Gửi cập nhật
                         </button>
                     </div>
                 </form>

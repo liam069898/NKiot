@@ -10,7 +10,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { verifyPassword } = require('../security');
 
 test('migration 8 upgrades a v7 catalog without losing its rows', () => {
-    const { applyMigrations } = require('../migrations');
+    const { applyMigrations, LATEST_SCHEMA_VERSION } = require('../migrations');
     const d = new DatabaseSync(':memory:');
     try {
         d.exec(`
@@ -31,7 +31,7 @@ test('migration 8 upgrades a v7 catalog without losing its rows', () => {
         applyMigrations(d, { entityTables: [] });
         assert.equal(
             d.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version,
-            12
+            LATEST_SCHEMA_VERSION
         );
         assert.ok(
             d
@@ -124,7 +124,7 @@ test('legacy schema upgrade backs up original data and preserves empty catalog a
                 .prepare('SELECT version FROM schema_migrations ORDER BY version')
                 .all()
                 .map((row) => row.version),
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            Array.from({ length: require('../migrations').LATEST_SCHEMA_VERSION }, (_, i) => i + 1)
         );
         assert.equal(
             upgraded.prepare("SELECT total FROM invoices WHERE id='KEEP'").get().total,

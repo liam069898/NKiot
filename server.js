@@ -872,6 +872,70 @@ async function handler(req, res) {
                     });
                 }
             }
+            if (url.pathname === '/api/vtp/label-batch' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                try {
+                    const batch = await require('./delivery-service').batchLabelUrl(
+                        Array.isArray(input?.ids) ? input.ids : [],
+                        {
+                            size: String(input?.size || 'A5').slice(0, 10),
+                            showPostage: input?.showPostage ? 1 : 0
+                        }
+                    );
+                    return json(res, 200, { success: true, ...batch });
+                } catch (error) {
+                    return json(res, error.status || 502, {
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+            if (url.pathname === '/api/vtp/quote' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                try {
+                    const quote = await require('./delivery-service').quoteService(input);
+                    return json(res, 200, { success: true, quote });
+                } catch (error) {
+                    return json(res, 200, {
+                        success: true,
+                        quote: null,
+                        warning: error.message || 'Không tính được cước.'
+                    });
+                }
+            }
+            if (url.pathname === '/api/vtp/edit' && req.method === 'POST') {
+                auth.requirePermission(user, 'shipping');
+                const input = await body(req);
+                const id = String(input?.id || '').slice(0, 200);
+                if (!id) throw Object.assign(new Error('Thiếu mã đơn giao hàng.'), { status: 400 });
+                const outcome = require('./delivery-service').enqueueOrderEdit(id, {
+                    receiverName: input?.receiverName,
+                    receiverPhone: input?.receiverPhone,
+                    receiverAddress: input?.receiverAddress,
+                    note: input?.note,
+                    weightGram: input?.weightGram,
+                    codRequested: input?.codRequested
+                });
+                if (!outcome.ok) {
+                    const messages = {
+                        unknown_order: 'Không tìm thấy vận đơn.',
+                        self_delivery: 'Đơn tự giao không sửa qua Viettel Post.',
+                        no_shipment_code: 'Đơn chưa có mã vận đơn Viettel Post.',
+                        not_editable: 'Chỉ sửa được đơn hãng chưa lấy hàng.',
+                        invalid_value: 'Giá trị cập nhật không hợp lệ.',
+                        nothing_to_change: 'Không có thông tin nào thay đổi.',
+                        action_pending: 'Đang có thao tác khác chờ xử lý cho đơn này.'
+                    };
+                    return json(res, 409, {
+                        success: false,
+                        error: messages[outcome.reason] || 'Không sửa được vận đơn.'
+                    });
+                }
+                require('./delivery-service').scheduleDelivery(0);
+                return json(res, 200, { success: true, queued: true, fields: outcome.fields });
+            }
             if (url.pathname === '/api/vtp/action' && req.method === 'POST') {
                 auth.requirePermission(user, 'shipping');
                 const input = await body(req);

@@ -2769,4 +2769,35 @@ test('Viettel Post config saves over the real API and webhook always answers 200
         assert.equal(cancelNoCode.status, 409);
         assert.match(cancelNoCode.json.error, /chưa có mã vận đơn/);
     });
+
+    test('Viettel Post quote, edit and batch label endpoints respond safely', async () => {
+        const login = await request('POST', '/api/login', {
+            username: 'admin',
+            password: 'Test-password-123'
+        });
+        const cookie = login.headers['set-cookie'].split(';')[0];
+        const csrf = { 'x-nkiot-csrf': login.json.csrfToken };
+        const H = [cookie, csrf];
+
+        // Chưa cấu hình VTP: trả 200 với quote null thay vì lỗi chặn bán hàng
+        const quote = await request(
+            'POST',
+            '/api/vtp/quote',
+            { senderAddress: 'A', receiverAddress: 'B', weightGram: 200, service: 'VCN' },
+            ...H
+        );
+        assert.equal(quote.status, 200);
+        assert.equal(quote.json.success, true);
+        assert.equal(quote.json.quote, null);
+
+        // Sửa vận đơn không tồn tại
+        const edit = await request('POST', '/api/vtp/edit', { id: 'NOPE', note: 'x' }, ...H);
+        assert.equal(edit.status, 409);
+        assert.match(edit.json.error, /Không tìm thấy vận đơn/);
+
+        // In hàng loạt khi không có đơn nào có mã
+        const batch = await request('POST', '/api/vtp/label-batch', { ids: [] }, ...H);
+        assert.equal(batch.status, 409);
+        assert.match(batch.json.error, /Không có vận đơn nào/);
+    });
 });
