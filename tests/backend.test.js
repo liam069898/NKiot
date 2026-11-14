@@ -2800,4 +2800,73 @@ test('Viettel Post config saves over the real API and webhook always answers 200
         assert.equal(batch.status, 409);
         assert.match(batch.json.error, /Không có vận đơn nào/);
     });
+
+    test('delivery status history is append-only and older rows survive snapshot saves', () => {
+        const d = db.getDb();
+        d.exec('DELETE FROM delivery_status_history');
+        const ins = d.prepare(
+            'INSERT INTO delivery_status_history (id, deliveryId, orderNumber, statusCode, statusName, statusDate, receivedAt) VALUES (?,?,?,?,?,?,?)'
+        );
+        d.exec('BEGIN');
+        for (let i = 0; i < 2200; i++)
+            ins.run(`H${i}`, 'GHX', 'VPX', 200, `s${i}`, String(i), String(i));
+        d.exec('COMMIT');
+        const count = () => d.prepare('SELECT COUNT(*) AS n FROM delivery_status_history').get().n;
+        assert.equal(count(), 2200);
+
+        // Lưu snapshot (như mỗi giao dịch POS) không được xoá lịch sử cũ
+        db.saveAllData(db.getAllData());
+        assert.equal(count(), 2200, 'không được cắt bớt lịch sử khi lưu snapshot');
+        assert.ok(
+            d.prepare("SELECT 1 FROM delivery_status_history WHERE id='H0'").get(),
+            'dòng cũ nhất vẫn còn'
+        );
+        const newest = db.getAllData().delivery_status_history[0];
+        assert.equal(newest.id, 'H2199', 'vẫn đọc mới nhất trước');
+    });
+
+    test('Viettel Post delivery APIs reject an order from another branch', async () => {
+        // Nhân viên chỉ thuộc chi nhánh B
+        const data = db.getAllData();
+        data.users.push({
+            id: 'SHIPB',
+            code: 'SHIPB',
+            name: 'Ship B',
+            username: 'shipb',
+            password: hashPassword('Test-password-123'),
+            role: 'staff',
+            status: 'active',
+            permissions: { shipping: true },
+            branch: 'B',
+            branches: ['B']
+        });
+        db.saveAllData(data);
+
+        // Đơn thuộc chi nhánh A
+        const order = command('deliverySale', {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1 }],
+            carrierType: 'viettelpost',
+            receiverName: 'Khách',
+            receiverPhone: '0987654321',
+            receiverAddress: 'Đường Nguyễn Huệ, Q1'
+        }).result.delivery;
+
+        const login = await request('POST', '/api/login', {
+            username: 'shipb',
+            password: 'Test-password-123'
+        });
+        const cookie = login.headers['set-cookie'].split(';')[0];
+        const csrf = { 'x-nkiot-csrf': login.json.csrfToken };
+        for (const [path, payload] of [
+            ['/api/vtp/label', { id: order.id }],
+            ['/api/vtp/edit', { id: order.id, note: 'x' }],
+            ['/api/vtp/action', { id: order.id, action: 'cancel' }],
+            ['/api/vtp/requeue', { id: order.id }],
+            ['/api/vtp/label-batch', { ids: [order.id] }]
+        ]) {
+            const res = await request('POST', path, payload, cookie, csrf);
+            assert.equal(res.status, 403, `${path} phải chặn chi nhánh khác: ${res.body}`);
+        }
+    });
 });

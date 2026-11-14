@@ -4096,7 +4096,7 @@ function refreshPosVtpServices() {
             }
             if (hint) {
                 // D1: hiện cước + thời gian giao của dịch vụ đang chọn, kèm nút điền phí ship.
-                hint.innerHTML = `${services.length} dịch vụ khả dụng · Cước <strong>${formatVND(pick.price)} đ</strong> · ${pick.time}
+                hint.innerHTML = renderHTML`${services.length} dịch vụ khả dụng · Cước <strong>${formatVND(pick.price)} đ</strong> · ${pick.time}
                     <button type="button" onclick="applyVtpServiceFee()" class="ml-1 text-[#0066cc] font-semibold underline">Thu khách = cước</button>`;
             }
         })
@@ -10062,6 +10062,7 @@ function renderDeliveryRows(tbody, orders, isAll) {
             <td class="py-2.5 px-3">
                 <span class="inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold ${isSelf ? 'bg-amber-50 text-amber-800 border border-amber-200/70' : 'bg-blue-50 text-[#0066cc] border border-blue-200/70'}">${carrierLabel}</span>
                 <div class="text-[11.5px] font-mono text-gray-600 mt-0.5">${order.shipmentCode || (isSelf ? order.shipperName || '—' : 'Chờ cấp mã')}</div>
+                ${trustedHTML(Number(order.carrierFee) > 0 ? renderHTML`<div class="text-[10.5px] text-amber-700 font-medium">Cước: ${formatVND(order.carrierFee)} đ</div>` : '')}
                 ${trustedHTML(orderCreateError ? renderHTML`<div class="text-[11px] text-rose-600 font-medium mt-0.5 max-w-[220px] truncate" title="${orderCreateError}">⚠️ ${orderCreateError}</div>` : '')}
             </td>
             <td class="py-2.5 px-3">
@@ -10273,6 +10274,7 @@ function renderDeliveryDetailHtml(order) {
                     <div class="text-[10.5px] font-bold text-blue-800 uppercase">Tiền hàng &amp; Đối soát COD</div>
                     <div class="flex justify-between"><span>Tiền hàng:</span><span class="font-mono font-bold">${formatVND(order.productTotal || 0)} đ</span></div>
                     <div class="flex justify-between"><span>Phí ship thu khách:</span><span class="font-mono font-semibold">${formatVND(order.shippingFeeToCustomer || 0)} đ</span></div>
+                    <div class="flex justify-between"><span>Cước trả hãng:</span><span class="font-mono font-semibold text-amber-700">${formatVND(order.carrierFee || 0)} đ</span></div>
                     <div class="flex justify-between text-emerald-700"><span>Khách trả trước:</span><span class="font-mono font-bold">${formatVND(order.prepaid || 0)} đ</span></div>
                     <div class="flex justify-between text-rose-600 font-bold border-t border-blue-200/60 pt-1"><span>Thu hộ (COD):</span><span class="font-mono">${formatVND(order.codRequested || 0)} đ (${codState === 'settled' ? 'Đã đối soát' : codState === 'carrier_collected' ? 'Hãng đã thu, chờ tiền về' : codState === 'disputed' ? 'Lệch tiền cần kiểm tra' : 'Chưa đối soát'})</span></div>
                     ${trustedHTML(
@@ -10691,6 +10693,10 @@ function toggleInvoiceRowDetail(code) {
 function renderInvoiceDetailHtml(inv) {
     const isCancelled = inv.status === 'cancelled';
     const isReturned = Boolean(inv.hasReturned);
+    // Vận đơn gắn với hóa đơn (nếu là đơn giao hàng) để hiển thị cước/phí ship.
+    const dlv = (KVStore.data?.delivery_orders || []).find(
+        (o) => o.invoiceId === inv.id || o.invoiceCode === inv.code
+    );
     const statusBadge = isCancelled
         ? '<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200">Đã hủy</span>'
         : isReturned
@@ -10782,6 +10788,7 @@ function renderInvoiceDetailHtml(inv) {
                     <div class="font-bold text-gray-900">${escapeHTML(inv.customer || 'Khách lẻ')}</div>
                     <div class="text-gray-600 font-mono">Điện thoại: ${escapeHTML(inv.phone || 'Chưa có')}</div>
                     <div class="text-gray-600">Thu ngân: <span class="font-medium text-gray-800">${escapeHTML(inv.cashier || 'Admin')}</span></div>
+                    ${dlv ? `<div class="text-gray-600">Vận đơn: <span class="font-mono text-[#0066cc]">${escapeHTML(dlv.shipmentCode || dlv.code || '')}</span></div>` : ''}
                 </div>
 
                 <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
@@ -10794,6 +10801,13 @@ function renderInvoiceDetailHtml(inv) {
                 <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100 space-y-1">
                     <div class="text-[10.5px] font-bold text-blue-800 uppercase tracking-wider mb-1">Tổng quan tiền hàng</div>
                     <div class="flex justify-between"><span class="text-gray-600">Tổng tiền hàng:</span><span class="font-bold font-mono text-gray-900">${formatVND(inv.total)} đ</span></div>
+                    ${
+                        dlv
+                            ? `<div class="flex justify-between"><span class="text-gray-600">Phí ship thu khách:</span><span class="font-mono">${formatVND(dlv.shippingFeeToCustomer || 0)} đ</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Cước trả hãng:</span><span class="font-mono text-amber-700">${formatVND(dlv.carrierFee || 0)} đ</span></div>
+                    <div class="flex justify-between"><span class="text-gray-600">Thu hộ (COD):</span><span class="font-mono">${formatVND(dlv.codRequested || 0)} đ</span></div>`
+                            : ''
+                    }
                     <div class="flex justify-between"><span class="text-gray-600">Khách đã trả:</span><span class="font-bold font-mono text-emerald-600">${formatVND(inv.paid)} đ</span></div>
                     ${remainingDebt > 0 ? `<div class="flex justify-between text-rose-600 font-bold"><span class="text-rose-600 font-normal">Còn nợ:</span><span class="font-mono">${formatVND(remainingDebt)} đ</span></div>` : ''}
                 </div>

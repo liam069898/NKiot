@@ -825,14 +825,17 @@ const cols = (s) => s.split(' ');
 const items = (v) => (typeof v === 'string' ? v : JSON.stringify(v || []));
 // Persists delivery side tables that are not full entity snapshots (history/tasks/cod).
 function writeDeliverySideTables(d, data) {
-    const upsert = (table, rows, columns, toParams) => {
-        d.exec(`DELETE FROM ${table}`);
+    // `append`: không xóa bảng trước khi ghi (dùng cho lịch sử hành trình, vốn chỉ thêm dòng).
+    const upsert = (table, rows, columns, toParams, append = false) => {
+        if (!append) d.exec(`DELETE FROM ${table}`);
         if (!Array.isArray(rows) || !rows.length) return;
         const placeholders = columns.map(() => '?').join(',');
         const insert = d.prepare(
-            `INSERT INTO ${table} (${columns.join(',')}) VALUES (${placeholders})`
+            `INSERT OR REPLACE INTO ${table} (${columns.join(',')}) VALUES (${placeholders})`
         );
-        for (const row of rows) insert.run(...toParams(row));
+        // Snapshot đọc mới-nhất-trước (unshift); ghi ngược lại để rowid tăng dần theo thời gian.
+        const list = append ? rows.slice().reverse() : rows;
+        for (const row of list) insert.run(...toParams(row));
     };
     upsert(
         'delivery_status_history',
@@ -870,8 +873,15 @@ function writeDeliverySideTables(d, data) {
             r.employeePhone || '',
             r.expectedDelivery || '',
             r.podImages || ''
-        ]
+        ],
+        true
     );
+    // Giữ lịch sử trong giới hạn hợp lý; chỉ dọn khi vượt ngưỡng để không tốn chi phí mỗi lần lưu.
+    const historyCount = d.prepare('SELECT COUNT(*) AS n FROM delivery_status_history').get().n;
+    if (historyCount > 20000)
+        d.exec(`DELETE FROM delivery_status_history WHERE rowid NOT IN (
+            SELECT rowid FROM delivery_status_history ORDER BY rowid DESC LIMIT 20000
+        )`);
     upsert(
         'delivery_tasks',
         data.delivery_tasks,

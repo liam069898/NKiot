@@ -147,6 +147,17 @@ function setCookie(res, token, remember = false, secure = false) {
         `minikiot_session=${token}; HttpOnly; SameSite=Strict; Path=/${remember ? '; Max-Age=604800' : ''}${secure ? '; Secure' : ''}`
     );
 }
+// Kiểm tra quyền chi nhánh cho một vận đơn (dùng cho các API thao tác Viettel Post).
+// Trả về null khi không tìm thấy để tầng service trả lỗi phù hợp.
+function requireDeliveryBranch(user, id) {
+    const data = db.readSnapshot();
+    const order = (data.delivery_orders || []).find((o) => o.id === id || o.code === id);
+    if (!order) return null;
+    const allowed = auth.allowedBranches(user, data);
+    if (!allowed.includes(order.branch))
+        throw Object.assign(new Error('Đơn giao hàng thuộc chi nhánh khác.'), { status: 403 });
+    return order;
+}
 function view(user) {
     const data = db.readSnapshot();
     const fresh = data.users.find((u) => u.id === user.id);
@@ -859,6 +870,7 @@ async function handler(req, res) {
                 const input = await body(req);
                 const id = String(input?.id || '').slice(0, 200);
                 if (!id) throw Object.assign(new Error('Thiếu mã đơn giao hàng.'), { status: 400 });
+                requireDeliveryBranch(user, id);
                 try {
                     const label = await require('./delivery-service').labelUrl(id, {
                         size: String(input?.size || 'A5').slice(0, 10),
@@ -876,13 +888,27 @@ async function handler(req, res) {
                 auth.requirePermission(user, 'shipping');
                 const input = await body(req);
                 try {
-                    const batch = await require('./delivery-service').batchLabelUrl(
-                        Array.isArray(input?.ids) ? input.ids : [],
-                        {
-                            size: String(input?.size || 'A5').slice(0, 10),
-                            showPostage: input?.showPostage ? 1 : 0
-                        }
+                    // Chỉ in các đơn thuộc chi nhánh người dùng được phép xem.
+                    const snapshot = db.readSnapshot();
+                    const allowedBranches = auth.allowedBranches(user, snapshot);
+                    const allowedIds = new Set(
+                        (snapshot.delivery_orders || [])
+                            .filter((o) => allowedBranches.includes(o.branch))
+                            .flatMap((o) => [o.id, o.code])
                     );
+                    const requested = (Array.isArray(input?.ids) ? input.ids : []).map(String);
+                    const ids = requested.filter((id) => allowedIds.has(id));
+                    if (!ids.length)
+                        return json(res, requested.length ? 403 : 409, {
+                            success: false,
+                            error: requested.length
+                                ? 'Chỉ in được vận đơn thuộc chi nhánh bạn quản lý.'
+                                : 'Không có vận đơn nào thuộc chi nhánh bạn quản lý để in.'
+                        });
+                    const batch = await require('./delivery-service').batchLabelUrl(ids, {
+                        size: String(input?.size || 'A5').slice(0, 10),
+                        showPostage: input?.showPostage ? 1 : 0
+                    });
                     return json(res, 200, { success: true, ...batch });
                 } catch (error) {
                     return json(res, error.status || 502, {
@@ -910,6 +936,7 @@ async function handler(req, res) {
                 const input = await body(req);
                 const id = String(input?.id || '').slice(0, 200);
                 if (!id) throw Object.assign(new Error('Thiếu mã đơn giao hàng.'), { status: 400 });
+                requireDeliveryBranch(user, id);
                 const outcome = require('./delivery-service').enqueueOrderEdit(id, {
                     receiverName: input?.receiverName,
                     receiverPhone: input?.receiverPhone,
@@ -945,6 +972,7 @@ async function handler(req, res) {
                     throw Object.assign(new Error('Thiếu đơn hoặc thao tác vận đơn.'), {
                         status: 400
                     });
+                requireDeliveryBranch(user, id);
                 const outcome = require('./delivery-service').enqueueOrderAction(
                     id,
                     action,
@@ -974,6 +1002,7 @@ async function handler(req, res) {
                 const input = await body(req);
                 const id = String(input?.id || '').slice(0, 200);
                 if (!id) throw Object.assign(new Error('Thiếu mã đơn giao hàng.'), { status: 400 });
+                requireDeliveryBranch(user, id);
                 const delivery = require('./delivery-service');
                 const outcome = delivery.requeueCreateOrderTask(id);
                 if (!outcome.ok) return json(res, 409, { success: false, error: outcome.reason });

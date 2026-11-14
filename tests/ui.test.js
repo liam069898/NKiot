@@ -4266,4 +4266,79 @@ test('delivery POS renders Viettel Post services as selectable cards', async () 
             w.close();
         }
     });
+
+    test('delivery service hint escapes carrier-provided text', async () => {
+        const dom = browser(),
+            w = dom.window;
+        try {
+            const doc = w.document;
+            w.openDeliveryPos();
+            w.setPosDeliveryCarrierType('viettelpost');
+            w.eval(
+                "KVStore.data.settings.address='1 Lê Lợi, Q1';state.posTabs[0].delivery.receiverAddress='2 Lê Lợi, Q1';state.posTabs[0].delivery.weightGram=200;"
+            );
+            w.eval(`
+            window.__origRequest = KVStore.request;
+            KVStore.request = async () => ({
+                success: true,
+                services: [{ code: 'X1', name: 'Dịch vụ X', price: 1000, time: '<img src=x onerror=alert(1)>' }],
+                quote: null
+            });
+        `);
+            try {
+                w.refreshPosVtpServices();
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                const hint = doc.getElementById('pos-dlv-service-hint');
+                assert.equal(
+                    hint.querySelector('img'),
+                    null,
+                    'không được chèn HTML từ dữ liệu hãng'
+                );
+                assert.match(
+                    hint.textContent,
+                    /<img src=x/,
+                    'phải hiển thị nguyên văn dưới dạng chữ'
+                );
+            } finally {
+                w.eval('KVStore.request = window.__origRequest;');
+            }
+        } finally {
+            w.close();
+        }
+    });
+
+    test('delivery and invoice detail show the Viettel Post carrier fee', () => {
+        const dom = browser(),
+            w = dom.window;
+        try {
+            w.eval(`
+            KVStore.data.delivery_orders = [{
+                id:'GHF', code:'GHF', invoiceId:'HD1', invoiceCode:'HD1', branch:getCurrentBranch(),
+                carrierType:'viettelpost', carrierName:'Viettel Post', shipmentCode:'VPF',
+                receiverName:'A', receiverPhone:'0901', receiverAddress:'HCM',
+                productTotal:100000, prepaid:0, codRequested:130000, carrierFee:34720,
+                shippingFeeToCustomer:30000, status:'submitted',
+                createdAt:new Date().toISOString(), items:[]
+            }];
+            KVStore.data.invoices = [{
+                id:'HD1', code:'HD1', branch:getCurrentBranch(), customer:'Khách', phone:'0901',
+                cashier:'Admin', total:100000, paid:0, items:[], payments:[],
+                time:new Date().toISOString(), status:'completed', channel:'delivery'
+            }];
+        `);
+            const dlvHtml = String(
+                w.renderDeliveryDetailHtml(w.eval('KVStore.data.delivery_orders[0]'))
+            );
+            assert.match(dlvHtml, /Cước trả hãng/);
+            assert.match(dlvHtml, /34\.720|34720/);
+
+            const invHtml = String(w.renderInvoiceDetailHtml(w.eval('KVStore.data.invoices[0]')));
+            assert.match(invHtml, /Cước trả hãng/, 'chi tiết hóa đơn phải hiện cước trả hãng');
+            assert.match(invHtml, /Vận đơn/, 'chi tiết hóa đơn phải hiện mã vận đơn');
+            assert.match(invHtml, /VPF/);
+            assert.match(invHtml, /34\.720|34720/);
+        } finally {
+            w.close();
+        }
+    });
 });

@@ -496,4 +496,123 @@ test('labelUrl builds the official DigitalizePrint link and reuses the cached pr
             delete process.env.NKIOT_VTP_BASE_URL;
         }
     });
+
+    test('recoverStaleTasks returns abandoned running tasks to the queue', async () => {
+        const id = seedDelivery('confirmed');
+        const oldIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        db.getDb()
+            .prepare(
+                `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+            )
+            .run(`T-${id}`, id, 'create_order', '{}', 0, null, 'running', '', oldIso, oldIso);
+
+        const info = delivery.recoverStaleTasks();
+        assert.ok(info.changes >= 1);
+        const row = db
+            .getDb()
+            .prepare('SELECT status, nextAttemptAt FROM delivery_tasks WHERE id=?')
+            .get(`T-${id}`);
+        assert.equal(row.status, 'unknown');
+        assert.ok(Number(row.nextAttemptAt) <= Date.now());
+    });
+
+    test('editing COD on an order keeps its COD record consistent', async () => {
+        const id = seedDelivery('submitted', 'VP-EDIT-COD');
+        db.getDb().prepare('UPDATE delivery_orders SET codRequested=200000 WHERE id=?').run(id);
+        db.getDb()
+            .prepare(
+                `INSERT INTO delivery_cod_records (id, deliveryId, codRequested, codCollected, carrierFee, settlementAmount, status, settledAt, note, createdAt, updatedAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+            )
+            .run(
+                `COD-${id}`,
+                id,
+                200000,
+                0,
+                0,
+                0,
+                'unpaid',
+                null,
+                '',
+                new Date().toISOString(),
+                new Date().toISOString()
+            );
+
+        const patch = { codRequested: 0 };
+        assert.equal(delivery.enqueueOrderEdit(id, patch).ok, true);
+        const original = vtp.editOrder;
+        vtp.editOrder = async () => ({ status: 200, error: false });
+        process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.vn';
+        try {
+            await delivery.processPendingTasks();
+        } finally {
+            vtp.editOrder = original;
+            delete process.env.NKIOT_VTP_BASE_URL;
+        }
+        const rec = db
+            .getDb()
+            .prepare('SELECT codRequested, status FROM delivery_cod_records WHERE deliveryId=?')
+            .get(id);
+        assert.equal(rec.codRequested, 0, 'kỳ vọng COD phải theo giá trị mới');
+        assert.equal(rec.status, 'settled', 'COD về 0 thì coi như không còn thu hộ');
+    });
+
+    test('carrier fee is stored from createOrder response and refreshed by webhook', async () => {
+        const id = seedDelivery('confirmed');
+        db.getDb()
+            .prepare(
+                `INSERT INTO delivery_tasks (id, deliveryId, action, payload, attempt, nextAttemptAt, status, lastError, createdAt, updatedAt)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+            )
+            .run(
+                `T-${id}`,
+                id,
+                'create_order',
+                '{}',
+                0,
+                Date.now() - 1000,
+                'pending',
+                '',
+                new Date().toISOString(),
+                new Date().toISOString()
+            );
+        const originalAvailable = vtp.availableServices;
+        const originalCreate = vtp.createOrderNlp;
+        vtp.availableServices = async () => [
+            { code: 'LCOD', name: 'Tiết kiệm', price: 30000, time: '72 giờ' }
+        ];
+        vtp.createOrderNlp = async () => ({
+            data: { ORDER_NUMBER: 'VP-FEE-1', MONEY_TOTAL: 34720, MONEY_TOTAL_FEE: 31564 }
+        });
+        process.env.NKIOT_VTP_BASE_URL = 'https://partnerdev.viettelpost.com';
+        let fee = 0;
+        try {
+            await delivery.processPendingTasks();
+            fee = db
+                .getDb()
+                .prepare('SELECT carrierFee FROM delivery_orders WHERE id=?')
+                .get(id).carrierFee;
+            assert.equal(fee, 34720, 'lưu cước từ phản hồi tạo đơn');
+        } finally {
+            vtp.availableServices = originalAvailable;
+            vtp.createOrderNlp = originalCreate;
+            delete process.env.NKIOT_VTP_BASE_URL;
+        }
+
+        // Webhook báo cước thực tế khác -> cập nhật lại
+        delivery.handleWebhook({
+            DATA: {
+                ORDER_NUMBER: 'VP-FEE-1',
+                ORDER_STATUS: 200,
+                ORDER_STATUSDATE: '13/11/2026 09:00:00',
+                MONEY_TOTALFEE: 39999
+            }
+        });
+        const after = db
+            .getDb()
+            .prepare('SELECT carrierFee FROM delivery_orders WHERE id=?')
+            .get(id);
+        assert.equal(after.carrierFee, 39999, 'cước thực tế từ webhook được đồng bộ');
+    });
 });

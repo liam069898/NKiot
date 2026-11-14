@@ -64,6 +64,23 @@ function applyStatus(record, statusCode) {
     return record;
 }
 
+// Task có thể kẹt 'running' nếu tiến trình dừng giữa lúc gọi hãng. Đưa về 'unknown'
+// để worker thử lại (idempotent nhờ CHECK_UNIQUE + mã tham chiếu cố định).
+// UPDATE có điều kiện nên chạy lại mỗi chu kỳ vẫn rẻ và không đổi dữ liệu khi không cần.
+function recoverStaleTasks() {
+    const d = db.getDb();
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const info = d
+        .prepare(
+            `UPDATE delivery_tasks
+             SET status='unknown', nextAttemptAt=?, lastError=?, updatedAt=?
+             WHERE status='running' AND updatedAt < ?`
+        )
+        .run(Date.now(), 'Khôi phục sau khi tiến trình dừng khi đang xử lý.', nowIso(), cutoff);
+    if (info.changes) db.bumpRevision();
+    return info;
+}
+
 // Lấy task đầu tiên đến hạn, đánh dấu running trong một transaction độc lập.
 function claimNextTask() {
     const d = db.getDb();
@@ -330,11 +347,19 @@ async function processTask(task) {
             db.bumpRevision();
         }
         const response = await vtp.createOrderNlp(buildCreateOrderPayload(record));
-        const orderNumber = text(response?.data?.ORDER_NUMBER, 200);
+        const info = response?.data || {};
+        const orderNumber = text(info.ORDER_NUMBER, 200);
         if (!orderNumber) throw new Error('Viettel Post không trả mã vận đơn.');
+        // Lưu cước thật hãng trả về để đối soát chi phí vận chuyển.
+        const carrierFee = Number(info.MONEY_TOTAL ?? info.MONEY_TOTAL_FEE ?? 0) || 0;
         finishTask(task.id, {
             status: 'done',
-            delivery: { id: record.id, shipmentCode: orderNumber, status: 'submitted' }
+            delivery: {
+                id: record.id,
+                shipmentCode: orderNumber,
+                status: 'submitted',
+                ...(carrierFee > 0 ? { carrierFee } : {})
+            }
         });
     } catch (error) {
         const detail = String(error.message || error).slice(0, 500);
@@ -437,6 +462,8 @@ async function processOrderEdit(task, record) {
                 `UPDATE delivery_orders SET ${fields.map((k) => `${k}=?`).join(',')}, updatedAt=? WHERE id=?`
             )
             .run(...fields.map((k) => patch[k]), nowIso(), record.id);
+        // Sửa COD phải đồng bộ kỳ vọng thu hộ, nếu không đối soát sẽ báo lệch sai.
+        if (patch.codRequested !== undefined) syncCodAfterEdit(record.id);
         finishTask(task.id, { status: 'done' });
     } catch (error) {
         const detail = String(error.message || error).slice(0, 500);
@@ -460,6 +487,7 @@ async function processPendingTasks() {
     if (running) return running;
     running = (async () => {
         if (!enabled()) return { processed: 0 };
+        recoverStaleTasks();
         let processed = 0;
         for (let i = 0; i < 25; i++) {
             const task = claimNextTask();
@@ -560,6 +588,20 @@ function handleWebhook(payload) {
     // C1: đối soát COD theo số tiền hãng báo đã thu. Chỉ ghi nhận "hãng đã thu",
     // KHÔNG coi là đã về tài khoản; đối soát tiền về vẫn do cửa hàng xác nhận.
     if (!already) reconcileCod(record.id, data);
+    // Đồng bộ cước vận chuyển thực tế hãng báo (MONEY_TOTALFEE) vào đơn.
+    const actualCarrierFee = Number(data.MONEY_TOTALFEE);
+    if (
+        Number.isFinite(actualCarrierFee) &&
+        actualCarrierFee > 0 &&
+        actualCarrierFee !== Number(record.carrierFee)
+    ) {
+        d.prepare('UPDATE delivery_orders SET carrierFee=?, updatedAt=? WHERE id=?').run(
+            actualCarrierFee,
+            nowIso(),
+            record.id
+        );
+        db.bumpRevision();
+    }
     const next = applyStatus({ ...record }, statusCode);
     if (next.status === record.status)
         return { recorded: true, deliveryId: record.id, status: statusCode, unchanged: true };
@@ -626,7 +668,12 @@ function requeueCreateOrderTask(deliveryId) {
             now,
             now
         );
-    } else if (task.status === 'failed' || task.status === 'unknown') {
+    } else if (
+        task.status === 'failed' ||
+        task.status === 'unknown' ||
+        // Task kẹt 'running' do tiến trình dừng đột ngột cũng cho phép tạo lại.
+        (task.status === 'running' && Date.parse(task.updatedAt || 0) < Date.now() - 5 * 60 * 1000)
+    ) {
         d.prepare(
             `UPDATE delivery_tasks SET status='pending', attempt=0, lastError='', nextAttemptAt=?, updatedAt=? WHERE id=?`
         ).run(Date.now(), nowIso(), task.id);
@@ -710,6 +757,23 @@ function failureReasonText(code) {
     return VTP_FAILURE_REASONS[String(code).trim()] || '';
 }
 
+// Ghi trạng thái COD vào cột `extra` (JSON) của đơn để UI hiển thị thống nhất.
+function setOrderCodStatus(deliveryId, status) {
+    const d = db.getDb();
+    const row = d.prepare('SELECT extra FROM delivery_orders WHERE id=?').get(deliveryId);
+    if (!row) return;
+    let extra = {};
+    try {
+        extra = JSON.parse(row.extra || '{}');
+    } catch {}
+    extra.codStatus = status;
+    d.prepare('UPDATE delivery_orders SET extra=?, updatedAt=? WHERE id=?').run(
+        JSON.stringify(extra),
+        nowIso(),
+        deliveryId
+    );
+}
+
 // ===== C1: Đối soát COD từ webhook =====
 // Chỉ ghi nhận "hãng đã thu" và cảnh báo lệch; KHÔNG tự coi là tiền đã về tài khoản.
 function reconcileCod(deliveryId, data) {
@@ -728,21 +792,49 @@ function reconcileCod(deliveryId, data) {
     d.prepare(
         'UPDATE delivery_cod_records SET codCollected=?, status=?, note=?, updatedAt=? WHERE id=?'
     ).run(collected, status, text(note, 500), now, rec.id);
-    // codStatus nằm trong cột `extra` (JSON) của delivery_orders, không phải cột riêng.
-    const row = d.prepare('SELECT extra FROM delivery_orders WHERE id=?').get(deliveryId);
-    if (row) {
-        let extra = {};
-        try {
-            extra = JSON.parse(row.extra || '{}');
-        } catch {}
-        extra.codStatus = status;
-        d.prepare('UPDATE delivery_orders SET extra=?, updatedAt=? WHERE id=?').run(
-            JSON.stringify(extra),
-            now,
-            deliveryId
-        );
-    }
+    setOrderCodStatus(deliveryId, status);
     db.bumpRevision();
+}
+
+// Sau khi sửa COD của vận đơn, đồng bộ lại kỳ vọng thu hộ để đối soát không báo lệch sai.
+function syncCodAfterEdit(deliveryId) {
+    const d = db.getDb();
+    const order = d.prepare('SELECT codRequested FROM delivery_orders WHERE id=?').get(deliveryId);
+    const rec = d.prepare('SELECT * FROM delivery_cod_records WHERE deliveryId=?').get(deliveryId);
+    if (!order || !rec || ['settled', 'cancelled'].includes(rec.status)) return;
+    const expected = Math.max(0, Number(order.codRequested) || 0);
+    const collected = Number(rec.codCollected) || 0;
+    let status = rec.status;
+    let note = rec.note || '';
+    if (expected === 0) {
+        if (collected > 0) {
+            status = 'disputed';
+            note = `Đã sửa COD về 0 nhưng hãng báo đã thu ${collected}đ.`;
+        } else {
+            status = 'settled';
+            note = 'Đơn không còn tiền thu hộ sau khi sửa.';
+        }
+    } else if (collected <= 0) {
+        status = rec.status === 'partial_prepaid' ? 'partial_prepaid' : 'unpaid';
+        note = '';
+    } else if (collected >= expected) {
+        status = 'carrier_collected';
+        note = `Hãng báo đã thu ${collected}đ (dự kiến ${expected}đ). Chờ tiền về tài khoản để đối soát.`;
+    } else {
+        status = 'disputed';
+        note = `Hãng thu ${collected}đ, thiếu ${expected - collected}đ sau khi sửa.`;
+    }
+    d.prepare(
+        'UPDATE delivery_cod_records SET codRequested=?, status=?, note=?, settledAt=?, updatedAt=? WHERE id=?'
+    ).run(
+        expected,
+        status,
+        text(note, 500),
+        status === 'settled' ? nowIso() : rec.settledAt || null,
+        nowIso(),
+        rec.id
+    );
+    setOrderCodStatus(deliveryId, status);
 }
 
 // ===== A3: Sửa thông tin vận đơn đã gửi hãng =====
@@ -904,6 +996,7 @@ module.exports = {
     applyStatus,
     mapVtpStatus,
     listServices,
+    recoverStaleTasks,
     enqueueOrderAction,
     enqueueOrderEdit,
     quoteService,
