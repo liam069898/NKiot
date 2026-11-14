@@ -148,6 +148,7 @@ async function initApp() {
     setupKeyboardShortcuts();
     setupTableCheckboxes();
     setupSearchInputs();
+    restoreDeliveryLabelSize();
     try {
         if (typeof localStorage !== 'undefined') {
             const savedCatalog = localStorage.getItem('minikiot_pos_show_catalog');
@@ -10301,6 +10302,34 @@ function renderDeliveryDetailHtml(order) {
         </div>`.toString();
 }
 
+// Khổ giấy in nhãn Viettel Post (A5/A6/A7), lưu lại cho lần sau.
+const DELIVERY_LABEL_SIZES = ['A5', 'A6', 'A7'];
+function getDeliveryLabelSize() {
+    try {
+        if (typeof localStorage !== 'undefined') {
+            const saved = localStorage.getItem('minikiot_delivery_label_size');
+            if (DELIVERY_LABEL_SIZES.includes(saved)) return saved;
+        }
+    } catch {}
+    const el = document.getElementById('delivery-label-size');
+    return DELIVERY_LABEL_SIZES.includes(el?.value) ? el.value : 'A5';
+}
+
+function setDeliveryLabelSize(size) {
+    const value = DELIVERY_LABEL_SIZES.includes(size) ? size : 'A5';
+    const el = document.getElementById('delivery-label-size');
+    if (el) el.value = value;
+    try {
+        if (typeof localStorage !== 'undefined')
+            localStorage.setItem('minikiot_delivery_label_size', value);
+    } catch {}
+}
+
+function restoreDeliveryLabelSize() {
+    const el = document.getElementById('delivery-label-size');
+    if (el) el.value = getDeliveryLabelSize();
+}
+
 async function printDeliveryLabel(id) {
     const order = (KVStore.data?.delivery_orders || []).find((o) => o.id === id || o.code === id);
     const box = document.getElementById('printable-delivery-label');
@@ -10314,7 +10343,11 @@ async function printDeliveryLabel(id) {
         try {
             const res = await KVStore.request('/api/vtp/label', {
                 method: 'POST',
-                body: JSON.stringify({ id: order.id || order.code, size: 'A5', showPostage: 1 })
+                body: JSON.stringify({
+                    id: order.id || order.code,
+                    size: getDeliveryLabelSize(),
+                    showPostage: 1
+                })
             });
             if (win) win.location.href = res.url;
             else window.open(res.url, '_blank');
@@ -10405,7 +10438,7 @@ async function printDeliveryLabelsBatch() {
     try {
         const res = await KVStore.request('/api/vtp/label-batch', {
             method: 'POST',
-            body: JSON.stringify({ ids, size: 'A5', showPostage: 1 })
+            body: JSON.stringify({ ids, size: getDeliveryLabelSize(), showPostage: 1 })
         });
         if (win) win.location.href = res.url;
         else window.open(res.url, '_blank');

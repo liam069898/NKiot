@@ -3452,6 +3452,23 @@
                         >
                             Làm mới
                         </button>
+                        <label
+                            for="delivery-label-size"
+                            class="flex items-center gap-1.5 text-[12px] text-gray-600 font-medium"
+                            title="Khổ giấy in nhãn Viettel Post"
+                        >
+                            <span class="hidden sm:inline">Khổ in</span>
+                            <select
+                                id="delivery-label-size"
+                                aria-label="Khổ giấy in nhãn Viettel Post"
+                                onchange="setDeliveryLabelSize(this.value)"
+                                class="bg-white/80 backdrop-blur-sm border border-gray-200/90 rounded-xl py-1.5 px-2 text-[12px] text-gray-700 font-medium focus:outline-none focus:border-[#0066cc] shadow-xs"
+                            >
+                                <option value="A5">A5</option>
+                                <option value="A6">A6</option>
+                                <option value="A7">A7</option>
+                            </select>
+                        </label>
                         <button
                             id="delivery-batch-label-btn"
                             type="button"

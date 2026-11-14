@@ -4215,4 +4215,55 @@ test('delivery POS renders Viettel Post services as selectable cards', async () 
     } finally {
         w.close();
     }
+
+    test('delivery label size selector drives single and batch printing (A5/A6/A7)', async () => {
+        const dom = browser(),
+            w = dom.window;
+        try {
+            const doc = w.document;
+
+            // Mặc định A5
+            assert.equal(w.getDeliveryLabelSize(), 'A5');
+
+            // Đổi sang A7: lưu lại và cập nhật ô chọn
+            w.setDeliveryLabelSize('A7');
+            assert.equal(w.getDeliveryLabelSize(), 'A7');
+            assert.equal(doc.getElementById('delivery-label-size').value, 'A7');
+
+            w.eval(`
+            KVStore.data.delivery_orders = [{
+                id:'GH1', code:'GH1', invoiceCode:'HD1', branch:getCurrentBranch(),
+                carrierType:'viettelpost', shipmentCode:'VP1', receiverName:'A',
+                receiverPhone:'0901', receiverAddress:'HCM', productTotal:1000,
+                prepaid:0, codRequested:1000, status:'submitted',
+                createdAt:new Date().toISOString(), items:[]
+            }];
+            window.__origRequest = KVStore.request;
+            window.__lastCall = null;
+            KVStore.request = async (url, opts) => {
+                window.__lastCall = { url, body: opts && opts.body ? JSON.parse(opts.body) : null };
+                return { success: true, url: 'https://label.example/x', count: 1 };
+            };
+        `);
+            // Tránh mở tab thật trong jsdom
+            w.open = () => ({ location: { href: '' }, close() {} });
+            try {
+                await w.printDeliveryLabel('GH1');
+                assert.equal(w.eval('window.__lastCall.url'), '/api/vtp/label');
+                assert.equal(w.eval('window.__lastCall.body.size'), 'A7');
+
+                await w.printDeliveryLabelsBatch();
+                assert.equal(w.eval('window.__lastCall.url'), '/api/vtp/label-batch');
+                assert.equal(w.eval('window.__lastCall.body.size'), 'A7');
+            } finally {
+                w.eval('KVStore.request = window.__origRequest;');
+            }
+
+            // Quay lại A6 vẫn nhớ đúng lựa chọn
+            w.setDeliveryLabelSize('A6');
+            assert.equal(w.getDeliveryLabelSize(), 'A6');
+        } finally {
+            w.close();
+        }
+    });
 });
