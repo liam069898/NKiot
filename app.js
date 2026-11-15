@@ -2401,6 +2401,32 @@ function syncPosDeliveryPanel(grandTotal = 0) {
     document.getElementById('pos-dlv-vtp-fields')?.classList.toggle('hidden', isSelf);
     document.getElementById('pos-dlv-self-fields')?.classList.toggle('hidden', !isSelf);
 
+    // Tự giao hàng: chỉ có Đối tác giao hàng + Mã vận đơn.
+    if (isSelf) {
+        const partners = getDeliveryPartners();
+        const currentPartner =
+            d.carrierName && partners.includes(d.carrierName)
+                ? d.carrierName
+                : isViettelPostPartner(d.carrierName)
+                  ? 'Viettel Post'
+                  : 'Nhân viên tự giao';
+        const partnerSelect = document.getElementById('pos-dlv-carrier-name');
+        if (partnerSelect && partnerSelect.options.length !== partners.length) {
+            renderDeliveryPartnerOptions(currentPartner);
+        } else if (partnerSelect && document.activeElement !== partnerSelect) {
+            partnerSelect.value = currentPartner;
+        }
+        const isVtpPartner = isViettelPostPartner(currentPartner);
+        const hint = document.getElementById('pos-dlv-partner-hint');
+        if (hint)
+            hint.textContent = isVtpPartner
+                ? 'Viettel Post: nhập mã vận đơn đã tạo trên web VTP để đồng bộ trạng thái, in nhãn và đối soát COD.'
+                : 'Chọn hoặc tạo đối tác giao hàng.';
+        document
+            .getElementById('pos-dlv-shipment-required')
+            ?.classList.toggle('hidden', !isVtpPartner);
+    }
+
     const syncVal = (id, val) => {
         const el = document.getElementById(id);
         if (el && document.activeElement !== el) el.value = val;
@@ -4206,6 +4232,82 @@ function setPosDeliveryQuickPrepaid(preset) {
 }
 
 // ===== Giao diện Bán giao hàng tối ưu: chọn nhanh khối lượng / ai trả ship / dịch vụ dạng thẻ =====
+// ===== Đối tác giao hàng cho "Tự giao hàng" =====
+const DELIVERY_PARTNER_PRESETS = [
+    'Nhân viên tự giao',
+    'Viettel Post',
+    'GHN',
+    'GHTK',
+    'J&T Express',
+    'Grab / Ahamove / XanhSM',
+    'Xe khách / Chành xe'
+];
+
+function getDeliveryPartners() {
+    let custom = [];
+    try {
+        const raw = localStorage.getItem('minikiot_delivery_partners');
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed))
+            custom = parsed.filter((n) => typeof n === 'string' && n.trim()).slice(0, 100);
+    } catch {}
+    return [...new Set([...DELIVERY_PARTNER_PRESETS, ...custom])];
+}
+
+function saveDeliveryPartner(name) {
+    const value = String(name || '')
+        .trim()
+        .slice(0, 120);
+    if (!value) return '';
+    const all = getDeliveryPartners();
+    if (all.some((p) => p.toLowerCase() === value.toLowerCase())) return value;
+    const custom = all.filter((p) => !DELIVERY_PARTNER_PRESETS.includes(p));
+    custom.push(value);
+    try {
+        localStorage.setItem('minikiot_delivery_partners', JSON.stringify(custom.slice(-100)));
+    } catch {}
+    return value;
+}
+
+// Nhận diện Viettel Post theo tên chứa "viettel" (không phân biệt hoa thường).
+function isViettelPostPartner(name) {
+    return /viettel/i.test(String(name || ''));
+}
+
+function renderDeliveryPartnerOptions(selected) {
+    const select = document.getElementById('pos-dlv-carrier-name');
+    if (!select) return;
+    const list = getDeliveryPartners();
+    const value = selected || select.value || 'Nhân viên tự giao';
+    select.replaceChildren();
+    list.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+    });
+    select.value = list.includes(value) ? value : list[0];
+}
+
+async function addDeliveryPartner() {
+    const result = await askAction({
+        title: 'Thêm đối tác giao hàng',
+        message: 'Nhập tên đối tác (ví dụ: Viettel Post, GHN, GHTK…).',
+        confirmText: 'Thêm đối tác',
+        inputLabel: 'Tên đối tác',
+        value: '',
+        validate: (value) =>
+            !value ? 'Vui lòng nhập tên đối tác.' : value.length > 120 ? 'Tối đa 120 ký tự.' : ''
+    });
+    if (!result) return;
+    const name = saveDeliveryPartner(result.value);
+    const curTab = state.posTabs[state.activePosTab];
+    if (curTab?.delivery) curTab.delivery.carrierName = name;
+    savePosDraft();
+    renderPosScreen();
+    showToast(`Đã thêm đối tác "${name}".`, 'success');
+}
+
 function setPosDeliveryWeight(grams) {
     const input = document.getElementById('pos-dlv-weight');
     if (input) input.value = String(grams);
@@ -4462,7 +4564,26 @@ function buildPosDeliverySalePayload(tab, mappedItems, orderNote) {
         throw new Error('Vui lòng nhập địa chỉ giao hàng chi tiết.');
     }
 
-    const carrierType = d.carrierType === 'self' ? 'self' : 'viettelpost';
+    const inSelfTab = d.carrierType === 'self';
+    const partnerName = (
+        document.getElementById('pos-dlv-carrier-name')?.value ??
+        d.carrierName ??
+        ''
+    ).trim();
+    const shipmentCodeInput = (
+        document.getElementById('pos-dlv-shipment-code')?.value ??
+        d.shipmentCode ??
+        ''
+    ).trim();
+    // Chọn đối tác chứa "viettel" + nhập mã => coi như đơn Viettel Post tạo ngoài hệ thống,
+    // đồng bộ trạng thái/in nhãn/COD qua API như đơn tích hợp.
+    const manualVtp = inSelfTab && isViettelPostPartner(partnerName);
+    if (manualVtp && !shipmentCodeInput) {
+        const shipmentInput = document.getElementById('pos-dlv-shipment-code');
+        if (shipmentInput) setFieldValidationError(shipmentInput, 'Nhập mã vận đơn Viettel Post');
+        throw new Error('Vui lòng nhập mã vận đơn Viettel Post để đồng bộ dữ liệu.');
+    }
+    const carrierType = inSelfTab && !manualVtp ? 'self' : 'viettelpost';
 
     // Thông tin người gửi ưu tiên theo chi nhánh đang bán, rồi mới về cấu hình cửa hàng.
     // Viettel Post bắt buộc có địa chỉ người gửi (SENDER_ADDRESS).
@@ -4481,36 +4602,15 @@ function buildPosDeliverySalePayload(tab, mappedItems, orderNote) {
         orderNote,
         deliveryNote: (document.getElementById('pos-dlv-note')?.value ?? d.note ?? '').trim(),
         carrierType,
-        carrierName:
-            carrierType === 'self'
-                ? document.getElementById('pos-dlv-carrier-name')?.value ||
-                  d.carrierName ||
-                  'Nhân viên tự giao'
-                : 'Viettel Post',
-        shipperName:
-            carrierType === 'self'
-                ? (
-                      document.getElementById('pos-dlv-shipper-name')?.value ??
-                      d.shipperName ??
-                      ''
-                  ).trim()
-                : '',
-        shipperPhone:
-            carrierType === 'self'
-                ? (
-                      document.getElementById('pos-dlv-shipper-phone')?.value ??
-                      d.shipperPhone ??
-                      ''
-                  ).trim()
-                : '',
-        shipmentCode:
-            carrierType === 'self'
-                ? (
-                      document.getElementById('pos-dlv-shipment-code')?.value ??
-                      d.shipmentCode ??
-                      ''
-                  ).trim()
-                : '',
+        manualShipment: manualVtp || undefined,
+        carrierName: manualVtp
+            ? 'Viettel Post'
+            : inSelfTab
+              ? partnerName || 'Nhân viên tự giao'
+              : 'Viettel Post',
+        shipperName: '',
+        shipperPhone: '',
+        shipmentCode: inSelfTab ? shipmentCodeInput : '',
         receiverName,
         receiverPhone,
         receiverAddress,
@@ -9859,6 +9959,13 @@ function getDeliveryCodState(order) {
     return { status, record: codRec };
 }
 
+// Nhãn hiển thị cho đối tác giao hàng (phân biệt đơn Viettel Post nhập tay).
+function deliveryCarrierLabel(order) {
+    if (order.carrierType === 'self') return order.carrierName || 'Tự giao hàng';
+    if (order.manualShipment) return `${order.carrierName || 'Viettel Post'} (nhập tay)`;
+    return 'Viettel Post';
+}
+
 function formatDeliveryTime(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -10026,7 +10133,7 @@ function renderDeliveryRows(tbody, orders, isAll) {
             cls: 'kv-badge-info'
         };
         const isSelf = order.carrierType === 'self';
-        const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+        const carrierLabel = deliveryCarrierLabel(order);
         const orderCreateError = getDeliveryCreateOrderError(order);
         const codState = getDeliveryCodState(order).status;
         const codBadge =
@@ -10062,6 +10169,13 @@ function renderDeliveryRows(tbody, orders, isAll) {
             <td class="py-2.5 px-3">
                 <span class="inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold ${isSelf ? 'bg-amber-50 text-amber-800 border border-amber-200/70' : 'bg-blue-50 text-[#0066cc] border border-blue-200/70'}">${carrierLabel}</span>
                 <div class="text-[11.5px] font-mono text-gray-600 mt-0.5">${order.shipmentCode || (isSelf ? order.shipperName || '—' : 'Chờ cấp mã')}</div>
+                ${trustedHTML(
+                    order.manualShipment && order.shipmentCode
+                        ? order.vtpVerified
+                            ? renderHTML`<div class="text-[10px] text-emerald-700 font-medium">Đã xác thực</div>`
+                            : renderHTML`<div class="text-[10px] text-amber-700 font-medium">Chưa xác thực</div>`
+                        : ''
+                )}
                 ${trustedHTML(Number(order.carrierFee) > 0 ? renderHTML`<div class="text-[10.5px] text-amber-700 font-medium">Cước: ${formatVND(order.carrierFee)} đ</div>` : '')}
                 ${trustedHTML(orderCreateError ? renderHTML`<div class="text-[11px] text-rose-600 font-medium mt-0.5 max-w-[220px] truncate" title="${orderCreateError}">⚠️ ${orderCreateError}</div>` : '')}
             </td>
@@ -10127,6 +10241,13 @@ function buildDeliveryDetailActionButtons(order, key, codState) {
             actionBtns.push(
                 renderHTML`<button type="button" onclick="vtpOrderAction('${key}', 'cancel', { message: 'Gửi yêu cầu hủy vận đơn ${order.shipmentCode} tới Viettel Post? Chỉ hủy được khi hãng chưa lấy hàng. Tồn kho sẽ được hoàn khi hãng xác nhận.' })" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 rounded-xl text-[12px] font-semibold transition">Hủy qua Viettel Post</button>`.toString()
             );
+            // Đơn nhập tay chưa xác thực có thể đã gõ sai mã: cho hủy ngay trong NKiot
+            // để không kẹt kho/tiền (server vẫn cho hủy nội bộ với đơn chưa xác thực).
+            if (order.manualShipment && !order.vtpVerified) {
+                actionBtns.push(
+                    renderHTML`<button type="button" onclick="cancelPosDelivery('${key}')" class="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-xl text-[12px] font-semibold transition">Hủy đơn &amp; Hoàn kho</button>`.toString()
+                );
+            }
             // A3: sửa thông tin nhận/COD/khối lượng khi hãng chưa lấy hàng.
             if (order.status === 'submitted') {
                 actionBtns.push(
@@ -10179,7 +10300,7 @@ function buildDeliveryDetailActionButtons(order, key, codState) {
 function renderDeliveryDetailHtml(order) {
     const key = order.id || order.code;
     const isSelf = order.carrierType === 'self';
-    const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+    const carrierLabel = deliveryCarrierLabel(order);
     const { status: codState, record: codRec } = getDeliveryCodState(order);
     const inv = (KVStore.data?.invoices || []).find(
         (i) => i.id === order.invoiceId || i.code === order.invoiceCode
@@ -10258,6 +10379,13 @@ function renderDeliveryDetailHtml(order) {
                     <span class="font-bold text-slate-900 text-sm font-mono">${order.code}</span>
                     <span class="font-semibold text-[#0066cc]">HĐ: ${order.invoiceCode || order.invoiceId}</span>
                     <span class="text-gray-600">Vận chuyển: <strong>${carrierLabel}</strong> ${order.shipmentCode ? `(${order.shipmentCode})` : ''}</span>
+                    ${trustedHTML(
+                        order.manualShipment && order.shipmentCode
+                            ? order.vtpVerified
+                                ? renderHTML`<span class="text-[10.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Đã xác thực</span>`
+                                : renderHTML`<span class="text-[10.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Chưa xác thực</span>`
+                            : ''
+                    )}
                 </div>
                 <div class="flex flex-wrap items-center gap-1.5">${trustedHTML(buildDeliveryDetailActionButtons(order, key, codState))}</div>
             </div>
@@ -10365,7 +10493,7 @@ async function printDeliveryLabel(id) {
     }
 
     // Đơn tự giao (hoặc chưa có mã vận đơn): in phiếu nội bộ như trước.
-    const carrierLabel = isSelf ? order.carrierName || 'Tự giao / Ship ngoài' : 'Viettel Post';
+    const carrierLabel = deliveryCarrierLabel(order);
     const items = order.items || order.heldItems || [];
     box.innerHTML = renderHTML`
         <div style="font-family: sans-serif; max-width: 380px; margin: 0 auto; padding: 12px; border: 2px solid #111; color: #111;">
@@ -10788,7 +10916,12 @@ function renderInvoiceDetailHtml(inv) {
                     <div class="font-bold text-gray-900">${escapeHTML(inv.customer || 'Khách lẻ')}</div>
                     <div class="text-gray-600 font-mono">Điện thoại: ${escapeHTML(inv.phone || 'Chưa có')}</div>
                     <div class="text-gray-600">Thu ngân: <span class="font-medium text-gray-800">${escapeHTML(inv.cashier || 'Admin')}</span></div>
-                    ${dlv ? `<div class="text-gray-600">Vận đơn: <span class="font-mono text-[#0066cc]">${escapeHTML(dlv.shipmentCode || dlv.code || '')}</span></div>` : ''}
+                    ${
+                        dlv
+                            ? `<div class="text-gray-600">Đối tác giao: <span class="font-medium text-gray-800">${escapeHTML(dlv.carrierType === 'self' ? dlv.carrierName || 'Tự giao hàng' : dlv.manualShipment ? 'Viettel Post (nhập tay)' : 'Viettel Post')}</span></div>
+                    <div class="text-gray-600">Vận đơn: <span class="font-mono text-[#0066cc]">${escapeHTML(dlv.shipmentCode || dlv.code || '')}</span></div>`
+                            : ''
+                    }
                 </div>
 
                 <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">

@@ -1252,6 +1252,17 @@ function deliveryOrder(data, user, input) {
     const carrierType = input.carrierType === 'self' ? 'self' : 'viettelpost';
     if (input.carrierType !== undefined && !['viettelpost', 'self'].includes(input.carrierType))
         fail('Hình thức vận chuyển không hợp lệ.');
+    // Đơn Viettel Post do cửa hàng tự tạo trên web VTP rồi nhập mã vào NKiot.
+    const manualShipment = carrierType === 'viettelpost' && Boolean(input.manualShipment);
+    const shipmentCodeInput = text(input.shipmentCode, 100).trim();
+    if (manualShipment && !shipmentCodeInput) fail('Vui lòng nhập mã vận đơn Viettel Post.');
+    if (
+        shipmentCodeInput &&
+        (data.delivery_orders || []).some(
+            (o) => o.shipmentCode === shipmentCodeInput && o.status !== 'cancelled'
+        )
+    )
+        fail('Mã vận đơn đã dùng cho đơn giao hàng khác.', 409);
 
     const paymentType = Number(input.paymentType || (carrierType === 'self' ? 3 : 1));
     if (![1, 2, 3, 4].includes(paymentType)) fail('Loại vận đơn không hợp lệ.');
@@ -1270,7 +1281,7 @@ function deliveryOrder(data, user, input) {
     const carrierFee = amount(input.carrierFee ?? 0, 'Cước vận chuyển');
     const carrierName =
         carrierType === 'self'
-            ? text(input.carrierName, 120).trim() || 'Tự giao / Ship ngoài'
+            ? text(input.carrierName, 120).trim() || 'Tự giao hàng'
             : 'Viettel Post';
 
     // Thông tin người gửi ưu tiên tham số truyền vào, nếu trống thì lấy từ chi nhánh đang bán.
@@ -1320,7 +1331,9 @@ function deliveryOrder(data, user, input) {
         shippingFeeToCustomer,
         codStatus,
         shipmentReference: id,
-        shipmentCode: carrierType === 'self' ? text(input.shipmentCode, 100).trim() : '',
+        shipmentCode: carrierType === 'self' || manualShipment ? shipmentCodeInput : '',
+        manualShipment: manualShipment || undefined,
+        vtpVerified: manualShipment ? false : undefined,
         printCode: '',
         printExpiresAt: null,
         status: 'confirmed',
@@ -1363,7 +1376,8 @@ function deliveryOrder(data, user, input) {
     }
 
     if (!Array.isArray(data.delivery_tasks)) data.delivery_tasks = [];
-    if (carrierType === 'viettelpost') {
+    // Đơn nhập tay đã có sẵn mã vận đơn nên không tạo tác vụ tạo đơn.
+    if (carrierType === 'viettelpost' && !manualShipment) {
         data.delivery_tasks.unshift({
             id: `VTP-${id}`,
             deliveryId: id,
@@ -1396,9 +1410,11 @@ function deliveryOrder(data, user, input) {
         data,
         record,
         100,
-        carrierType === 'self'
-            ? `Khởi tạo đơn giao (${carrierName})`
-            : 'Khởi tạo đơn giao hàng Viettel Post',
+        manualShipment
+            ? `Nhập mã vận đơn Viettel Post ${shipmentCodeInput} (tạo ngoài hệ thống)`
+            : carrierType === 'self'
+              ? `Khởi tạo đơn giao (${carrierName})`
+              : 'Khởi tạo đơn giao hàng Viettel Post',
         record.note
     );
 

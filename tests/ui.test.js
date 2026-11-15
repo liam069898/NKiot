@@ -4341,4 +4341,105 @@ test('delivery POS renders Viettel Post services as selectable cards', async () 
             w.close();
         }
     });
+
+    test('unverified manual Viettel Post order shows internal cancel button', () => {
+        const dom = browser(),
+            w = dom.window;
+        try {
+            w.eval(`
+            KVStore.data.delivery_orders = [{
+                id:'GHM', code:'GHM', invoiceId:'HD2', invoiceCode:'HD2', branch:getCurrentBranch(),
+                carrierType:'viettelpost', carrierName:'Viettel Post', shipmentCode:'VP-MANUAL',
+                manualShipment:true, vtpVerified:false,
+                receiverName:'A', receiverPhone:'0901', receiverAddress:'HCM',
+                productTotal:100000, prepaid:0, codRequested:100000, carrierFee:0,
+                status:'confirmed', createdAt:new Date().toISOString(), items:[]
+            }];
+        `);
+            const html = String(
+                w.renderDeliveryDetailHtml(w.eval('KVStore.data.delivery_orders[0]'))
+            );
+            assert.match(
+                html,
+                /Chưa xác thực/,
+                'đơn nhập tay chưa xác thực phải hiện nhãn chưa xác thực'
+            );
+            assert.match(
+                html,
+                /Hủy đơn &(?:amp;)? Hoàn kho/,
+                'đơn nhập tay chưa xác thực phải có nút hủy nội bộ'
+            );
+        } finally {
+            w.close();
+        }
+    });
+
+    test('manual Viettel Post partner builds a synced delivery payload', () => {
+        const dom = browser(),
+            w = dom.window;
+        try {
+            w.eval(
+                'KVStore.data.products[0].hasImei=false;KVStore.data.products[0].imeis=[];KVStore.data.products[0].stock=5;'
+            );
+            w.openDeliveryPos();
+            w.addPosCartItem(w.eval('KVStore.data.products[0]'));
+            w.setPosDeliveryCarrierType('self');
+            w.eval(`
+            state.posTabs[0].delivery.receiverName='Khách';
+            state.posTabs[0].delivery.receiverPhone='0987654321';
+            state.posTabs[0].delivery.receiverAddress='Q1, HCM';
+            state.posTabs[0].delivery.carrierName='Viettel Post';
+            state.posTabs[0].delivery.shipmentCode='157254127143';
+        `);
+            w.renderPosScreen();
+            const payload = w.buildPosDeliverySalePayload(
+                w.eval('state.posTabs[0]'),
+                [{ code: 'SP', qty: 1 }],
+                ''
+            );
+            assert.equal(payload.carrierType, 'viettelpost');
+            assert.equal(payload.manualShipment, true);
+            assert.equal(payload.shipmentCode, '157254127143');
+            assert.equal(payload.carrierName, 'Viettel Post');
+
+            // Thiếu mã vận đơn khi chọn Viettel Post -> chặn
+            w.eval("state.posTabs[0].delivery.shipmentCode=''");
+            w.renderPosScreen();
+            assert.throws(
+                () =>
+                    w.buildPosDeliverySalePayload(
+                        w.eval('state.posTabs[0]'),
+                        [{ code: 'SP', qty: 1 }],
+                        ''
+                    ),
+                /mã vận đơn/i
+            );
+
+            // Đối tác khác Viettel Post -> đơn tự giao, vẫn giữ mã đơn ngoài
+            w.eval(`
+            state.posTabs[0].delivery.carrierName='GHN';
+            state.posTabs[0].delivery.shipmentCode='GH123';
+            document.getElementById('pos-dlv-carrier-name').value='GHN';
+            document.getElementById('pos-dlv-shipment-code').value='GH123';
+        `);
+            const self = w.buildPosDeliverySalePayload(
+                w.eval('state.posTabs[0]'),
+                [{ code: 'SP', qty: 1 }],
+                ''
+            );
+            assert.equal(self.carrierType, 'self');
+            assert.equal(self.carrierName, 'GHN');
+            assert.equal(self.shipmentCode, 'GH123');
+            assert.equal(self.manualShipment, undefined);
+
+            // Danh sách đối tác có thể thêm mới và nhận diện Viettel Post
+            assert.equal(w.isViettelPostPartner('VIETTEL POST'), true);
+            assert.equal(w.isViettelPostPartner('GHN'), false);
+            const before = w.getDeliveryPartners().length;
+            w.saveDeliveryPartner('Đối tác thử nghiệm');
+            assert.equal(w.getDeliveryPartners().length, before + 1);
+        } finally {
+            w.close();
+        }
+    });
 });

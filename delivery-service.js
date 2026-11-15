@@ -43,6 +43,14 @@ function mapVtpStatus(statusCode) {
     return null;
 }
 
+function isManualShipment(record) {
+    try {
+        return Boolean(JSON.parse(record.extra || '{}').manualShipment);
+    } catch {
+        return false;
+    }
+}
+
 function applyStatus(record, statusCode) {
     const nextStatus = mapVtpStatus(statusCode);
     if (!nextStatus) return record;
@@ -54,10 +62,14 @@ function applyStatus(record, statusCode) {
     if (current === 'returning' && nextStatus !== 'returning') return record;
     // Hủy chỉ hợp lệ trước khi bàn giao (confirmed/submitted); sau bàn giao thì là hoàn hàng.
     if (nextStatus === 'cancelled' && !['confirmed', 'submitted'].includes(current)) return record;
+    // Đơn nhập tay có thể đã được hãng lấy hàng (webhook 200 bị lỡ) trước khi nhập mã vào NKiot;
+    // cho phép đi thẳng từ confirmed sang delivered/returning thay vì kẹt ở "Chờ lấy hàng".
+    const manualSkipHandover = current === 'confirmed' && isManualShipment(record);
     // Giao thành công/đang hoàn chỉ hợp lệ sau khi đã bàn giao hoặc đã gửi hãng.
     if (
         ['delivered', 'returning'].includes(nextStatus) &&
-        !['handed_over', 'submitted', 'returning'].includes(current)
+        !['handed_over', 'submitted', 'returning'].includes(current) &&
+        !manualSkipHandover
     )
         return record;
     record.status = nextStatus;
@@ -231,7 +243,8 @@ function enqueueOrderAction(deliveryId, action, note = '') {
     if (!order.shipmentCode) return { ok: false, reason: 'no_shipment_code' };
 
     // Điều kiện theo tài liệu: hủy chỉ khi hãng chưa lấy hàng (ORDER_STATUS < 200).
-    if (action === 'cancel' && order.status !== 'submitted')
+    // Đơn nhập tay đang "Chờ lấy hàng" (confirmed) vẫn hủy được vì đã có mã vận đơn.
+    if (action === 'cancel' && !['confirmed', 'submitted'].includes(order.status))
         return { ok: false, reason: 'not_cancellable' };
     if (['approve_return', 'redeliver'].includes(action) && order.status !== 'returning')
         return { ok: false, reason: 'not_returning' };
@@ -451,7 +464,7 @@ async function processOrderEdit(task, record) {
     const attempt = (Number(task.attempt) || 0) + 1;
     const fail = (message) => finishTask(task.id, { status: 'failed', lastError: message });
     if (!record.shipmentCode) return fail('Đơn chưa có mã vận đơn Viettel Post để sửa.');
-    if (record.status !== 'submitted')
+    if (!['confirmed', 'submitted'].includes(record.status))
         return fail('Chỉ sửa được đơn hãng chưa lấy hàng (đã gửi hãng).');
     if (!patch || !Object.keys(patch).length) return fail('Không có thông tin cần cập nhật.');
     try {
@@ -525,7 +538,9 @@ function handleWebhook(payload) {
     // Ưu tiên tìm theo mã vận đơn; nếu chưa có (kết quả tạo vận đơn bị mất) thì dùng ORDER_REFERENCE
     // — chính là mã tham chiếu NKiot đã gửi khi tạo vận đơn.
     let record = d
-        .prepare('SELECT * FROM delivery_orders WHERE shipmentCode=?')
+        .prepare(
+            "SELECT * FROM delivery_orders WHERE shipmentCode=? ORDER BY (status='cancelled') ASC, rowid DESC LIMIT 1"
+        )
         .get(text(data.ORDER_NUMBER, 200));
     const reference = text(data.ORDER_REFERENCE, 200);
     if (!record && reference) {
@@ -547,6 +562,13 @@ function handleWebhook(payload) {
         // Không rõ vận đơn của cửa hàng nào (nhiều tenant dùng chung tài khoản).
         return { recorded: false, reason: 'unknown_shipment' };
     }
+    // Đơn nhập tay: webhook đầu tiên về chứng tỏ mã vận đơn có thật trên hệ thống hãng.
+    let recordExtra = {};
+    try {
+        recordExtra = JSON.parse(record.extra || '{}');
+    } catch {}
+    if (recordExtra.manualShipment && !recordExtra.vtpVerified)
+        patchOrderExtra(record.id, { vtpVerified: true });
     const statusDate = text(data.ORDER_STATUSDATE, 40) || nowIso();
     const statusCode = Number(data.ORDER_STATUS);
     if (!Number.isInteger(statusCode)) throw new Error('Webhook thiếu trạng thái hợp lệ.');
@@ -728,6 +750,13 @@ async function labelUrl(orderId, { size = 'A5', showPostage = 0 } = {}) {
     }
     const host = /partnerdev/i.test(vtp.currentBaseUrl()) ? LABEL_HOST_DEV : LABEL_HOST_PROD;
     const type = LABEL_TYPES[String(size).toUpperCase()] || LABEL_TYPES.A5;
+    // In được nhãn ⇒ hãng xác nhận mã vận đơn tồn tại; đánh dấu đã xác thực cho đơn nhập tay.
+    let orderExtra = {};
+    try {
+        orderExtra = JSON.parse(order.extra || '{}');
+    } catch {}
+    if (orderExtra.manualShipment && !orderExtra.vtpVerified)
+        patchOrderExtra(order.id, { vtpVerified: true });
     const url = `${host}/DigitalizePrint/report.do?type=${encodeURIComponent(type)}&bill=${encodeURIComponent(printCode)}&showPostage=${showPostage ? 1 : 0}`;
     return { url, expiresAt, printCode };
 }
@@ -755,6 +784,24 @@ const VTP_FAILURE_REASONS = {
 function failureReasonText(code) {
     if (code === null || code === undefined || code === '') return '';
     return VTP_FAILURE_REASONS[String(code).trim()] || '';
+}
+
+// Ghi thêm cờ vào extra của đơn (manualShipment/vtpVerified…) mà không phải migration.
+function patchOrderExtra(orderId, patch) {
+    const d = db.getDb();
+    const row = d.prepare('SELECT extra FROM delivery_orders WHERE id=?').get(orderId);
+    if (!row) return;
+    let extra = {};
+    try {
+        extra = JSON.parse(row.extra || '{}');
+    } catch {}
+    Object.assign(extra, patch);
+    d.prepare('UPDATE delivery_orders SET extra=?, updatedAt=? WHERE id=?').run(
+        JSON.stringify(extra),
+        nowIso(),
+        orderId
+    );
+    db.bumpRevision();
 }
 
 // Ghi trạng thái COD vào cột `extra` (JSON) của đơn để UI hiển thị thống nhất.
@@ -884,7 +931,8 @@ function enqueueOrderEdit(deliveryId, changes = {}) {
     if (!order) return { ok: false, reason: 'unknown_order' };
     if (order.carrierType === 'self') return { ok: false, reason: 'self_delivery' };
     if (!order.shipmentCode) return { ok: false, reason: 'no_shipment_code' };
-    if (order.status !== 'submitted') return { ok: false, reason: 'not_editable' };
+    if (!['confirmed', 'submitted'].includes(order.status))
+        return { ok: false, reason: 'not_editable' };
     const patch = {};
     for (const key of EDITABLE_FIELDS) {
         if (changes[key] === undefined || changes[key] === '') continue;

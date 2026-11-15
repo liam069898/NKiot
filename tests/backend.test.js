@@ -2869,4 +2869,58 @@ test('Viettel Post config saves over the real API and webhook always answers 200
             assert.equal(res.status, 403, `${path} phải chặn chi nhánh khác: ${res.body}`);
         }
     });
+
+    test('manual Viettel Post shipment keeps the entered code and skips create-order task', () => {
+        const res = command('deliverySale', {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1 }],
+            carrierType: 'viettelpost',
+            manualShipment: true,
+            shipmentCode: '157254127143',
+            receiverName: 'Khách',
+            receiverPhone: '0987654321',
+            receiverAddress: 'Đường Nguyễn Huệ, Q1'
+        }).result;
+        const order = res.delivery;
+        assert.equal(order.carrierType, 'viettelpost');
+        assert.equal(order.status, 'confirmed', 'đơn nhập tay bắt đầu ở Chờ lấy hàng');
+        assert.equal(order.shipmentCode, '157254127143');
+        assert.equal(order.manualShipment, true);
+        assert.equal(
+            db.getAllData().delivery_tasks.some((t) => t.deliveryId === order.id),
+            false,
+            'không tạo tác vụ tạo vận đơn'
+        );
+
+        // Thiếu mã vận đơn khi chọn Viettel Post nhập tay
+        assert.throws(
+            () =>
+                command('deliverySale', {
+                    branch: 'A',
+                    items: [{ code: 'SP', qty: 1 }],
+                    carrierType: 'viettelpost',
+                    manualShipment: true,
+                    receiverName: 'Khách',
+                    receiverPhone: '0987654321',
+                    receiverAddress: 'Q1'
+                }),
+            /mã vận đơn/i
+        );
+
+        // Trùng mã vận đơn với đơn đang hoạt động
+        assert.throws(
+            () =>
+                command('deliverySale', {
+                    branch: 'A',
+                    items: [{ code: 'SP', qty: 1 }],
+                    carrierType: 'viettelpost',
+                    manualShipment: true,
+                    shipmentCode: '157254127143',
+                    receiverName: 'Khách',
+                    receiverPhone: '0987654321',
+                    receiverAddress: 'Q1'
+                }),
+            /đã dùng/
+        );
+    });
 });

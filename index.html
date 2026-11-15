@@ -3430,7 +3430,7 @@
                         >
                             <option value="all">Tất cả vận chuyển</option>
                             <option value="viettelpost">Viettel Post</option>
-                            <option value="self">Tự giao / Ship ngoài</option>
+                            <option value="self">Tự giao hàng</option>
                         </select>
                         <select
                             id="delivery-date-filter"
@@ -5282,7 +5282,7 @@
                                         aria-pressed="false"
                                         class="flex-1 py-1.5 px-2 rounded-lg text-[12px] font-medium text-gray-600 hover:text-gray-900 transition"
                                     >
-                                        Tự giao / Ship ngoài
+                                        Tự giao hàng
                                     </button>
                                 </div>
 
@@ -5466,13 +5466,13 @@
                                     id="pos-dlv-self-fields"
                                     class="hidden space-y-1.5 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/70"
                                 >
-                                    <div class="grid grid-cols-2 gap-1.5">
-                                        <div>
-                                            <label
-                                                for="pos-dlv-carrier-name"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >Hình thức giao</label
-                                            >
+                                    <div>
+                                        <label
+                                            for="pos-dlv-carrier-name"
+                                            class="block text-[11px] font-medium text-gray-600"
+                                            >Đối tác giao hàng</label
+                                        >
+                                        <div class="flex items-center gap-1">
                                             <select
                                                 id="pos-dlv-carrier-name"
                                                 onchange="
@@ -5481,84 +5481,48 @@
                                                         this.value
                                                     )
                                                 "
-                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
+                                                class="mt-0.5 flex-1 min-w-0 bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
                                             >
                                                 <option value="Nhân viên tự giao">
                                                     Nhân viên tự giao
                                                 </option>
-                                                <option value="Grab / Ahamove / XanhSM">
-                                                    Grab / Ahamove / XanhSM
-                                                </option>
-                                                <option value="Xe khách / Chành xe">
-                                                    Xe khách / Chành xe
-                                                </option>
-                                                <option value="Ship ngoài khác">
-                                                    Ship ngoài khác
-                                                </option>
                                             </select>
-                                        </div>
-                                        <div>
-                                            <label
-                                                for="pos-dlv-shipment-code"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >Mã đơn ngoài / Xe</label
+                                            <button
+                                                type="button"
+                                                id="pos-dlv-partner-add"
+                                                onclick="addDeliveryPartner()"
+                                                title="Tạo đối tác giao hàng mới"
+                                                class="mt-0.5 h-[30px] w-[30px] flex-shrink-0 rounded-lg bg-white border border-gray-200 text-[#0066cc] hover:bg-blue-50 text-[15px] leading-none"
                                             >
-                                            <input
-                                                id="pos-dlv-shipment-code"
-                                                type="text"
-                                                maxlength="100"
-                                                oninput="
-                                                    updatePosDeliveryField(
-                                                        'shipmentCode',
-                                                        this.value
-                                                    )
-                                                "
-                                                placeholder="VD: GRAB-123, BKS..."
-                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
-                                            />
+                                                ＋
+                                            </button>
                                         </div>
+                                        <div
+                                            id="pos-dlv-partner-hint"
+                                            class="text-[10.5px] text-gray-500 mt-0.5 leading-tight"
+                                        ></div>
                                     </div>
-                                    <div class="grid grid-cols-2 gap-1.5">
-                                        <div>
-                                            <label
-                                                for="pos-dlv-shipper-name"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >Người giao / Nhà xe</label
-                                            >
-                                            <input
-                                                id="pos-dlv-shipper-name"
-                                                type="text"
-                                                maxlength="120"
-                                                oninput="
-                                                    updatePosDeliveryField(
-                                                        'shipperName',
-                                                        this.value
-                                                    )
-                                                "
-                                                placeholder="Tên tài xế / nhân viên"
-                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] focus:outline-none focus:border-[#0066cc]"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label
-                                                for="pos-dlv-shipper-phone"
-                                                class="block text-[11px] font-medium text-gray-600"
-                                                >SĐT người giao</label
-                                            >
-                                            <input
-                                                id="pos-dlv-shipper-phone"
-                                                type="tel"
-                                                maxlength="40"
-                                                oninput="
-                                                    updatePosDeliveryField(
-                                                        'shipperPhone',
-                                                        this.value
-                                                    )
-                                                "
-                                                placeholder="SĐT tài xế / nhà xe"
-                                                class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] font-mono focus:outline-none focus:border-[#0066cc]"
-                                            />
-                                        </div>
+                                    <div>
+                                        <label
+                                            for="pos-dlv-shipment-code"
+                                            class="block text-[11px] font-medium text-gray-600"
+                                            >Mã vận đơn
+                                            <span
+                                                id="pos-dlv-shipment-required"
+                                                class="hidden text-rose-600"
+                                                >*</span
+                                            ></label
+                                        >
+                                        <input
+                                            id="pos-dlv-shipment-code"
+                                            type="text"
+                                            maxlength="100"
+                                            oninput="
+                                                updatePosDeliveryField('shipmentCode', this.value)
+                                            "
+                                            placeholder="VD: 157254127143"
+                                            class="mt-0.5 w-full bg-white border border-gray-200 rounded-lg px-2 py-1 text-[12px] font-mono focus:outline-none focus:border-[#0066cc]"
+                                        />
                                     </div>
                                 </div>
                             </div>

@@ -253,10 +253,14 @@ test('enqueueOrderAction validates state before queueing an update task', () => 
     const noCode = seedDelivery('submitted', '');
     assert.equal(delivery.enqueueOrderAction(noCode, 'cancel').reason, 'no_shipment_code');
 
-    const confirmed = seedDelivery('confirmed', 'VP-ACT-2');
-    assert.equal(delivery.enqueueOrderAction(confirmed, 'cancel').reason, 'not_cancellable');
-    assert.equal(delivery.enqueueOrderAction(confirmed, 'redeliver').reason, 'not_returning');
-    assert.equal(delivery.enqueueOrderAction(confirmed, 'bogus').reason, 'unknown_action');
+    // Đơn đã bàn giao (hãng đã lấy hàng) thì không hủy qua VTP được
+    const picked = seedDelivery('handed_over', 'VP-ACT-2');
+    assert.equal(delivery.enqueueOrderAction(picked, 'cancel').reason, 'not_cancellable');
+    assert.equal(delivery.enqueueOrderAction(picked, 'redeliver').reason, 'not_returning');
+    assert.equal(delivery.enqueueOrderAction(picked, 'bogus').reason, 'unknown_action');
+    // Đơn nhập tay đang "Chờ lấy hàng" nhưng đã có mã vẫn hủy được qua VTP
+    const confirmed = seedDelivery('confirmed', 'VP-ACT-4');
+    assert.equal(delivery.enqueueOrderAction(confirmed, 'cancel').ok, true);
 
     const submitted = seedDelivery('submitted', 'VP-ACT-1');
     assert.equal(delivery.enqueueOrderAction(submitted, 'cancel').ok, true);
@@ -448,9 +452,9 @@ test('labelUrl builds the official DigitalizePrint link and reuses the cached pr
             delete process.env.NKIOT_VTP_BASE_URL;
         }
 
-        // Đơn chưa gửi hãng thì không sửa qua VTP được
-        const confirmed = seedDelivery('confirmed', 'VP-EDIT-2');
-        assert.equal(delivery.enqueueOrderEdit(confirmed, { note: 'x' }).reason, 'not_editable');
+        // Đơn đã giao/hoàn thì không sửa qua VTP được
+        const done = seedDelivery('delivered', 'VP-EDIT-2');
+        assert.equal(delivery.enqueueOrderEdit(done, { note: 'x' }).reason, 'not_editable');
     });
 
     test('quoteService normalizes the carrier price response', async () => {
@@ -615,4 +619,64 @@ test('labelUrl builds the official DigitalizePrint link and reuses the cached pr
             .get(id);
         assert.equal(after.carrierFee, 39999, 'cước thực tế từ webhook được đồng bộ');
     });
+});
+
+test('webhook marks a manually entered shipment as verified', () => {
+    const id = seedDelivery('confirmed', 'VP-MANUAL-1');
+    db.getDb()
+        .prepare('UPDATE delivery_orders SET extra=? WHERE id=?')
+        .run(JSON.stringify({ manualShipment: true, vtpVerified: false }), id);
+    delivery.handleWebhook({
+        DATA: {
+            ORDER_NUMBER: 'VP-MANUAL-1',
+            ORDER_STATUS: 200,
+            ORDER_STATUSDATE: '13/11/2026 10:00:00'
+        }
+    });
+    const extra = JSON.parse(
+        db.getDb().prepare('SELECT extra FROM delivery_orders WHERE id=?').get(id).extra
+    );
+    assert.equal(extra.vtpVerified, true, 'webhook xác nhận mã vận đơn có thật');
+});
+
+test('manual shipment can jump from confirmed to delivered when handover webhook was missed', () => {
+    // Đơn nhập tay: hãng đã lấy hàng (200) trước khi nhập mã, nên webhook 501 về khi đơn còn confirmed.
+    const manual = JSON.stringify({ manualShipment: true, vtpVerified: false });
+    assert.equal(
+        delivery.applyStatus({ status: 'confirmed', extra: manual }, 501).status,
+        'delivered'
+    );
+    assert.equal(
+        delivery.applyStatus({ status: 'confirmed', extra: manual }, 504).status,
+        'returning'
+    );
+    // Đơn tích hợp bình thường (không nhập tay) vẫn không được nhảy trạng thái.
+    assert.equal(delivery.applyStatus({ status: 'confirmed' }, 501).status, 'confirmed');
+});
+
+test('webhook prefers the active order when a shipment code is reused after cancellation', () => {
+    const oldId = seedDelivery('cancelled', 'VP-REUSED');
+    const newId = seedDelivery('confirmed', 'VP-REUSED');
+    const result = delivery.handleWebhook({
+        DATA: {
+            ORDER_NUMBER: 'VP-REUSED',
+            ORDER_STATUS: 200,
+            ORDER_STATUSDATE: '13/11/2026 10:00:00'
+        }
+    });
+    assert.equal(
+        result.deliveryId,
+        newId,
+        'webhook cập nhật đơn đang hoạt động, không phải đơn đã hủy'
+    );
+    const oldStatus = db
+        .getDb()
+        .prepare('SELECT status FROM delivery_orders WHERE id=?')
+        .get(oldId).status;
+    const newStatus = db
+        .getDb()
+        .prepare('SELECT status FROM delivery_orders WHERE id=?')
+        .get(newId).status;
+    assert.equal(oldStatus, 'cancelled', 'đơn cũ giữ nguyên trạng thái hủy');
+    assert.equal(newStatus, 'handed_over', 'đơn mới được cập nhật trạng thái');
 });
