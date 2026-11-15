@@ -7572,6 +7572,31 @@
                             />
                         </div>
                     </div>
+                    <div>
+                        <div class="flex items-center justify-between mb-1">
+                            <label class="block font-medium text-gray-700">Ảnh sản phẩm</label>
+                            <label
+                                class="text-[#0066cc] hover:text-[#0052a3] font-bold text-[12px] flex items-center space-x-1 cursor-pointer"
+                            >
+                                <span>+ Tải ảnh</span>
+                                <input
+                                    id="prod-image-input"
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp,image/gif"
+                                    multiple
+                                    class="hidden"
+                                    onchange="handleProductImageUpload(event)"
+                                />
+                            </label>
+                        </div>
+                        <div
+                            id="prod-images-preview"
+                            class="flex flex-wrap gap-2 p-2 rounded-xl bg-gray-50 border border-gray-200/70 min-h-[56px] items-center"
+                        ></div>
+                        <p class="text-[11px] text-gray-400 mt-1">
+                            Hỗ trợ JPG, PNG, WEBP, GIF. Ảnh được nén tự động để tải nhanh.
+                        </p>
+                    </div>
                     <div class="bg-gray-50/80 p-3 rounded-xl border border-gray-200/70">
                         <label class="flex items-center space-x-2.5 cursor-pointer select-none">
                             <input

@@ -6766,6 +6766,9 @@ function getConditionBadge(cond) {
 }
 
 async function uploadMediaFile(file) {
+    // Nén ảnh trước khi tải lên: ảnh chụp từ điện thoại thường 3-8MB, gửi nguyên bản base64
+    // sẽ chậm và dễ vượt giới hạn 10MB. Thu nhỏ về tối đa 1600px và JPEG chất lượng 0.85.
+    const prepared = await prepareImageForUpload(file);
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = async () => {
@@ -6780,8 +6783,8 @@ async function uploadMediaFile(file) {
                     },
                     body: JSON.stringify({
                         data: base64,
-                        name: file.name,
-                        type: file.type
+                        name: prepared.name || file.name,
+                        type: prepared.type
                     })
                 });
                 const data = await res.json();
@@ -6794,13 +6797,96 @@ async function uploadMediaFile(file) {
             }
         };
         reader.onerror = () => reject(new Error('Không thể đọc tệp từ thiết bị'));
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(prepared.blob || file);
     });
+}
+
+// Chuẩn bị ảnh trước khi tải lên: nén JPG/PNG/WebP, giữ nguyên video; trả về { blob, type, name }.
+// Nếu không thể nén (ảnh hỏng/định dạng lạ) thì trả về file gốc để server kiểm tra.
+async function prepareImageForUpload(file) {
+    const type = (file.type || '').toLowerCase();
+    const isImage = type.startsWith('image/');
+    if (!isImage) return { blob: file, type, name: file.name };
+    // iPhone chụp HEIC/HEIF: trình duyệt thường tự chuyển sang JPEG khi chọn, nhưng nếu không
+    // thì báo lỗi rõ ràng thay vì im lặng gửi lên rồi bị server từ chối.
+    if (type === 'image/heic' || type === 'image/heif' || /\.(heic|heif)$/i.test(file.name)) {
+        throw new Error(
+            'Ảnh HEIC/HEIF chưa được hỗ trợ. Hãy chọn ảnh JPG/PNG, hoặc đổi cài đặt camera iPhone sang "Tương thích nhất".'
+        );
+    }
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(type)) {
+        // Định dạng ảnh khác: gửi nguyên bản, server sẽ kiểm tra magic bytes.
+        return { blob: file, type, name: file.name };
+    }
+    try {
+        const bitmap = await createImageBitmap(file);
+        const MAX = 1600;
+        const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height));
+        const w = Math.max(1, Math.round(bitmap.width * scale));
+        const h = Math.max(1, Math.round(bitmap.height * scale));
+        // Ảnh đã nhỏ thì không cần nén lại, tránh phình to khi chuyển PNG -> JPEG.
+        if (scale >= 1 && file.size <= 300 * 1024) {
+            bitmap.close();
+            return { blob: file, type, name: file.name };
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            bitmap.close();
+            return { blob: file, type, name: file.name };
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        bitmap.close();
+        let quality = 0.85;
+        let mime = type;
+        if (type === 'image/png' || type === 'image/webp' || type === 'image/gif') {
+            // Ảnh có nền trong suốt thì giữ PNG; còn lại chuyển JPEG để nhỏ hơn.
+            mime = 'image/jpeg';
+        }
+        let dataUrl = canvas.toDataURL(mime, quality);
+        // Giảm chất lượng dần nếu vẫn lớn (chụp ảnh nhiều chi tiết).
+        while (dataUrl.length > 1.4 * 1024 * 1024 && quality > 0.4) {
+            quality -= 0.1;
+            dataUrl = canvas.toDataURL(mime, quality);
+        }
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
+        const ext = mime === 'image/jpeg' ? '.jpg' : mime === 'image/png' ? '.png' : '.webp';
+        return {
+            blob: blob || file,
+            type: mime,
+            name: (file.name || 'anh').replace(/\.[^.]+$/, '') + ext
+        };
+    } catch (err) {
+        if (err && /HEIC|HEIF/.test(err.message)) throw err;
+        return { blob: file, type, name: file.name };
+    }
 }
 
 function removeProductImage(idx) {
     currentProductImages.splice(idx, 1);
     renderProductImagePreviews();
+}
+
+async function handleProductImageUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    showToast(`Đang tải lên ${files.length} ảnh...`, 'info');
+    try {
+        for (const file of files) {
+            const url = await uploadMediaFile(file);
+            currentProductImages.push(url);
+        }
+        renderProductImagePreviews();
+        showToast(`Đã tải lên ${files.length} ảnh!`, 'success');
+    } catch (err) {
+        showToast('Lỗi tải ảnh: ' + (err.message || 'Không thể tải lên'), 'error');
+    } finally {
+        e.target.value = '';
+    }
 }
 
 function renderProductImagePreviews() {

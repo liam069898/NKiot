@@ -2323,15 +2323,14 @@ test('UX/UI audit fixes: viewport zoom compensation, brand-safe Title Case, moda
         assert.equal(w.document.activeElement.id, 'cust-code');
 
         // 5. Product image preview delete button has visible symbol & aria-label
-        const previewHost = w.document.createElement('div');
-        previewHost.id = 'prod-images-preview';
-        w.document.body.appendChild(previewHost);
+        const previewHost = w.document.getElementById('prod-images-preview');
+        assert.ok(previewHost, 'form sản phẩm phải có khung xem trước ảnh');
         w.eval(`currentProductImages=['/uploads/sample.png'];renderProductImagePreviews();`);
         const delImgBtn = previewHost.querySelector('button');
         assert.ok(delImgBtn);
         assert.equal(delImgBtn.getAttribute('aria-label'), 'Xóa ảnh 1');
         assert.equal(delImgBtn.textContent.trim(), '×');
-        previewHost.remove();
+        previewHost.innerHTML = '';
 
         // 6. Receipt & payment modals and login fields have proper labels and SVG icons
         assert.ok(w.document.querySelector('#create-receipt-modal svg'));
@@ -2341,6 +2340,23 @@ test('UX/UI audit fixes: viewport zoom compensation, brand-safe Title Case, moda
                 w.document.querySelector('label[for="login-password"]') !== null,
             true
         );
+    } finally {
+        w.close();
+    }
+});
+
+test('product form uploads images through the compressed media uploader', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // Ảnh HEIC/HEIF bị từ chối rõ ràng thay vì im lặng gửi lên rồi server báo lỗi.
+        await assert.rejects(
+            () => w.prepareImageForUpload({ type: 'image/heic', name: 'a.heic' }),
+            /HEIC|HEIF/
+        );
+        // Video giữ nguyên, không nén.
+        const video = await w.prepareImageForUpload({ type: 'video/mp4', name: 'a.mp4' });
+        assert.equal(video.type, 'video/mp4');
     } finally {
         w.close();
     }
