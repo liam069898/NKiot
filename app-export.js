@@ -323,6 +323,7 @@ function exportTableToCSV(type) {
             'Chi nhánh'
         ];
         const invChannel = document.getElementById('invoice-channel-filter')?.value || 'all';
+        const invAdv = advancedSearchValues('invoice-search-input');
         const deliveryIds = new Set((KVStore.data.delivery_orders || []).map((d) => d.invoiceId));
         rows = (KVStore.data.invoices || [])
             .filter((i) => isAll || (i.branch || FALLBACK_BRANCH) === currentBranch)
@@ -340,7 +341,8 @@ function exportTableToCSV(type) {
                     returned:
                         !!i.hasReturned ||
                         (KVStore.data.returns || []).some((r) => r.invoiceCode === i.code),
-                    starred: isRecordStarred(`inv:${i.code}`)
+                    starred: isRecordStarred(`inv:${i.code}`),
+                    adv: invAdv
                 })
             )
             .map((i) => [
@@ -377,21 +379,25 @@ function exportTableToCSV(type) {
                     q: document.getElementById('import-search-input')?.value || '',
                     date: document.getElementById('import-date-filter')?.value || 'all',
                     status: document.getElementById('import-status-filter')?.value || 'all',
-                    starred: isRecordStarred(`imp:${imp.code}`)
+                    starred: isRecordStarred(`imp:${imp.code}`),
+                    adv: advancedSearchValues('import-search-input')
                 })
             )
-            .map((imp) => [
-                imp.code,
-                `"${imp.time || ''}"`,
-                `"${imp.nccCode || ''}"`,
-                `"${(imp.nccName || '').replace(/"/g, '""')}"`,
-                imp.needPay || 0,
-                imp.paid || 0,
-                imp.status === 'cancelled' ? 'Đã hủy' : 'Đã nhập hàng',
-                `"${imp.creator || ''}"`,
-                `"${imp.branch || currentBranch}"`,
-                `"${(imp.note || '').replace(/"/g, '""').replace(/<br>/g, ' ')}"`
-            ]);
+            .map((imp) => {
+                const ncc = resolveImportSupplier(imp);
+                return [
+                    imp.code,
+                    `"${imp.time || ''}"`,
+                    `"${ncc.code || ''}"`,
+                    `"${(ncc.name || '').replace(/"/g, '""')}"`,
+                    imp.needPay || 0,
+                    imp.paid || 0,
+                    imp.status === 'cancelled' ? 'Đã hủy' : 'Đã nhập hàng',
+                    `"${imp.creator || ''}"`,
+                    `"${imp.branch || currentBranch}"`,
+                    `"${(imp.note || '').replace(/"/g, '""').replace(/<br>/g, ' ')}"`
+                ];
+            });
     } else if (type === 'customers') {
         filename = `Danh_sach_khach_hang_${new Date().toISOString().slice(0, 10)}.csv`;
         headers = [
@@ -436,14 +442,14 @@ function exportTableToCSV(type) {
         const supQ = (document.getElementById('supplier-search-input')?.value || '')
             .toLowerCase()
             .trim();
+        const supAdv = advancedSearchValues('supplier-search-input');
         rows = (KVStore.data.suppliers || [])
-            .filter(
-                (s) =>
-                    !supQ ||
-                    (s.name || '').toLowerCase().includes(supQ) ||
-                    (s.phone || '').includes(supQ) ||
-                    (s.code || '').toLowerCase().includes(supQ)
-            )
+            .filter((s) => {
+                const quick = foldText(supQ);
+                if (quick && ![s.name, s.code, s.phone].some((v) => foldText(v).includes(quick)))
+                    return false;
+                return matchesAdvancedSearch('suppliers', s, supAdv);
+            })
             .map((s) => [
                 s.code,
                 `"${(s.name || '').replace(/"/g, '""')}"`,

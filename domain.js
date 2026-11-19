@@ -777,6 +777,176 @@ function cancelImport(data, user, input) {
     imp.cancelledAt = cancelled.createdAt;
     return imp;
 }
+
+// Kiểm tra danh sách IMEI của một dòng trả hàng nhập: phải thuộc phiếu nhập, chưa trả lần trước,
+// và còn trong kho. Trả về mảng IMEI đã xác thực (rỗng nếu mặt hàng không quản lý IMEI).
+function checkReturnImeis({ item, row, qty, p, returnedSerials }) {
+    if (!(item.hasImei || item.imeis?.length)) return [];
+    const imported = item.imeis || [];
+    if (
+        !Array.isArray(imported) ||
+        imported.length !== item.qty ||
+        new Set(imported).size !== imported.length
+    )
+        fail(
+            `Phiếu nhập thiếu hoặc sai lịch sử IMEI của "${item.name}" (${item.code}); cần đối soát trước khi trả.`,
+            409
+        );
+    const available = imported.filter((serial) => !returnedSerials.has(serial));
+    const imeis = Array.isArray(row.imeis) ? row.imeis : [];
+    if (
+        imeis.length !== qty ||
+        new Set(imeis).size !== qty ||
+        imeis.some((serial) => !available.includes(serial))
+    )
+        fail(`Chọn đúng IMEI chưa trả của "${item.name}", khớp với số lượng trả.`);
+    // Máy phải còn trong kho chi nhánh này; đã bán hoặc chuyển đi thì không trả được.
+    const current = new Set(p.imeis || []);
+    const missing = imeis.filter((serial) => !current.has(serial));
+    if (missing.length)
+        fail(
+            `IMEI đã xuất khỏi kho, không thể trả nhà cung cấp: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}.`,
+            409
+        );
+    return imeis;
+}
+
+// Trừ tồn và gỡ IMEI khi trả hàng nhập.
+// Hàng ra khỏi kho theo giá vốn bình quân hiện tại nên giá vốn bình quân KHÔNG đổi;
+// tiền nhà cung cấp hoàn lại tính theo giá nhập của dòng phiếu nhập (xử lý ở nơi gọi).
+function applyReturnedStock(p, qty, imeis) {
+    p.stock = amount(p.stock - qty);
+    if (imeis.length) {
+        const toRemove = new Set(imeis);
+        p.imeis = (p.imeis || []).filter((serial) => !toRemove.has(serial));
+        if (p.imeiDetails && typeof p.imeiDetails === 'object')
+            imeis.forEach((serial) => delete p.imeiDetails[serial]);
+    }
+}
+
+// Trả hàng nhập (một phần hoặc toàn bộ) cho nhà cung cấp.
+// Không sửa phiếu nhập gốc: mỗi lần trả là chứng từ riêng trong `import_returns`,
+// nhờ vậy đối chiếu được lịch sử và trả được nhiều đợt.
+function importReturn(data, user, input) {
+    requirePermission(user, 'imports');
+    const imp = data.imports.find((i) => i.id === input.importId || i.code === input.importId);
+    if (!imp) fail('Không tìm thấy phiếu nhập.');
+    if (imp.status === 'cancelled') fail('Phiếu nhập đã hủy; không trả hàng được.', 409);
+    const br = branchOf(imp);
+    branch(data, user, br);
+    if (!Array.isArray(imp.items) || !imp.items.length)
+        fail('Phiếu nhập cũ thiếu chi tiết; cần đối soát trước khi trả.');
+
+    // Tổng đã trả của các lần trước, theo mặt hàng và theo IMEI.
+    const previous = (data.import_returns || []).filter((r) => r.importCode === imp.code);
+    const returnedQty = new Map(),
+        returnedSerials = new Set();
+    for (const ret of previous)
+        for (const row of ret.items || []) {
+            returnedQty.set(row.code, (returnedQty.get(row.code) || 0) + (Number(row.qty) || 0));
+            for (const serial of row.imeis || []) returnedSerials.add(serial);
+        }
+
+    if (!Array.isArray(input.items) || !input.items.length)
+        fail('Chọn ít nhất một sản phẩm để trả nhà cung cấp.');
+
+    const supplier = data.suppliers.find((s) => s.id === imp.supplierId || s.code === imp.nccCode);
+    const seen = new Set();
+    const items = input.items.map((row) => {
+        const item = imp.items.find((i) => i.code === row.code);
+        if (!item || seen.has(row.code)) fail('Dòng trả hàng không hợp lệ.');
+        seen.add(row.code);
+        const qty = quantity(row.qty);
+        const already = returnedQty.get(row.code) || 0;
+        if (qty > item.qty - already)
+            fail(
+                `Số lượng trả "${item.name}" (${item.code}) vượt số còn lại của phiếu nhập (còn ${item.qty - already}).`,
+                409
+            );
+        const p = product(data, item.code, br);
+        const imeis = checkReturnImeis({
+            item,
+            row,
+            qty,
+            p,
+            returnedSerials,
+            already
+        });
+        // Phiếu nhập lưu giá nhập ở `price`; thiếu thì không tính được tiền hoàn.
+        if (!Number.isSafeInteger(item.price) || item.price < 0)
+            fail('Phiếu nhập thiếu giá nhập lịch sử; cần đối soát trước khi trả.');
+        if (p.stock < qty)
+            fail(
+                `Tồn kho "${p.name}" (${p.code}) không đủ để trả (hiện còn ${p.stock}, cần trừ ${qty}).`,
+                409
+            );
+        const refund = amount(qty * item.price);
+        applyReturnedStock(p, qty, imeis);
+        return {
+            code: item.code,
+            name: item.name,
+            qty,
+            price: item.price,
+            total: refund,
+            hasImei: Boolean(item.hasImei || imeis.length),
+            imeis,
+            // Giá vốn bình quân lúc trả, để đối soát chênh lệch với giá nhập.
+            costPrice: amount(p.costPrice)
+        };
+    });
+
+    const totalRefund = amount(items.reduce((sum, row) => sum + row.total, 0));
+    const paid = amount(imp.paid || 0);
+    const unpaid = amount(amount(imp.needPay || 0) - paid);
+    // Phần chưa trả nhà cung cấp được cấn trừ trước; phần dư mới là tiền họ hoàn lại.
+    const debtReduced = Math.min(unpaid, totalRefund);
+    const cashBack = amount(totalRefund - debtReduced);
+    if (supplier) {
+        if (supplier.debt < debtReduced)
+            fail('Công nợ nhà cung cấp đã thay đổi; cần đối soát thủ công.', 409);
+        supplier.debt = amount(supplier.debt - debtReduced);
+        supplier.totalBought = amount(supplier.totalBought - totalRefund);
+    }
+
+    const id = code(data, 'PTN');
+    const record = {
+        id,
+        code: id,
+        importCode: imp.code,
+        ...timestamp(),
+        nccCode: imp.nccCode || supplier?.code || '',
+        nccName: imp.nccName || supplier?.name || '',
+        supplierId: supplier?.id || imp.supplierId || null,
+        items,
+        totalRefund,
+        debtReduced,
+        cashBack,
+        refundMethod: paymentMethod(input.refundMethod || 'cash'),
+        reason: typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) : '',
+        cashier: user.name || '',
+        branch: br
+    };
+    if (!Array.isArray(data.import_returns)) data.import_returns = [];
+    data.import_returns.unshift(record);
+
+    // Chỉ ghi phiếu thu khi nhà cung cấp thực sự hoàn tiền; phần bù công nợ không sinh quỹ.
+    if (cashBack > 0) {
+        voucher(data, {
+            type: 'thu',
+            category: 'Trả hàng nhập',
+            value: cashBack,
+            person: supplier ? supplier.name : imp.nccName || 'Nhà cung cấp',
+            method: record.refundMethod,
+            branch: br,
+            supplierId: supplier ? supplier.id : null,
+            importId: imp.id,
+            importCode: imp.code,
+            note: `Nhà cung cấp hoàn tiền trả hàng nhập ${imp.code} (${id})`
+        });
+    }
+    return record;
+}
+
 function payDebt(data, user, input) {
     if (!['thu', 'chi'].includes(input.type)) fail('Loại thanh toán không hợp lệ.');
     const supplier = input.type === 'chi';
@@ -1890,6 +2060,19 @@ function execute(data, user, type, input) {
             });
             return cImp;
         }
+        case 'return_import': {
+            const rImp = importReturn(data, user, input);
+            recordActivity(data, {
+                type: 'return_import',
+                title: user.name || rImp.cashier || 'Quản lý kho',
+                action: `Trả hàng nhập ${rImp.code} cho ${rImp.nccName || 'nhà cung cấp'} (từ ${rImp.importCode})${rImp.reason ? `: ${rImp.reason}` : ''}`,
+                val: rImp.totalRefund ? -rImp.totalRefund : 0,
+                branch: rImp.branch,
+                time: rImp.time,
+                createdAt: rImp.createdAt
+            });
+            return rImp;
+        }
         case 'debt': {
             const res = payDebt(data, user, input);
             const isCust = input.type === 'thu';
@@ -2026,5 +2209,6 @@ module.exports = {
     syncSharedAvailability,
     productHasHistory,
     cancelDeliveryOrder,
-    returnDeliveryOrder
+    returnDeliveryOrder,
+    importReturn
 };

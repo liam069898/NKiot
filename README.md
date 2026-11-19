@@ -30,6 +30,16 @@ NKIOT_SUPER_ADMIN_PASSWORD='mat-khau-it-nhat-8-ky-tu' npm run admin:local
 
 Mở `http://localhost:4100`, tạo nhà bán hàng và nhấn URL POS được hiển thị. Portal tự tạo database riêng, chạy POS và khởi động Hub local khi cần; không cần chạy lệnh riêng cho từng tenant. Giữ portal chạy để POS hoạt động; khi khởi động lại portal, POS đã tạo sẽ tự chạy lại. Nếu cổng POS đã được chương trình khác dùng, chọn cổng khác. Ví dụ tenant `a` dùng `http://a.localhost:3101`; `a.localhost` giúp browser tách cookie phiên khỏi tenant khác. Dữ liệu local nằm trong `data/local-admin/`, đã được `.gitignore`; `tenant.env` chứa API key Hub và không được gửi lên browser hoặc commit.
 
+### Sao lưu tự động
+
+Portal tự sao lưu mỗi ngày cho từng nhà bán hàng và cho Hub, mặc định lúc **2:00** (đổi bằng `NKIOT_BACKUP_HOUR=0..23`). Nếu portal được bật sau giờ hẹn mà hôm đó chưa có bản sao, nó chạy bù ngay khi khởi động.
+
+- Nơi lưu: `data/local-admin/backups/<tenant>/` và `data/local-admin/backups/hub/`, quyền `600`.
+- Giữ **7 bản ngày** (`daily-YYYYMMDD.db`) và **4 bản tuần** (`weekly-YYYY-Www.db`); bản cũ hơn bị xóa tự động.
+- Mỗi bản ghi bằng `VACUUM INTO` ra file tạm, phải vượt `PRAGMA integrity_check` rồi mới `rename` đè lên tên chính thức. Bản mới lỗi không bao giờ thay thế bản tốt gần nhất.
+- Xem trạng thái và bấm **Sao lưu ngay** ở khối “Sao lưu tự động” trên trang quản trị; API: `GET /api/backups`, `POST /api/backups/run` (cần CSRF).
+- Sao lưu tự động chỉ áp dụng cho portal local. Khi chạy POS riêng lẻ (`npm start`) vẫn dùng `npm run backup` như mục dưới.
+
 ## Nâng cấp từ bản cũ
 
 Dừng tiến trình máy chủ cũ trước khi chạy bản mới. Lần nâng cấp schema đầu tiên tự tạo bản sao nhất quán `minikiot.db.before-v2-<timestamp>.bak` bằng SQLite trước khi sửa schema. Nếu sao lưu hoặc nâng cấp thất bại, máy chủ không tiếp tục khởi động. Không chạy đồng thời phiên bản máy chủ cũ và mới trên cùng database.
@@ -84,6 +94,15 @@ Nút xuất JSON trong giao diện chỉ xuất dữ liệu tài khoản đượ
 - Đóng phiếu đang soạn cần xác nhận. Nội dung được giữ trong cùng phiên trang/người dùng khi mở lại, **chưa lưu nháp qua reload**. Trình duyệt có cảnh báo rời trang; không thay thế backup hay lưu nháp bền vững.
 - Khi chưa rõ kết quả gửi, phiếu khóa chỉnh sửa và có nút kiểm tra kết quả để đối soát cùng request ID; không lập lại phiếu mới. Sau khi lưu thành công mở chi tiết phiếu để kiểm tra/in.
 - Chưa hỗ trợ giá riêng từng IMEI, nhập Excel hoặc lưu nháp đồng bộ nhiều thiết bị.
+
+## Trả hàng nhập
+
+- Mở chi tiết phiếu nhập chưa hủy → **Trả hàng NCC**. Mỗi lần trả tạo chứng từ riêng `PTN……` trong bảng `import_returns`; phiếu nhập gốc không bị sửa nên đối chiếu được lịch sử và trả được nhiều đợt.
+- Số lượng trả bị chặn theo phần còn lại (đã nhập trừ các lần trả trước). Hàng quản lý IMEI phải chọn đúng serial chưa trả **và còn trong kho**; máy đã bán hoặc chuyển chi nhánh sẽ bị từ chối.
+- Khi lưu: trừ tồn kho, gỡ IMEI (kèm chi tiết máy), giảm `totalBought` của nhà cung cấp. Phần còn nợ được cấn trừ trước; chỉ phần dư mới sinh phiếu thu "Trả hàng nhập" trong sổ quỹ.
+- Giá vốn bình quân **không đổi** khi trả, vì hàng ra khỏi kho theo đúng giá vốn hiện tại; tiền nhà cung cấp hoàn tính theo giá nhập của dòng phiếu nhập.
+- Quyền: cần quyền `imports`. Phiếu nhập đã hủy hoặc thiếu giá nhập lịch sử sẽ bị từ chối kèm yêu cầu đối soát.
+- Danh sách Nhập hàng hiện badge `↩ Đã trả N` trên phiếu đã trả; mở chi tiết phiếu để xem lịch sử từng chứng từ trả (mã, thời gian, hàng, số lượng, giá trị, lý do) và tổng đã trả nhà cung cấp.
 
 ## Sửa lỗi toàn vẹn dữ liệu sau review
 
@@ -202,7 +221,9 @@ NKIOT_VTP_WEBHOOK_SECRET='<secret-webhook>'
 - **Hoặc cấu hình qua giao diện:** Cài đặt → **Kết nối Viettel Post** (chỉ Quản trị
   viên). Mật khẩu và secret webhook được mã hóa AES-256-GCM và lưu trong `app_meta`;
   không hiển thị lại cho trình duyệt.
-- Webhook nhận tại `POST /api/vtp/webhook`, xác thực bằng `Authorization: Bearer <secret>`.
+- Webhook nhận tại `POST /api/vtp/webhook`. Xác thực bằng secret đã lưu: so khớp với trường
+  `TOKEN` trong body (đúng chuẩn Viettel Post), vẫn chấp nhận header `Authorization: Bearer <secret>`
+  để tương thích. Mọi phản hồi đều trả HTTP 200 kèm `reason` để hãng không gửi lại.
 - Không đưa token vào `NKIOT_VTP_BASE_URL` hoặc gửi về trình duyệt. Đặc tả chi tiết:
   `VIETTELPOST_INTEGRATION_SPEC.md`.
 
@@ -259,6 +280,7 @@ Các cải tiến dưới đây không thay đổi API, schema hay cơ chế lư
 - Phân lô 50 dòng kèm nút “Xem thêm” cho Hàng hóa, Nhập hàng, Khách hàng và Sổ quỹ; đổi từ khóa, bộ lọc, chi nhánh hoặc tiêu chí sắp xếp sẽ reset về lô đầu.
 - Checkbox tiêu đề chọn/bỏ chọn toàn bộ dòng hiển thị; khi có dòng được chọn, chân bảng hiện “Đã chọn X dòng · Bỏ chọn”. Trạng thái chọn tự reset khi bảng render lại.
 - Nút `×` và phím `Escape` xóa nhanh từ khóa ở mọi ô tìm kiếm, gồm cả ô tìm nhà bán hàng trên cổng Super Admin.
+- Danh sách Đơn hàng, Nhập hàng và Nhà cung cấp có thêm **tìm kiếm nâng cao**: nút bộ lọc trong ô tìm kiếm mở panel nhiều điều kiện (mã chứng từ, mã/tên hàng, khách hàng, mã vận đơn, IMEI, ghi chú, ghi chú hàng hóa, người tạo, địa chỉ). Các điều kiện áp dụng đồng thời (AND), chỉ chạy khi bấm “Tìm kiếm” hoặc `Enter`, đóng bằng “Thu gọn”, `Escape` hoặc bấm ra ngoài. Badge trên nút bộ lọc hiển thị số điều kiện đang áp dụng. Từ khóa nhanh vẫn chạy song song và mọi so khớp đều bỏ dấu tiếng Việt.
 
 **Lọc, đánh dấu và xuất dữ liệu**
 

@@ -56,6 +56,109 @@ function rotateBackups(source, directory, keep = 7) {
     return destination;
 }
 
+// Tên file theo lịch: một bản mỗi ngày (ghi đè trong ngày) và một bản mỗi tuần (ISO week).
+// Tên cố định để lịch chạy nhiều lần trong ngày không sinh hàng loạt file.
+function scheduledFilename(kind, date = new Date()) {
+    const iso = date.toISOString();
+    const day = iso.slice(0, 10).replace(/-/g, '');
+    if (kind === 'weekly') {
+        const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+        const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+        return { name: `weekly-${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}.db` };
+    }
+    return { name: `daily-${day}.db` };
+}
+
+// Hub DB có schema riêng (tenants, catalogs...) nên chỉ kiểm tra tính toàn vẹn và vài bảng nền.
+// Dùng chung đường ghi an toàn với backup tenant.
+function validateHubBackup(filename) {
+    if (!fs.existsSync(filename)) throw new Error('Không tìm thấy bản sao.');
+    const database = new DatabaseSync(filename, { readOnly: true });
+    try {
+        const integrity = database.prepare('PRAGMA integrity_check').all();
+        if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok')
+            throw new Error('Bản sao không vượt qua integrity_check.');
+        database.prepare('SELECT count(*) FROM tenants').get();
+        return true;
+    } finally {
+        database.close();
+    }
+}
+
+// Ghi bản sao có kiểm chứng. Ghi ra file tạm rồi đổi tên để không bao giờ để lại file dở dang,
+// và không xóa bản cũ khi bản mới chưa vượt integrity_check.
+function writeVerifiedBackup(source, destination, { validate = validateBackup } = {}) {
+    const target = path.resolve(destination);
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
+    try {
+        backupDatabase(source, temp);
+        validate(temp);
+        fs.renameSync(temp, target);
+        try {
+            fs.chmodSync(target, 0o600);
+        } catch {}
+        return target;
+    } catch (error) {
+        for (const file of [temp, `${temp}-wal`, `${temp}-shm`])
+            if (fs.existsSync(file)) fs.unlinkSync(file);
+        throw error;
+    }
+}
+
+// Giữ `dailyKeep` bản ngày gần nhất và `weeklyKeep` bản tuần gần nhất; xóa phần còn lại.
+function pruneBackups(directory, { dailyKeep = 7, weeklyKeep = 4 } = {}) {
+    const dir = path.resolve(directory);
+    if (!fs.existsSync(dir)) return { removed: [], kept: [] };
+    for (const [label, keep, pattern] of [
+        ['daily', dailyKeep, /^daily-\d{8}\.db$/],
+        ['weekly', weeklyKeep, /^weekly-\d{4}-W\d{2}\.db$/]
+    ]) {
+        if (!Number.isSafeInteger(keep) || keep < 1) throw new Error('Số bản sao phải hơn 0.');
+        const files = fs
+            .readdirSync(dir)
+            .filter((name) => pattern.test(name))
+            .sort()
+            .reverse();
+        for (const old of files.slice(keep)) fs.unlinkSync(path.join(dir, old));
+    }
+    return {
+        removed: [],
+        kept: fs
+            .readdirSync(dir)
+            .filter((name) => /^(?:daily|weekly)-\S+\.db$/.test(name))
+            .sort()
+    };
+}
+
+// Đọc trạng thái sao lưu từ danh sách file, không mở DB nên rẻ cho mọi lần tải trang.
+function backupStatus(directory) {
+    const dir = path.resolve(directory);
+    if (!fs.existsSync(dir)) return { latest: null, daily: 0, weekly: 0, files: [] };
+    const files = fs
+        .readdirSync(dir)
+        .filter((name) => /^(?:daily|weekly)-[\w-]+\.db$/.test(name))
+        .map((name) => {
+            const stat = fs.statSync(path.join(dir, name));
+            return {
+                name,
+                kind: name.startsWith('weekly-') ? 'weekly' : 'daily',
+                size: stat.size,
+                modifiedAt: stat.mtime.toISOString()
+            };
+        })
+        .sort((a, b) => (a.modifiedAt < b.modifiedAt ? 1 : -1));
+    return {
+        latest: files[0] || null,
+        daily: files.filter((f) => f.kind === 'daily').length,
+        weekly: files.filter((f) => f.kind === 'weekly').length,
+        files
+    };
+}
+
 // Call only while every writer to the DB and uploads directory is stopped.
 function hashFile(filename) {
     const crypto = require('node:crypto');
@@ -200,4 +303,15 @@ if (require.main === module) {
     }
 }
 
-module.exports = { backupDatabase, validateBackup, rotateBackups, createBundle, verifyBundle };
+module.exports = {
+    backupDatabase,
+    validateBackup,
+    rotateBackups,
+    createBundle,
+    verifyBundle,
+    scheduledFilename,
+    writeVerifiedBackup,
+    validateHubBackup,
+    pruneBackups,
+    backupStatus
+};

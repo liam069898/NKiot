@@ -2538,6 +2538,197 @@ test('carrier cancellation webhook reverses the invoice and restores stock/IMEI'
     assert.ok(after.products[0].imeis.includes(targetImei), 'Phải hoàn lại IMEI');
 });
 
+test('return_import deducts stock, restores supplier debt and records a single receipt', () => {
+    // Nhập 2 máy giá vốn 50.000; đã trả 40.000 nên còn nợ 60.000.
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 2, price: 50000, imeis: ['I4', 'I5'] }],
+        paid: 40000,
+        paymentMethod: 'bank',
+        note: 'Nhập đợt 1'
+    }).result;
+    let data = db.getAllData();
+    const imp = data.imports.find((row) => row.code === imported.code);
+    const supplierBefore = data.suppliers.find((s) => s.code === 'S');
+    assert.equal(supplierBefore.debt, 60000);
+    assert.equal(supplierBefore.totalBought, 100000);
+    const stockBefore = data.products.find((p) => p.code === 'SP').stock;
+
+    // Trả 1 máy: 50.000 cấn trừ hết vào công nợ nên không phát sinh phiếu thu.
+    const ret = command('return_import', {
+        importId: imp.code,
+        items: [{ code: 'SP', qty: 1, imeis: ['I5'] }],
+        refundMethod: 'cash',
+        reason: 'Máy lỗi'
+    }).result;
+    assert.equal(ret.totalRefund, 50000);
+    assert.equal(ret.debtReduced, 50000);
+    assert.equal(ret.cashBack, 0);
+
+    data = db.getAllData();
+    const product = data.products.find((p) => p.code === 'SP');
+    assert.equal(product.stock, stockBefore - 1, 'phải trừ tồn kho');
+    assert.deepEqual(product.imeis, ['I1', 'I2', 'I3', 'I4'], 'phải gỡ IMEI đã trả');
+    assert.equal(data.suppliers.find((s) => s.code === 'S').debt, 10000);
+    assert.equal(data.suppliers.find((s) => s.code === 'S').totalBought, 50000);
+    assert.equal(data.import_returns.length, 1);
+    assert.equal(data.import_returns[0].importCode, imp.code);
+    assert.equal(
+        data.cashbook.filter((c) => c.category === 'Trả hàng nhập').length,
+        0,
+        'bù công nợ không được sinh phiếu thu'
+    );
+});
+
+test('return_import issues a receipt for the amount the supplier pays back', () => {
+    // Nhập 2 máy, đã trả đủ nên công nợ 0; trả hàng sinh phiếu thu đúng giá trị.
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 2, price: 50000, imeis: ['I4', 'I5'] }],
+        paid: 100000,
+        paymentMethod: 'bank'
+    }).result;
+    assert.equal(db.getAllData().suppliers.find((s) => s.code === 'S').debt, 0);
+
+    const ret = command('return_import', {
+        importId: imported.code,
+        items: [{ code: 'SP', qty: 1, imeis: ['I4'] }],
+        refundMethod: 'transfer'
+    }).result;
+    assert.equal(ret.totalRefund, 50000);
+    assert.equal(ret.debtReduced, 0);
+    assert.equal(ret.cashBack, 50000);
+
+    const data = db.getAllData();
+    const receipts = data.cashbook.filter((c) => c.category === 'Trả hàng nhập');
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].type, 'thu');
+    assert.equal(receipts[0].amount, 50000);
+    assert.equal(data.suppliers.find((s) => s.code === 'S').debt, 0);
+    assert.equal(data.suppliers.find((s) => s.code === 'S').totalBought, 50000);
+});
+
+test('return_import rejects over-return, sold IMEIs, cancelled imports and missing permission', () => {
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 2, price: 50000, imeis: ['I4', 'I5'] }],
+        paid: 100000,
+        paymentMethod: 'bank'
+    }).result;
+    // Bán I4 để IMEI không còn trong kho.
+    command('sale', { branch: 'A', items: [{ code: 'SP', qty: 1, imeis: ['I4'] }], given: 100000 });
+
+    assert.throws(
+        () =>
+            command('return_import', {
+                importId: imported.code,
+                items: [{ code: 'SP', qty: 3, imeis: [] }]
+            }),
+        /vượt số còn lại/
+    );
+    assert.throws(
+        () =>
+            command('return_import', {
+                importId: imported.code,
+                items: [{ code: 'SP', qty: 1, imeis: ['I4'] }]
+            }),
+        /IMEI đã xuất khỏi kho/
+    );
+    assert.throws(
+        () => command('return_import', { importId: imported.code, items: [] }),
+        /Chọn ít nhất một sản phẩm/
+    );
+    // Sai số lượng IMEI so với số lượng trả.
+    assert.throws(
+        () =>
+            command('return_import', {
+                importId: imported.code,
+                items: [{ code: 'SP', qty: 1, imeis: [] }]
+            }),
+        /Chọn đúng IMEI chưa trả/
+    );
+
+    // Nhân viên không có quyền imports không được trả hàng nhập (phải là user thật trong DB,
+    // vì transact đọc lại quyền từ database).
+    const staffData = db.getAllData();
+    staffData.users.push({
+        ...staffData.users[0],
+        id: 'STAFF',
+        code: 'STAFF',
+        username: 'staff-import-test',
+        name: 'Nhân viên bán hàng',
+        role: 'custom',
+        permissions: { pos: true, invoices: true }
+    });
+    db.saveAllData(staffData);
+    const cashier = db.getAllData().users.find((u) => u.id === 'STAFF');
+    assert.throws(
+        () =>
+            command(
+                'return_import',
+                { importId: imported.code, items: [{ code: 'SP', qty: 1, imeis: ['I5'] }] },
+                app.revision(),
+                crypto.randomUUID(),
+                cashier
+            ),
+        { status: 403 }
+    );
+
+    // Phiếu đã hủy thì không trả được.
+    const second = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 1, price: 50000, imeis: ['I6'] }],
+        paid: 50000,
+        paymentMethod: 'bank'
+    }).result;
+    command('cancel_import', { importId: second.code, reason: 'Nhập nhầm' });
+    assert.throws(
+        () =>
+            command('return_import', {
+                importId: second.code,
+                items: [{ code: 'SP', qty: 1 }]
+            }),
+        /đã hủy/
+    );
+});
+
+test('return_import accumulates partial returns and caps at imported quantity', () => {
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 2, price: 50000, imeis: ['I4', 'I5'] }],
+        paid: 100000,
+        paymentMethod: 'bank'
+    }).result;
+    const first = command('return_import', {
+        importId: imported.code,
+        items: [{ code: 'SP', qty: 1, imeis: ['I4'] }]
+    }).result;
+    const second = command('return_import', {
+        importId: imported.code,
+        items: [{ code: 'SP', qty: 1, imeis: ['I5'] }]
+    }).result;
+    assert.notEqual(first.code, second.code, 'mỗi lần trả có mã riêng');
+    const data = db.getAllData();
+    assert.equal(data.import_returns.length, 2);
+    // 3 máy ban đầu + 2 nhập - 2 trả = 3.
+    assert.equal(data.products.find((p) => p.code === 'SP').stock, 3);
+    assert.deepEqual(data.products.find((p) => p.code === 'SP').imeis, ['I1', 'I2', 'I3']);
+    // Đã trả hết số đã nhập thì không trả thêm được.
+    assert.throws(
+        () =>
+            command('return_import', {
+                importId: imported.code,
+                items: [{ code: 'SP', qty: 1, imeis: ['I5'] }]
+            }),
+        /vượt số còn lại/
+    );
+});
+
 test('self-delivery lifecycle: no VTP task, COD settlement books cashbook receipt, returnDelivery restores IMEI, and /api/invoices filters channel', async () => {
     const targetImei = db.getAllData().products[0].imeis[0];
     const selfRes = command('deliverySale', {

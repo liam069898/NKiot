@@ -564,8 +564,68 @@
         }
     }
 
+    // Trạng thái sao lưu: hiện khi portal đã đăng nhập. Lỗi ở đây không được chặn bảng tenant.
+    let backupInfo = null;
+    function formatDateTime(iso) {
+        if (!iso) return 'chưa có';
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return 'chưa có';
+        return date.toLocaleString('vi-VN', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+    function backupIsStale(target) {
+        if (!target.latest) return true;
+        return Date.now() - new Date(target.latest.modifiedAt).getTime() > 36 * 3600 * 1000;
+    }
+    function renderBackups() {
+        const panel = $('backup-panel'),
+            list = $('backup-list'),
+            meta = $('backup-schedule');
+        if (!panel || !list || !meta) return;
+        if (!backupInfo) {
+            panel.hidden = true;
+            return;
+        }
+        panel.hidden = false;
+        const { schedule, targets } = backupInfo;
+        const parts = [`Chạy hằng ngày lúc ${schedule?.hour ?? 2}:00`];
+        if (schedule?.nextRunAt) parts.push(`lần tới ${formatDateTime(schedule.nextRunAt)}`);
+        parts.push(`lần cuối ${formatDateTime(schedule?.lastRunAt)}`);
+        meta.textContent = parts.join(' · ');
+        if (schedule?.lastError) meta.textContent += ` · Lỗi: ${schedule.lastError}`;
+
+        list.replaceChildren();
+        for (const target of targets || []) {
+            const li = document.createElement('li');
+            if (backupIsStale(target)) li.classList.add('is-stale');
+            const dot = document.createElement('span');
+            dot.className = 'backup-dot';
+            const text = document.createElement('span');
+            const latest = target.latest
+                ? `${target.latest.name.replace(/\.db$/, '')} · ${formatBytes(target.latest.size)}`
+                : 'chưa có bản sao';
+            text.textContent = `${target.label}: ${latest} (${target.daily} ngày / ${target.weekly} tuần)`;
+            li.append(dot, text);
+            list.append(li);
+        }
+    }
+    async function loadBackups() {
+        try {
+            backupInfo = await api('/api/backups');
+        } catch {
+            backupInfo = null;
+        }
+        renderBackups();
+    }
+
     async function refresh() {
         render(await api('/api/tenants'));
+        await loadBackups();
     }
 
     async function guarded(button, action) {
@@ -811,6 +871,17 @@
     // Password toggles
     setupPasswordToggle('btn-toggle-login-pwd', 'login-password');
     setupPasswordToggle('btn-toggle-tenant-pwd', 'tenant-password');
+
+    $('btn-run-backup')?.addEventListener('click', (event) => {
+        const button = event.currentTarget;
+        guarded(button, async () => {
+            const { results } = await api('/api/backups/run', { id: 'all' });
+            const failed = (results || []).filter((item) => !item.success);
+            if (failed.length) message(`Sao lưu lỗi: ${failed.map((f) => f.id).join(', ')}`, false);
+            else message('Đã sao lưu tất cả nhà bán hàng và hub.', true);
+            await loadBackups();
+        });
+    });
 
     // Escape key closes any open Super Admin modal
     document.addEventListener('keydown', (e) => {

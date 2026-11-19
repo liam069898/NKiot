@@ -115,6 +115,133 @@ test('list tolerates legacy JSON and matches fallback branch; indexes survive re
     assert.ok(plan.some((row) => row.detail.includes('invoices_branch_list')));
 });
 
+test('advanced search filters invoices by document, product, customer, shipment, IMEI and notes', () => {
+    const data = db.getAllData();
+    data.invoices = [
+        {
+            id: 'A1',
+            code: 'HD-A1',
+            branch: 'A',
+            customer: 'Nguyễn Văn Đức',
+            phone: '0911000001',
+            time: '11/10/2026 10:00',
+            status: 'completed',
+            total: 100,
+            paid: 100,
+            note: 'Giao giờ hành chính',
+            items: [
+                {
+                    code: 'SP-TAI',
+                    name: 'Tai nghe Bluetooth',
+                    qty: 1,
+                    price: 100,
+                    total: 100,
+                    imeis: ['IMEI-0001'],
+                    note: 'Hàng trưng bày'
+                }
+            ]
+        },
+        {
+            id: 'A2',
+            code: 'HD-A2',
+            branch: 'A',
+            customer: 'Trần Thị Bình',
+            phone: '0911000002',
+            time: '11/10/2026 11:00',
+            status: 'completed',
+            total: 200,
+            paid: 200,
+            note: 'Khách quen',
+            items: [
+                {
+                    code: 'SP-SAC',
+                    name: 'Cáp sạc nhanh',
+                    qty: 1,
+                    price: 200,
+                    total: 200,
+                    imeis: [],
+                    note: 'Còn bảo hành'
+                }
+            ]
+        }
+    ];
+    data.customers = [
+        {
+            id: 'C1',
+            code: 'KH0001',
+            name: 'Nguyễn Văn Đức',
+            phone: '0911000001',
+            address: '',
+            totalSpent: 0,
+            debt: 0,
+            points: 0
+        },
+        {
+            id: 'C2',
+            code: 'KH0002',
+            name: 'Trần Thị Bình',
+            phone: '0911000002',
+            address: '',
+            totalSpent: 0,
+            debt: 0,
+            points: 0
+        }
+    ];
+    data.delivery_orders = [
+        {
+            id: 'VTP1',
+            invoiceId: 'A2',
+            branch: 'A',
+            code: 'GH0002',
+            orderNumber: 'VTP0002',
+            shipmentCode: 'SHIP-9002',
+            createdAt: '2026-10-11T11:00:00.000Z',
+            updatedAt: '2026-10-11T11:00:00.000Z',
+            status: 'confirmed'
+        }
+    ];
+    db.saveAllData(data);
+
+    const only = (input) => query(input).rows.map((row) => row.id);
+    // Mã hóa đơn, không phân biệt hoa thường và có/không dấu.
+    assert.deepEqual(only({ code: 'hd-a1' }), ['A1']);
+    // Mã và tên hàng hóa.
+    assert.deepEqual(only({ product: 'tai nghe' }), ['A1']);
+    assert.deepEqual(only({ product: 'SP-SAC' }), ['A2']);
+    // Mã, tên, SĐT khách hàng (kể cả mã khách lấy từ bảng customers).
+    assert.deepEqual(only({ customer: 'duc' }), ['A1']);
+    assert.deepEqual(only({ customer: 'KH0002' }), ['A2']);
+    // Mã vận đơn trong delivery_orders.
+    assert.deepEqual(only({ shipment: 'ship-9002' }), ['A2']);
+    // IMEI / Serial của hàng hóa.
+    assert.deepEqual(only({ imei: 'imei-0001' }), ['A1']);
+    // Ghi chú hóa đơn và ghi chú hàng hóa là hai trường riêng.
+    assert.deepEqual(only({ note: 'hành chính' }), ['A1']);
+    assert.deepEqual(only({ itemNote: 'bảo hành' }), ['A2']);
+    // Nhiều trường là AND nên kết hợp sai sẽ không khớp.
+    assert.deepEqual(only({ product: 'tai nghe', note: 'khách quen' }), []);
+    assert.deepEqual(only({ product: 'capsac' }), []);
+    assert.deepEqual(only({ itemNote: 'bao hanh' }), ['A2']);
+    // Từ khóa chung vẫn bỏ dấu được.
+    assert.deepEqual(only({ q: 'nguyen van duc' }), ['A1']);
+    assert.throws(() => query({ code: 'x'.repeat(201) }), { status: 400 });
+});
+
+test('advanced search ignores legacy invalid item JSON and stays scoped to the branch', () => {
+    const data = db.getAllData();
+    data.invoices[0].items = [{ code: 'SP-X', name: 'Đồng hồ', qty: 1, price: 10, total: 10 }];
+    data.invoices[120].items = [{ code: 'SP-X', name: 'Đồng hồ', qty: 1, price: 10, total: 10 }];
+    db.saveAllData(data);
+    const ids = (input) => query(input).rows.map((row) => row.id);
+    // Chi nhánh A chỉ thấy hóa đơn của A; chi nhánh B có hóa đơn cùng mặt hàng nhưng bị loại.
+    assert.deepEqual(ids({ product: 'dong ho' }), ['I0']);
+    assert.deepEqual(ids({ product: 'dong ho', branch: 'B' }), ['I120']);
+    // JSON hỏng trong cột items không làm hỏng câu truy vấn, chỉ không khớp.
+    db.getDb().prepare("UPDATE invoices SET items='not-json' WHERE id='I0'").run();
+    assert.deepEqual(ids({ product: 'dong ho' }), []);
+    assert.equal(query({}).total, 120);
+});
+
 test('empty result has one empty page and all date presets match the existing helper', () => {
     assert.deepEqual(query({ q: 'not-existing' }).rows, []);
     assert.equal(query({ q: 'not-existing' }).pages, 1);

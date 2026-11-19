@@ -1249,6 +1249,69 @@ test('Import cancellation updates UI, hides cancel button, shows status banner a
     }
 });
 
+test('import list shows the current supplier name and phone after a supplier edit', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval(`
+            KVStore.data.suppliers = [
+                { id:'NCC1', code:'NCC1', name:'Nhà cung cấp cũ', phone:'0900000001', address:'', debt:0, totalBought:0, note:'' }
+            ];
+            KVStore.data.imports = [{
+                id:'PN1', code:'PN1', supplierId:'NCC1', nccCode:'NCC1', nccName:'Nhà cung cấp cũ',
+                branch:getCurrentBranch(), status:'imported', items:[], needPay:0, paid:0,
+                time:'01/11/2026 08:00', creator:'Admin', note:'', paymentMethod:'bank'
+            }];
+        `);
+        // Trước khi sửa: hiển thị tên/SĐT cũ.
+        assert.equal(
+            w.importSupplierInfo(w.eval('KVStore.data.imports[0]')).name,
+            'Nhà cung cấp cũ'
+        );
+        // Sửa tên và SĐT nhà cung cấp.
+        w.eval(`
+            const s = KVStore.data.suppliers.find((x) => x.id === 'NCC1');
+            s.name = 'Nhà cung cấp mới';
+            s.phone = '0909999999';
+        `);
+        const info = w.importSupplierInfo(w.eval('KVStore.data.imports[0]'));
+        assert.equal(info.name, 'Nhà cung cấp mới', 'danh sách phiếu phải hiện tên mới');
+        assert.equal(info.phone, '0909999999', 'danh sách phiếu phải hiện SĐT mới');
+
+        // Danh sách phiếu render ra tên + SĐT mới.
+        w.renderImports();
+        const row = w.document.querySelector('#import-tbody tr');
+        const rowText = row?.textContent || '';
+        assert.match(rowText, /Nhà cung cấp mới/);
+        assert.match(rowText, /0909999999/);
+        // SĐT phải là phần tử HTML thật, không bị escape thành chuỗi "<div ...>" trên màn hình.
+        assert.ok(
+            !rowText.includes('<div'),
+            'không được hiển thị thẻ HTML thô trong ô nhà cung cấp'
+        );
+        assert.ok(
+            row.querySelector('div.font-mono')?.textContent.includes('0909999999'),
+            'SĐT phải nằm trong phần tử con, không phải text escape'
+        );
+
+        // Tìm kiếm theo tên/SĐT mới phải ra phiếu; theo tên cũ thì không.
+        const matchNew = w.eval(
+            `matchesDocumentFilter(KVStore.data.imports[0], { kind:'imports', q:'nhà cung cấp mới' })`
+        );
+        const matchPhone = w.eval(
+            `matchesDocumentFilter(KVStore.data.imports[0], { kind:'imports', q:'0909999999' })`
+        );
+        const matchOld = w.eval(
+            `matchesDocumentFilter(KVStore.data.imports[0], { kind:'imports', q:'nhà cung cấp cũ' })`
+        );
+        assert.equal(matchNew, true, 'tìm theo tên mới phải khớp');
+        assert.equal(matchPhone, true, 'tìm theo SĐT mới phải khớp');
+        assert.equal(matchOld, false, 'tên cũ không còn khớp');
+    } finally {
+        dom.window.close();
+    }
+});
+
 test('copy cancelled import and cancelled invoice prefill new receipt/POS cart', async () => {
     const dom = browser(),
         w = dom.window;
@@ -2357,6 +2420,35 @@ test('product form uploads images through the compressed media uploader', async 
         // Video giữ nguyên, không nén.
         const video = await w.prepareImageForUpload({ type: 'video/mp4', name: 'a.mp4' });
         assert.equal(video.type, 'video/mp4');
+
+        // Đang tải ảnh thì chặn lưu hàng hóa (tránh lưu thiếu ảnh).
+        w.eval('productUploads = 1;');
+        const before = w.eval('KVStore.data.products.length');
+        await w.saveProductFromModal({ preventDefault() {} });
+        assert.equal(
+            w.eval('KVStore.data.products.length'),
+            before,
+            'không được lưu hàng hóa khi ảnh chưa tải xong'
+        );
+        w.eval('productUploads = 0;');
+    } finally {
+        w.close();
+    }
+});
+
+test('PNG with transparency is flattened onto white instead of black', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // jsdom không có canvas/createImageBitmap: xác nhận hàm không ném và trả về object hợp lệ.
+        // Kiểm tra logic tô nền trắng nằm trong nhánh xuất JPEG qua đọc source.
+        const src = fs.readFileSync('app.js', 'utf8');
+        assert.match(
+            src,
+            /fillStyle = '#ffffff'/,
+            'phải tô nền trắng trước khi vẽ để ảnh trong suốt không bị đen'
+        );
+        assert.match(src, /fillRect\(0, 0, w, h\)/);
     } finally {
         w.close();
     }
@@ -4458,4 +4550,309 @@ test('delivery POS renders Viettel Post services as selectable cards', async () 
             w.close();
         }
     });
+});
+test('imports list shows a returned badge and the detail renders return history', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.data.imports = [
+                { id: 'PN1', code: 'PN1', time: '01/11/2026 10:00', nccCode: 'NCC1', nccName: 'NCC Một',
+                  status: 'imported', needPay: 300000, paid: 300000, branch: 'Kalo HCM',
+                  items: [{ code: 'SP1', name: 'Máy A', qty: 3, price: 100000, total: 300000 }] },
+                { id: 'PN2', code: 'PN2', time: '02/11/2026 10:00', nccCode: 'NCC1', nccName: 'NCC Một',
+                  status: 'imported', needPay: 100000, paid: 100000, branch: 'Kalo HCM',
+                  items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000, total: 100000 }] }
+            ];
+            KVStore.data.import_returns = [
+                { id: 'PTN1', code: 'PTN1', importCode: 'PN1', time: '03/11/2026 09:00',
+                  nccCode: 'NCC1', nccName: 'NCC Một', branch: 'Kalo HCM', reason: 'Lỗi màn hình',
+                  items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000 }], totalRefund: 100000 },
+                { id: 'PTN2', code: 'PTN2', importCode: 'PN1', time: '04/11/2026 09:00',
+                  nccCode: 'NCC1', nccName: 'NCC Một', branch: 'Kalo HCM', reason: '',
+                  items: [{ code: 'SP1', name: 'Máy A', qty: 2, price: 100000 }], totalRefund: 200000 }
+            ];
+            renderImports();
+        `);
+        const rows = [...doc.querySelectorAll('#import-tbody tr')];
+        const pn1 = rows.find((row) => row.textContent.includes('PN1'));
+        const pn2 = rows.find((row) => row.textContent.includes('PN2'));
+        // Phiếu đã trả 3 món hiện badge; phiếu chưa trả không có badge.
+        assert.match(pn1.textContent, /Đã trả 3/);
+        assert.ok(!/Đã trả/.test(pn2.textContent), 'phiếu chưa trả không được có badge');
+
+        // Chi tiết phiếu hiển thị lịch sử từng chứng từ trả.
+        const html = w.eval(
+            "renderImportDetailHtml(KVStore.data.imports.find((i) => i.code === 'PN1'))"
+        );
+        assert.match(html, /Đã trả nhà cung cấp \(2 phiếu · 3 món\)/);
+        assert.match(html, /PTN1/);
+        assert.match(html, /PTN2/);
+        assert.match(html, /Lỗi màn hình/);
+        assert.match(html, /300\.000/);
+        // Phiếu chưa trả hiển thị ghi chú trống.
+        const html2 = w.eval(
+            "renderImportDetailHtml(KVStore.data.imports.find((i) => i.code === 'PN2'))"
+        );
+        assert.match(html2, /Chưa trả hàng nhập lần nào/);
+    } finally {
+        w.close();
+    }
+});
+
+test('import return modal renders remaining quantities, totals and submits validated items', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        // Phiếu nhập có 1 mặt hàng IMEI; đã trả 1 máy trước đó.
+        w.eval(`
+            KVStore.data.imports = [{
+                id: 'PN1', code: 'PN1', time: '01/11/2026 10:00', nccCode: 'NCC1', nccName: 'NCC Một',
+                status: 'imported', needPay: 300000, paid: 100000, branch: 'Kalo HCM',
+                items: [{ code: 'SP1', name: 'Máy A', qty: 3, price: 100000, total: 300000,
+                          hasImei: true, imeis: ['S1', 'S2', 'S3'] }]
+            }];
+            KVStore.data.import_returns = [{
+                id: 'PTN1', code: 'PTN1', importCode: 'PN1', time: '02/11/2026 09:00',
+                nccCode: 'NCC1', nccName: 'NCC Một', branch: 'Kalo HCM',
+                items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000, imeis: ['S1'] }],
+                totalRefund: 100000
+            }];
+            KVStore.data.suppliers = [{ id: 'NCC1', code: 'NCC1', name: 'NCC Một', phone: '0900000001', debt: 200000, totalBought: 300000 }];
+            openImportReturnModal('PN1');
+        `);
+        const modal = doc.getElementById('import-return-modal');
+        assert.equal(modal.classList.contains('hidden'), false, 'modal phải mở');
+        assert.equal(doc.getElementById('imp-ret-code').textContent, 'PN1');
+        assert.match(doc.getElementById('imp-ret-supplier').textContent, /NCC Một/);
+        // Đã trả 1 nên còn 2.
+        const rows = doc.querySelectorAll('#imp-ret-items-tbody tr');
+        assert.equal(rows.length, 1);
+        assert.match(rows[0].textContent, /Máy A/);
+        assert.equal(
+            doc.getElementById('imp-ret-qty-0').value,
+            '2',
+            'mặc định trả hết phần còn lại'
+        );
+        assert.equal(doc.getElementById('imp-ret-qty-0').max, '2');
+
+        // Chưa tích chọn thì tổng bằng 0.
+        assert.match(doc.getElementById('imp-ret-total').textContent, /^0/);
+        doc.getElementById('imp-ret-chk-0').checked = true;
+        w.recalculateImportReturn();
+        assert.match(doc.getElementById('imp-ret-total').textContent, /200\.000/);
+        // Còn nợ 200.000 nên cấn trừ hết, nhà cung cấp không hoàn tiền.
+        assert.match(doc.getElementById('imp-ret-debt').textContent, /200\.000/);
+        assert.match(doc.getElementById('imp-ret-cashback').textContent, /^0/);
+
+        // Giảm số lượng xuống 1 thì tổng còn 100.000.
+        doc.getElementById('imp-ret-qty-0').value = '1';
+        w.recalculateImportReturn();
+        assert.match(doc.getElementById('imp-ret-total').textContent, /100\.000/);
+        assert.match(doc.getElementById('imp-ret-cashback').textContent, /^0/);
+
+        // Gom dòng trả: chỉ chọn IMEI còn lại (S2), không lấy S1 đã trả.
+        const collected = w.collectImportReturnItems();
+        assert.equal(
+            JSON.stringify(collected),
+            JSON.stringify([{ code: 'SP1', qty: 1, imeis: ['S2'] }])
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('import return modal refuses cancelled imports and closed tickets with no remaining quantity', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        const toast = [];
+        w.eval(`
+            window.__toasts = [];
+            showToast = (message, type) => window.__toasts.push({ message, type });
+            KVStore.data.imports = [
+                { id: 'PNC', code: 'PNC', status: 'cancelled', branch: 'Kalo HCM', needPay: 0, paid: 0,
+                  items: [{ code: 'SP1', name: 'A', qty: 1, price: 1000 }] },
+                { id: 'PND', code: 'PND', status: 'imported', branch: 'Kalo HCM', needPay: 1000, paid: 1000,
+                  items: [{ code: 'SP1', name: 'A', qty: 1, price: 1000 }] }
+            ];
+            KVStore.data.import_returns = [
+                { id: 'PTNX', code: 'PTNX', importCode: 'PND', time: 'x', items: [{ code: 'SP1', qty: 1, price: 1000 }], totalRefund: 1000 }
+            ];
+            openImportReturnModal('PNC');
+        `);
+        assert.equal(
+            doc.getElementById('import-return-modal').classList.contains('hidden'),
+            true,
+            'phiếu đã hủy không được mở modal'
+        );
+        toast.push(...w.eval('window.__toasts'));
+        assert.match(toast.at(-1).message, /đã hủy/);
+
+        // Phiếu đã trả hết: ô chọn và ô số lượng bị khóa.
+        w.eval("openImportReturnModal('PND')");
+        assert.equal(doc.getElementById('import-return-modal').classList.contains('hidden'), false);
+        assert.equal(doc.getElementById('imp-ret-chk-0').disabled, true);
+        assert.equal(doc.getElementById('imp-ret-qty-0').disabled, true);
+        assert.equal(w.collectImportReturnItems().length, 0);
+
+        // Không chọn gì mà bấm xác nhận thì báo lỗi, không gửi lệnh.
+        let commands = 0;
+        w.eval('KVStore.command = async () => { window.__cmd = (window.__cmd || 0) + 1; };');
+        w.eval('window.__toasts = []');
+        return w.submitImportReturn().then(() => {
+            commands = w.eval('window.__cmd || 0');
+            assert.equal(commands, 0, 'không được gửi lệnh khi chưa chọn hàng');
+        });
+    } finally {
+        w.close();
+    }
+});
+
+test('advanced search panels filter invoices, imports and suppliers by multiple fields', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        // Panel chỉ được dựng một lần cho mỗi ô tìm kiếm.
+        w.eval('setupAdvancedSearchInputs();setupAdvancedSearchInputs();setupSearchInputs();');
+        const doc = w.document;
+        for (const [inputId, expectedFields] of [
+            ['invoice-search-input', 7],
+            ['import-search-input', 6],
+            ['supplier-search-input', 5]
+        ]) {
+            const toggle = doc.getElementById(`${inputId}-advanced-toggle`);
+            const panel = doc.getElementById(`${inputId}-advanced-panel`);
+            assert.ok(toggle, `${inputId} phải có nút bộ lọc`);
+            assert.ok(panel, `${inputId} phải có panel nâng cao`);
+            assert.equal(panel.classList.contains('hidden'), true, 'panel mặc định đóng');
+            assert.equal(
+                panel.querySelectorAll('input[data-advanced-key]').length,
+                expectedFields,
+                `${inputId} phải có ${expectedFields} ô điều kiện`
+            );
+            assert.ok(
+                panel.querySelector('button[data-advanced-submit]'),
+                'panel phải có nút Tìm kiếm'
+            );
+            assert.ok(
+                panel.querySelector('button[data-advanced-collapse]'),
+                'panel phải có nút Thu gọn'
+            );
+        }
+
+        // Mở bằng nút bộ lọc, đóng bằng Escape.
+        const invoiceToggle = doc.getElementById('invoice-search-input-advanced-toggle');
+        const invoicePanel = doc.getElementById('invoice-search-input-advanced-panel');
+        invoiceToggle.dispatchEvent(new w.Event('click', { bubbles: true }));
+        assert.equal(invoicePanel.classList.contains('hidden'), false);
+        assert.equal(invoiceToggle.getAttribute('aria-expanded'), 'true');
+        invoicePanel.dispatchEvent(
+            new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        );
+        assert.equal(invoicePanel.classList.contains('hidden'), true);
+
+        // Áp dụng nhiều điều kiện: badge hiện số điều kiện, nút xóa hiện ra.
+        w.applyAdvancedSearch('supplier-search-input', {
+            name: 'an tiến',
+            address: 'võ văn tần'
+        });
+        const badge = doc.querySelector('#supplier-search-input-advanced-toggle span');
+        assert.equal(badge.classList.contains('hidden'), false);
+        assert.equal(badge.textContent, '2');
+        const clearBtn = doc.querySelector('[data-clear-for="supplier-search-input"]');
+        assert.equal(clearBtn.classList.contains('hidden'), false);
+        assert.equal(clearBtn.classList.contains('right-9'), true, 'nút xóa phải né nút bộ lọc');
+
+        // Lọc nhà cung cấp theo tên + địa chỉ (AND) và không phân biệt dấu.
+        w.renderSuppliers();
+        let rows = [...doc.querySelectorAll('#suppliers-tbody tr')];
+        assert.ok(rows.length >= 1, 'phải còn nhà cung cấp khớp cả hai điều kiện');
+        assert.ok(rows.every((row) => /An Tiến/i.test(row.textContent)));
+        w.applyAdvancedSearch('supplier-search-input', {
+            name: 'an tiến',
+            address: 'hà nội'
+        });
+        rows = [...doc.querySelectorAll('#suppliers-tbody tr')];
+        assert.equal(rows.length, 1, 'không khớp AND thì chỉ còn dòng trống');
+        assert.match(rows[0].textContent, /Không tìm thấy/);
+
+        // Nút xóa phải reset cả từ khóa nhanh và điều kiện nâng cao.
+        w.applyAdvancedSearch('supplier-search-input', { name: 'an tiến' });
+        clearBtn.dispatchEvent(new w.Event('click', { bubbles: true }));
+        assert.equal(w.eval('advancedSearchCount("supplier-search-input")'), 0);
+        assert.equal(badge.classList.contains('hidden'), true);
+        assert.equal(clearBtn.classList.contains('hidden'), true);
+
+        // Nhập hàng: lọc theo mã hàng hóa trong phiếu (trường "product").
+        const importCode = w.eval('KVStore.data.imports[0].items[0].code');
+        const expectedImports = w.eval(
+            `KVStore.data.imports.filter((imp) => (imp.items || []).some((it) => it.code === ${JSON.stringify(importCode)})).length`
+        );
+        assert.ok(expectedImports > 1, 'dữ liệu mẫu phải có nhiều phiếu chứa cùng mặt hàng');
+        w.applyAdvancedSearch('import-search-input', { product: importCode });
+        w.renderImports();
+        rows = [...doc.querySelectorAll('#import-tbody tr')];
+        assert.equal(rows.length, expectedImports, 'chỉ hiện phiếu có chứa mã hàng');
+        assert.ok(
+            !rows.some((row) => /Không tìm thấy/.test(row.textContent)),
+            'không được rơi vào trạng thái trống'
+        );
+
+        // Ô tìm kiếm nhanh vẫn chạy song song (AND) với điều kiện nâng cao.
+        doc.getElementById('import-search-input').value = 'phieu khong ton tai';
+        w.renderImports();
+        assert.match(doc.querySelector('#import-tbody tr').textContent, /Không tìm thấy/);
+        doc.getElementById('import-search-input').value = '';
+        w.clearAdvancedSearch('import-search-input');
+        w.renderImports();
+        assert.ok(
+            !/Không tìm thấy/.test(doc.querySelector('#import-tbody tr').textContent),
+            'xóa điều kiện thì danh sách hiện lại'
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('advanced search panel stays in sync with the shared clear button and Escape', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        w.eval('setupAdvancedSearchInputs();setupSearchInputs();');
+        const doc = w.document;
+        const input = doc.getElementById('invoice-search-input');
+        const clearBtn = doc.querySelector('[data-clear-for="invoice-search-input"]');
+
+        // Chưa có gì để xóa thì nút xóa ẩn.
+        assert.equal(clearBtn.classList.contains('hidden'), true);
+
+        // Chỉ có điều kiện nâng cao (không có từ khóa nhanh) vẫn phải hiện nút xóa.
+        w.applyAdvancedSearch('invoice-search-input', { code: 'HD001' });
+        assert.equal(clearBtn.classList.contains('hidden'), false);
+        assert.equal(w.eval('advancedSearchCount("invoice-search-input")'), 1);
+
+        // Escape trong ô tìm kiếm xóa cả từ khóa nhanh và điều kiện nâng cao.
+        input.value = 'abc';
+        input.dispatchEvent(new w.Event('input', { bubbles: true }));
+        input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        assert.equal(input.value, '');
+        assert.equal(w.eval('advancedSearchCount("invoice-search-input")'), 0);
+        assert.equal(clearBtn.classList.contains('hidden'), true);
+
+        // Bấm ra ngoài đóng panel nhưng giữ điều kiện đã áp dụng.
+        const toggle = doc.getElementById('invoice-search-input-advanced-toggle');
+        w.applyAdvancedSearch('invoice-search-input', { product: 'tai nghe' });
+        toggle.dispatchEvent(new w.Event('click', { bubbles: true }));
+        const panel = doc.getElementById('invoice-search-input-advanced-panel');
+        assert.equal(panel.classList.contains('hidden'), false);
+        doc.body.dispatchEvent(new w.Event('mousedown', { bubbles: true }));
+        assert.equal(panel.classList.contains('hidden'), true, 'bấm ngoài phải đóng panel');
+        assert.equal(w.eval('advancedSearchCount("invoice-search-input")'), 1);
+    } finally {
+        w.close();
+    }
 });

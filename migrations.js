@@ -338,6 +338,40 @@ const MIGRATIONS = [
                 } catch {}
             }
         }
+    },
+    {
+        version: 14,
+        name: 'import_returns',
+        up(db) {
+            // Trả hàng nhập là chứng từ riêng, không sửa phiếu nhập gốc (giữ nguyên lịch sử).
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS import_returns (
+                    id TEXT PRIMARY KEY,
+                    code TEXT,
+                    importCode TEXT,
+                    time TEXT,
+                    nccCode TEXT,
+                    nccName TEXT,
+                    items TEXT,
+                    totalRefund REAL DEFAULT 0,
+                    refundMethod TEXT,
+                    reason TEXT,
+                    cashier TEXT,
+                    branch TEXT
+                );
+                CREATE INDEX IF NOT EXISTS import_returns_import_code ON import_returns(importCode);
+            `);
+            // Mọi bảng entity phải có cột `extra` (xem assertReadableRecords trong db.js).
+            addColumn(db, 'import_returns', "extra TEXT NOT NULL DEFAULT '{}'");
+        }
+    },
+    {
+        version: 15,
+        name: 'import_returns_extra_column',
+        up(db) {
+            // Bản 14 đầu tiên tạo bảng thiếu `extra`; bổ sung cho DB đã chạy migration đó.
+            addColumn(db, 'import_returns', "extra TEXT NOT NULL DEFAULT '{}'");
+        }
     }
 ];
 

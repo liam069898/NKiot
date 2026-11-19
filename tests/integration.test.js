@@ -527,6 +527,71 @@ test('invoice paging uses real HTTP filters and refreshes full details before ac
     }
 });
 
+test('invoice advanced search sends every condition over real HTTP and pages from the first page', async () => {
+    const b = browser();
+    try {
+        await login(b);
+        const data = db.getAllData();
+        data.invoices = [
+            {
+                id: 'ADV1',
+                code: 'ADV1',
+                branch: 'Kalo HCM',
+                customer: 'Nguyễn Văn Đức',
+                phone: '0911000001',
+                time: '01/01/2026 10:00',
+                status: 'completed',
+                total: 100,
+                paid: 100,
+                note: 'Giao hành chính',
+                items: [{ code: 'P1', name: 'Tai nghe', qty: 1, price: 100, total: 100 }]
+            },
+            {
+                id: 'ADV2',
+                code: 'ADV2',
+                branch: 'Kalo HCM',
+                customer: 'Trần Thị Bình',
+                phone: '0911000002',
+                time: '01/01/2026 11:00',
+                status: 'completed',
+                total: 200,
+                paid: 200,
+                note: 'Khách quen',
+                items: [{ code: 'P2', name: 'Cáp sạc', qty: 1, price: 200, total: 200 }]
+            }
+        ];
+        db.saveAllData(data);
+        db.getDb()
+            .prepare("UPDATE app_meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
+            .run();
+
+        await b.w.renderInvoices();
+        assert.equal(b.w.document.querySelectorAll('#invoice-tbody tr').length, 2);
+
+        // Ô tìm kiếm nhanh và điều kiện nâng cao cùng áp dụng (AND).
+        b.w.document.getElementById('invoice-search-input').value = 'nguyen';
+        b.w.applyAdvancedSearch('invoice-search-input', { note: 'hanh chinh' });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        let rows = [...b.w.document.querySelectorAll('#invoice-tbody tr')];
+        assert.equal(rows.length, 1, 'chỉ còn hóa đơn khớp cả từ khóa nhanh và ghi chú');
+        assert.match(rows[0].textContent, /ADV1/);
+
+        // Đổi sang điều kiện không khớp thì bảng trống.
+        b.w.document.getElementById('invoice-search-input').value = '';
+        b.w.applyAdvancedSearch('invoice-search-input', { product: 'cap sac', note: 'hành chính' });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(b.w.eval('invoicePage.pages'), 1, 'không khớp thì quay về một trang rỗng');
+        assert.equal(b.w.document.querySelectorAll('#invoice-tbody tr').length, 1);
+
+        // Xóa điều kiện nâng cao qua nút xóa dùng chung thì danh sách hiện lại đủ.
+        b.w.clearAdvancedSearch('invoice-search-input');
+        await b.w.renderInvoices();
+        assert.equal(b.w.document.querySelectorAll('#invoice-tbody tr').length, 2);
+    } finally {
+        b.close();
+    }
+});
+
 test('return UI submits the selected serial and excludes previously returned devices', async () => {
     const b = browser();
     try {

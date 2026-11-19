@@ -8,6 +8,7 @@ const { DatabaseSync } = require('node:sqlite');
 const hubDb = require('./hub-db');
 const { createTenant, linkPartners } = require('./hub-server');
 const { hashPassword } = require('./security');
+const backup = require('./backup');
 
 const ROOT = __dirname;
 const STOP_TIMEOUT_MS = 10000;
@@ -464,6 +465,67 @@ function createProvisioner({ dataDir, hubUrl = 'http://127.0.0.1:4000' }) {
         }
         return { success: true };
     }
+    // Sao lưu theo lịch: mỗi tenant và hub có thư mục riêng, giữ 7 bản ngày + 4 bản tuần.
+    // Ghi bằng VACUUM INTO (nhất quán với WAL đang mở) và chỉ giữ file đã qua integrity_check.
+    const backupsRoot = path.join(root, 'backups');
+    function backupTargets() {
+        const targets = list()
+            .map((tenant) => ({
+                id: tenant.id,
+                label: tenant.name || tenant.id,
+                dir: path.join(backupsRoot, tenant.id),
+                dbPath: path.join(tenantsDir, tenant.id, 'nkiot.db')
+            }))
+            .filter((target) => fs.existsSync(target.dbPath));
+        if (fs.existsSync(hubPath))
+            targets.push({
+                id: 'hub',
+                label: 'Hub kho chung',
+                dir: path.join(backupsRoot, 'hub'),
+                dbPath: hubPath
+            });
+        return targets;
+    }
+    function backupStatusAll() {
+        return backupTargets().map((target) => ({
+            id: target.id,
+            label: target.label,
+            ...backup.backupStatus(target.dir)
+        }));
+    }
+    function backupTarget(id, { forceWeekly = false } = {}) {
+        const target = backupTargets().find((item) => item.id === id);
+        if (!target) fail('Không tìm thấy cơ sở dữ liệu để sao lưu.', 404);
+        const now = new Date();
+        const written = [];
+        const plan = [backup.scheduledFilename('daily', now)];
+        // Bản tuần chỉ ghi vào Thứ Hai (UTC) hoặc khi người dùng bấm "Sao lưu ngay" lần đầu trong tuần.
+        if (forceWeekly || now.getUTCDay() === 1) {
+            const weekly = backup.scheduledFilename('weekly', now);
+            if (forceWeekly || !fs.existsSync(path.join(target.dir, weekly.name)))
+                plan.push(weekly);
+        }
+        for (const item of plan)
+            written.push(
+                backup.writeVerifiedBackup(target.dbPath, path.join(target.dir, item.name), {
+                    validate: target.id === 'hub' ? backup.validateHubBackup : backup.validateBackup
+                })
+            );
+        backup.pruneBackups(target.dir, { dailyKeep: 7, weeklyKeep: 4 });
+        return { id: target.id, written, ...backup.backupStatus(target.dir) };
+    }
+    async function backupAll(options) {
+        const results = [];
+        for (const target of backupTargets()) {
+            try {
+                results.push({ success: true, ...backupTarget(target.id, options) });
+            } catch (error) {
+                // Một tenant lỗi không được chặn lịch của các tenant còn lại.
+                results.push({ success: false, id: target.id, error: error.message });
+            }
+        }
+        return results;
+    }
     function backupDb(id) {
         const tenant = list().find((item) => item.id === id);
         if (!tenant) fail('Không tìm thấy tenant local.', 404);
@@ -518,6 +580,10 @@ function createProvisioner({ dataDir, hubUrl = 'http://127.0.0.1:4000' }) {
         setStatus,
         resetPassword,
         backupDb,
+        backupStatusAll,
+        backupTarget,
+        backupAll,
+        backupsRoot,
         update,
         startAll,
         isRunning,

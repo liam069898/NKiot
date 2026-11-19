@@ -2,7 +2,7 @@
 const db = require('./db');
 const { requirePermission, allowedBranches } = require('./security');
 const { FALLBACK_BRANCH, ALL_BRANCHES } = require('./constants');
-const { matchesDateFilter } = require('./app-utils');
+const { matchesDateFilter, foldText } = require('./app-utils');
 const registered = new WeakSet();
 const bad = (message, status = 400) => {
     throw Object.assign(new Error(message), { status });
@@ -14,6 +14,21 @@ function integer(value, fallback, min, max) {
     if (!Number.isSafeInteger(n) || n < min || n > max) bad('Tham số phân trang ngoài giới hạn.');
     return n;
 }
+
+// Các trường của bộ lọc nâng cao do client gửi lên; mọi giá trị đều đi qua prepared statement.
+const ADVANCED_PARAMS = ['code', 'product', 'customer', 'shipment', 'imei', 'note', 'itemNote'];
+function advancedQuery(params) {
+    const values = {};
+    for (const key of ADVANCED_PARAMS) {
+        const raw = params.get(key);
+        if (raw === null) continue;
+        const value = foldText(raw);
+        if (!value) continue;
+        if (value.length > 200) bad('Từ khóa quá dài.');
+        values[key] = value;
+    }
+    return values;
+}
 function listInvoices(user, params) {
     requirePermission(user, 'invoices');
     const page = integer(params.get('page'), 1, 1, 1000000);
@@ -22,8 +37,9 @@ function listInvoices(user, params) {
     const status = params.get('status') || 'all';
     const channel = params.get('channel') || 'all';
     const date = params.get('date') || 'all';
-    const q = (params.get('q') || '').trim().toLowerCase();
+    const q = foldText(params.get('q') || '');
     if (q.length > 200) bad('Từ khóa quá dài.');
+    const adv = advancedQuery(params);
     if (!['all', 'completed', 'returned', 'cancelled'].includes(status))
         bad('Trạng thái không hợp lệ.');
     if (!['all', 'counter', 'delivery'].includes(channel)) bad('Kênh bán không hợp lệ.');
@@ -43,9 +59,7 @@ function listInvoices(user, params) {
         bad('Bộ lọc ngày không hợp lệ.');
     const d = db.getDb();
     if (!registered.has(d)) {
-        d.function('nkiot_lower', { deterministic: true }, (value) =>
-            String(value || '').toLowerCase()
-        );
+        d.function('nkiot_fold', { deterministic: true }, (value) => foldText(value));
         d.function('nkiot_matches_date', (time, filter) =>
             matchesDateFilter(time, filter) ? 1 : 0
         );
@@ -84,9 +98,53 @@ function listInvoices(user, params) {
         if (channel === 'counter') where.push(`NOT ${isDeliveryExpr}`);
         if (q) {
             where.push(
-                "(instr(nkiot_lower(i.code),?)>0 OR instr(nkiot_lower(i.customer),?)>0 OR instr(COALESCE(i.phone,''),?)>0)"
+                "(instr(nkiot_fold(i.code),?)>0 OR instr(nkiot_fold(i.customer),?)>0 OR instr(nkiot_fold(COALESCE(i.phone,'')),?)>0)"
             );
             args.push(q, q, q);
+        }
+        // Bộ lọc nâng cao: mọi trường phải cùng khớp (AND), bỏ dấu tiếng Việt.
+        const jsons = () => `json_each(CASE WHEN json_valid(i.items) THEN i.items ELSE '[]' END)`;
+        if (adv.code) {
+            where.push('instr(nkiot_fold(i.code),?)>0');
+            args.push(adv.code);
+        }
+        if (adv.product) {
+            where.push(
+                `EXISTS (SELECT 1 FROM ${jsons()} j WHERE instr(nkiot_fold(json_extract(j.value,'$.code')),?)>0 OR instr(nkiot_fold(json_extract(j.value,'$.name')),?)>0)`
+            );
+            args.push(adv.product, adv.product);
+        }
+        if (adv.customer) {
+            // Subquery theo mã khách không phụ thuộc từng hóa đơn nên SQLite chỉ chạy một lần.
+            where.push(
+                `(instr(nkiot_fold(i.customer),?)>0 OR instr(nkiot_fold(COALESCE(i.phone,'')),?)>0
+                  OR i.phone IN (SELECT c.phone FROM customers c
+                      WHERE c.phone IS NOT NULL AND c.phone!='' AND instr(nkiot_fold(c.code),?)>0)
+                  OR i.customer IN (SELECT c.name FROM customers c WHERE instr(nkiot_fold(c.code),?)>0))`
+            );
+            args.push(...Array(4).fill(adv.customer));
+        }
+        if (adv.shipment) {
+            where.push(
+                `EXISTS (SELECT 1 FROM delivery_orders od WHERE od.invoiceId=i.id AND (instr(nkiot_fold(od.code),?)>0 OR instr(nkiot_fold(od.shipmentCode),?)>0 OR instr(nkiot_fold(od.orderNumber),?)>0))`
+            );
+            args.push(adv.shipment, adv.shipment, adv.shipment);
+        }
+        if (adv.imei) {
+            where.push(
+                `EXISTS (SELECT 1 FROM ${jsons()} j, json_each(CASE WHEN json_valid(json_extract(j.value,'$.imeis')) THEN json_extract(j.value,'$.imeis') ELSE '[]' END) s WHERE instr(nkiot_fold(s.value),?)>0)`
+            );
+            args.push(adv.imei);
+        }
+        if (adv.note) {
+            where.push(`instr(nkiot_fold(json_extract(${extraJson},'$.note')),?)>0`);
+            args.push(adv.note);
+        }
+        if (adv.itemNote) {
+            where.push(
+                `EXISTS (SELECT 1 FROM ${jsons()} j WHERE instr(nkiot_fold(json_extract(j.value,'$.note')),?)>0)`
+            );
+            args.push(adv.itemNote);
         }
         if (date !== 'all') {
             where.push('nkiot_matches_date(i.time,?)=1');

@@ -157,10 +157,177 @@ function matchesDateFilter(recordTimeStr, filterMode, customFromStr, customToStr
     return true;
 }
 
+// Tra thông tin nhà cung cấp hiện tại cho một phiếu nhập (dùng chung cho tìm kiếm/xuất/nhãn).
+// Ưu tiên danh sách nhà cung cấp đang có; fallback về tên/mã đã lưu trên phiếu nếu đã bị xóa.
+function resolveImportSupplier(row, suppliers) {
+    const list = Array.isArray(suppliers)
+        ? suppliers
+        : typeof KVStore !== 'undefined'
+          ? KVStore.data?.suppliers || []
+          : [];
+    const supplier = row?.supplierId
+        ? list.find((s) => s.id === row.supplierId) || list.find((s) => s.code === row.nccCode)
+        : list.find((s) => s.code === row.nccCode);
+    return {
+        code: supplier?.code ?? row?.nccCode ?? '',
+        name: supplier?.name ?? row?.nccName ?? '',
+        phone: supplier?.phone ?? row?.nccPhone ?? ''
+    };
+}
+
+// Chuẩn hóa chuỗi để tìm kiếm: bỏ dấu tiếng Việt, về chữ thường và cắt khoảng trắng thừa.
+// Dùng chung cho tìm kiếm phía trình duyệt và hàm SQLite `nkiot_fold` phía server.
+function foldText(value) {
+    return String(value ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toLowerCase()
+        .trim();
+}
+
+// Bộ lọc nâng cao cho từng danh sách; thứ tự phần tử là thứ tự ô nhập trong panel.
+const ADVANCED_SEARCH_FIELDS = {
+    invoices: [
+        { key: 'code', label: 'Theo mã hóa đơn' },
+        { key: 'product', label: 'Theo mã, tên hàng' },
+        { key: 'customer', label: 'Theo mã, tên, số điện thoại khách hàng' },
+        { key: 'shipment', label: 'Theo mã vận đơn' },
+        { key: 'imei', label: 'Theo IMEI / Serial' },
+        { key: 'note', label: 'Theo ghi chú' },
+        { key: 'itemNote', label: 'Theo ghi chú hàng hóa' }
+    ],
+    imports: [
+        { key: 'code', label: 'Theo mã phiếu nhập' },
+        { key: 'product', label: 'Theo mã, tên hàng' },
+        { key: 'supplier', label: 'Theo mã, tên, số điện thoại nhà cung cấp' },
+        { key: 'imei', label: 'Theo IMEI / Serial' },
+        { key: 'note', label: 'Theo ghi chú' },
+        { key: 'creator', label: 'Theo người tạo' }
+    ],
+    suppliers: [
+        { key: 'code', label: 'Theo mã nhà cung cấp' },
+        { key: 'name', label: 'Theo tên nhà cung cấp' },
+        { key: 'phone', label: 'Theo số điện thoại' },
+        { key: 'address', label: 'Theo địa chỉ' },
+        { key: 'note', label: 'Theo ghi chú' }
+    ]
+};
+
+function advancedSearchFieldKeys(kind) {
+    return (ADVANCED_SEARCH_FIELDS[kind] || []).map((f) => f.key);
+}
+
+// Tra mã vận đơn của hóa đơn; cache theo danh sách delivery_orders để không quét lại mỗi dòng.
+let deliverySearchCache = { list: null, size: -1, byInvoice: null };
+function deliverySearchValues(row) {
+    const list =
+        (typeof KVStore !== 'undefined' && Array.isArray(KVStore.data?.delivery_orders)
+            ? KVStore.data.delivery_orders
+            : null) || [];
+    if (deliverySearchCache.list !== list || deliverySearchCache.size !== list.length) {
+        const byInvoice = new Map();
+        list.forEach((d) => {
+            if (!d || !d.invoiceId) return;
+            const codes = [d.code, d.shipmentCode, d.orderNumber].filter(Boolean);
+            if (!codes.length) return;
+            byInvoice.set(d.invoiceId, (byInvoice.get(d.invoiceId) || []).concat(codes));
+        });
+        deliverySearchCache = { list, size: list.length, byInvoice };
+    }
+    const codes = new Set();
+    if (row?.deliveryCode) codes.add(row.deliveryCode);
+    if (row?.shipmentCode) codes.add(row.shipmentCode);
+    (deliverySearchCache.byInvoice.get(row?.id) || []).forEach((code) => codes.add(code));
+    return Array.from(codes);
+}
+
+// Mã khách của hóa đơn theo cùng quy tắc với server (khớp SĐT trước, sau đó tới tên).
+let customerCodeCache = { list: null, size: -1, byPhone: null, byName: null };
+function customerCodeOf(row) {
+    if (row?.customerCode) return row.customerCode;
+    const list =
+        (typeof KVStore !== 'undefined' && Array.isArray(KVStore.data?.customers)
+            ? KVStore.data.customers
+            : null) || [];
+    if (customerCodeCache.list !== list || customerCodeCache.size !== list.length) {
+        const byPhone = new Map(),
+            byName = new Map();
+        list.forEach((c) => {
+            if (c?.phone && !byPhone.has(c.phone)) byPhone.set(c.phone, c.code);
+            if (c?.name && !byName.has(c.name)) byName.set(c.name, c.code);
+        });
+        customerCodeCache = { list, size: list.length, byPhone, byName };
+    }
+    return (
+        customerCodeCache.byPhone.get(row?.phone) ||
+        customerCodeCache.byName.get(row?.customer) ||
+        ''
+    );
+}
+
+// Gom giá trị có thể tìm kiếm của một dòng theo từng khóa của bộ lọc nâng cao.
+function advancedSearchRowValues(kind, row) {
+    const items = Array.isArray(row?.items) ? row.items : [];
+    if (kind === 'imports') {
+        const ncc = resolveImportSupplier(row);
+        return {
+            code: [row?.code],
+            product: items.flatMap((item) => [item.code, item.name]),
+            supplier: [ncc.code, ncc.name, ncc.phone],
+            imei: items.flatMap((item) => (Array.isArray(item.imeis) ? item.imeis : [])),
+            note: [row?.note],
+            creator: [row?.creator]
+        };
+    }
+    if (kind === 'suppliers') {
+        return {
+            code: [row?.code],
+            name: [row?.name],
+            phone: [row?.phone],
+            address: [row?.address],
+            note: [row?.note]
+        };
+    }
+    return {
+        code: [row?.code],
+        product: items.flatMap((item) => [item.code, item.name]),
+        customer: [row?.customer, row?.phone, customerCodeOf(row)],
+        shipment: deliverySearchValues(row),
+        imei: items.flatMap((item) => (Array.isArray(item.imeis) ? item.imeis : [])),
+        note: [row?.note],
+        itemNote: items.map((item) => item?.note)
+    };
+}
+
+// Mọi trường trong panel phải cùng khớp (AND); trường để trống thì bỏ qua.
+function matchesAdvancedSearch(kind, row, adv) {
+    if (!adv) return true;
+    const keys = advancedSearchFieldKeys(kind);
+    const entries = Object.entries(adv).filter(
+        ([key, needle]) => keys.includes(key) && String(needle || '').trim()
+    );
+    if (!entries.length) return true;
+    const values = advancedSearchRowValues(kind, row);
+    return entries.every(([key, needle]) => {
+        const target = foldText(needle);
+        return (values[key] || []).some((value) => foldText(value).includes(target));
+    });
+}
+
 // Shared UI/export predicates; independent of rendering and pagination.
 function matchesDocumentFilter(
     row,
-    { q = '', date = 'all', status = 'all', kind, returned = false, starred = false } = {}
+    {
+        q = '',
+        date = 'all',
+        status = 'all',
+        kind,
+        returned = false,
+        starred = false,
+        adv = null
+    } = {}
 ) {
     if (!matchesDateFilter(row.time, date)) return false;
     if (status === 'starred' && !starred) return false;
@@ -168,18 +335,16 @@ function matchesDocumentFilter(
     if (status === 'imported' && row.status === 'cancelled') return false;
     if (status === 'completed' && (row.status !== 'completed' || returned)) return false;
     if (status === 'returned' && !returned) return false;
+    if (!matchesAdvancedSearch(kind, row, adv)) return false;
     const values =
         kind === 'imports'
-            ? [row.code, row.nccName, row.nccCode]
+            ? (() => {
+                  const ncc = resolveImportSupplier(row);
+                  return [row.code, ncc.name, ncc.code, ncc.phone];
+              })()
             : [row.code, row.customer, row.phone];
-    return (
-        !q ||
-        values.some((v) =>
-            String(v || '')
-                .toLowerCase()
-                .includes(q.trim().toLowerCase())
-        )
-    );
+    const needle = foldText(q);
+    return !needle || values.some((v) => foldText(v).includes(needle));
 }
 
 function normalizePaymentMethod(method) {
@@ -231,6 +396,7 @@ if (typeof module !== 'undefined') {
         parseRecordDate,
         matchesDateFilter,
         normalizePaymentMethod,
-        getPaymentMethodLabel
+        getPaymentMethodLabel,
+        foldText
     };
 }

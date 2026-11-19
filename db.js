@@ -17,6 +17,7 @@ const ENTITY_TABLES = [
     'suppliers',
     'invoices',
     'imports',
+    'import_returns',
     'cashbook',
     'returns',
     'stocktakes',
@@ -203,6 +204,22 @@ function initDb() {
             status TEXT DEFAULT 'imported',
             creator TEXT,
             branch TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS import_returns (
+            id TEXT PRIMARY KEY,
+            code TEXT,
+            importCode TEXT,
+            time TEXT,
+            nccCode TEXT,
+            nccName TEXT,
+            items TEXT,
+            totalRefund REAL DEFAULT 0,
+            refundMethod TEXT,
+            reason TEXT,
+            cashier TEXT,
+            branch TEXT,
+            extra TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS cashbook (
@@ -519,6 +536,26 @@ function getAllData() {
             totalRefund: Number(r.totalRefund) || 0
         }));
 
+    // 10b. Import returns (trả hàng nhập)
+    const import_returns = d
+        .prepare('SELECT * FROM import_returns ORDER BY rowid')
+        .all()
+        .map((r) => {
+            const { extra, ...known } = r;
+            let fields = {};
+            try {
+                fields = JSON.parse(extra || '{}');
+            } catch {}
+            return {
+                ...fields,
+                ...known,
+                items: parseItems(r.items),
+                totalRefund: Number(r.totalRefund) || 0,
+                debtReduced: Number(known.debtReduced ?? fields.debtReduced) || 0,
+                cashBack: Number(known.cashBack ?? fields.cashBack) || 0
+            };
+        });
+
     // 11. Stocktakes
     const stocktakes = d
         .prepare('SELECT * FROM stocktakes ORDER BY rowid')
@@ -697,6 +734,7 @@ function getAllData() {
         imports,
         cashbook,
         returns,
+        import_returns,
         stocktakes,
         transfers,
         users,
@@ -1076,6 +1114,25 @@ const ROW_WRITERS = {
             r.time || '',
             r.customer || '',
             r.phone || '',
+            items(r.items),
+            Number(r.totalRefund) || 0,
+            r.refundMethod || '',
+            r.reason || '',
+            r.cashier || '',
+            r.branch || FALLBACK_BRANCH
+        ]
+    ],
+    import_returns: [
+        cols(
+            'id code importCode time nccCode nccName items totalRefund refundMethod reason cashier branch'
+        ),
+        (r) => [
+            r.id || '',
+            r.code || '',
+            r.importCode || '',
+            r.time || '',
+            r.nccCode || '',
+            r.nccName || '',
             items(r.items),
             Number(r.totalRefund) || 0,
             r.refundMethod || '',

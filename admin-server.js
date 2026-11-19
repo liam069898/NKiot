@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { hashPassword, verifyPassword } = require('./security');
 const { createProvisioner } = require('./admin-provision');
 const { securityHeaders } = require('./security-headers');
+const backup = require('./backup');
 
 const ASSETS = {
     '/': ['admin.html', 'text/html; charset=utf-8'],
@@ -59,13 +60,55 @@ function sessionToken(req) {
         .find((part) => part.startsWith('nkiot_admin_session='))
         ?.slice('nkiot_admin_session='.length);
 }
-function createAdminServer({ dataDir, password, hubUrl } = {}) {
+function createAdminServer({ dataDir, password, hubUrl, scheduleHour } = {}) {
     if (typeof password !== 'string' || password.length < 8 || password.length > 1024)
         throw new Error('NKIOT_SUPER_ADMIN_PASSWORD phải từ 8 đến 1024 ký tự.');
     const provisioner = createProvisioner({ dataDir, hubUrl });
     const passwordHash = hashPassword(password);
     const sessions = new Map();
     const attempts = new Map();
+    // Lịch sao lưu: một lần mỗi ngày (giờ địa phương), chạy bù nếu portal khởi động sau giờ hẹn.
+    const backupState = {
+        hour: Number.isInteger(scheduleHour) ? scheduleHour : 2,
+        timer: null,
+        lastRunAt: null,
+        lastError: null,
+        nextRunAt: null
+    };
+    const scheduleInfo = () => ({
+        hour: backupState.hour,
+        lastRunAt: backupState.lastRunAt,
+        lastError: backupState.lastError,
+        nextRunAt: backupState.nextRunAt
+    });
+    function nextRun(hour, from = new Date()) {
+        const next = new Date(from);
+        next.setHours(hour, 0, 0, 0);
+        if (next <= from) next.setDate(next.getDate() + 1);
+        return next;
+    }
+    function armSchedule() {
+        if (backupState.timer) clearTimeout(backupState.timer);
+        const target = nextRun(backupState.hour);
+        backupState.nextRunAt = target.toISOString();
+        backupState.timer = setTimeout(
+            async () => {
+                try {
+                    await provisioner.backupAll();
+                    backupState.lastRunAt = new Date().toISOString();
+                    backupState.lastError = null;
+                    console.log(`Sao lưu tự động xong: ${backupState.lastRunAt}`);
+                } catch (error) {
+                    backupState.lastError = error.message;
+                    console.error('Sao lưu tự động thất bại:', error.message);
+                }
+                armSchedule();
+            },
+            Math.min(target - Date.now(), 2147483647)
+        );
+        // Không giữ process sống chỉ vì lịch sao lưu.
+        backupState.timer.unref?.();
+    }
     const handler = async (req, res) => {
         try {
             if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(req.headers.host || ''))
@@ -178,6 +221,26 @@ function createAdminServer({ dataDir, password, hubUrl } = {}) {
                 stream.pipe(res);
                 return;
             }
+            if (url.pathname === '/api/backups' && req.method === 'GET')
+                return send(res, 200, {
+                    success: true,
+                    targets: provisioner.backupStatusAll(),
+                    schedule: scheduleInfo()
+                });
+            if (url.pathname === '/api/backups/run' && req.method === 'POST') {
+                const data = await readBody(req);
+                const id = typeof data.id === 'string' ? data.id.trim() : '';
+                if (!id || id === 'all') {
+                    const results = await provisioner.backupAll({ forceWeekly: true });
+                    return send(res, 200, { success: true, results });
+                }
+                return send(res, 200, {
+                    success: true,
+                    results: [
+                        { success: true, ...provisioner.backupTarget(id, { forceWeekly: true }) }
+                    ]
+                });
+            }
             if (url.pathname === '/api/partners' && req.method === 'POST') {
                 const data = await readBody(req);
                 if (typeof data.active !== 'boolean') fail('Trạng thái liên kết không hợp lệ.');
@@ -204,11 +267,40 @@ function createAdminServer({ dataDir, password, hubUrl } = {}) {
             else res.end();
         }
     };
+    // Nếu portal khởi động sau giờ hẹn mà hôm nay chưa có bản sao, chạy bù ngay.
+    async function catchUpBackups() {
+        const now = new Date();
+        if (now.getHours() < backupState.hour) return;
+        const today = backup.scheduledFilename('daily', now).name;
+        const missing = provisioner
+            .backupStatusAll()
+            .filter((target) => !target.files.some((file) => file.name === today));
+        if (!missing.length) return;
+        const results = await provisioner.backupAll();
+        backupState.lastRunAt = new Date().toISOString();
+        const failed = results.filter((item) => !item.success);
+        backupState.lastError = failed.length
+            ? failed.map((item) => `${item.id}: ${item.error}`).join('; ')
+            : null;
+        console.log(
+            `Sao lưu bù khi khởi động: ${results.filter((i) => i.success).length}/${results.length} thành công.`
+        );
+        if (backupState.lastError) console.error('Sao lưu bù lỗi:', backupState.lastError);
+    }
     const server = http.createServer(handler);
-    server.on('close', () => provisioner.stopAll());
-    return { server, provisioner };
+    server.on('listening', () => {
+        armSchedule();
+        catchUpBackups().catch((error) => {
+            backupState.lastError = error.message;
+            console.error('Sao lưu bù thất bại:', error.message);
+        });
+    });
+    server.on('close', () => {
+        if (backupState.timer) clearTimeout(backupState.timer);
+        provisioner.stopAll();
+    });
+    return { server, provisioner, backupState, scheduleInfo };
 }
-
 function staticAsset(req, res, url) {
     if (!['GET', 'HEAD'].includes(req.method) || !Object.hasOwn(ASSETS, url.pathname))
         fail('Không tìm thấy tài nguyên.', 404);
@@ -229,10 +321,26 @@ if (require.main === module) {
     );
     const port = Number(process.env.NKIOT_ADMIN_PORT || 4100);
     const hubUrl = process.env.NKIOT_LOCAL_HUB_URL || 'http://127.0.0.1:4000';
-    const { server, provisioner } = createAdminServer({ dataDir, password, hubUrl });
+    const rawHour = process.env.NKIOT_BACKUP_HOUR;
+    const scheduleHour = rawHour === undefined ? 2 : Number(rawHour);
+    if (!Number.isInteger(scheduleHour) || scheduleHour < 0 || scheduleHour > 23) {
+        console.error('NKIOT_BACKUP_HOUR phải là số nguyên 0–23; dùng mặc định 2 giờ.');
+    }
+    const { server, provisioner } = createAdminServer({
+        dataDir,
+        password,
+        hubUrl,
+        scheduleHour:
+            Number.isInteger(scheduleHour) && scheduleHour >= 0 && scheduleHour <= 23
+                ? scheduleHour
+                : 2
+    });
     server.listen(port, '127.0.0.1', async () => {
         console.log(`Quản trị local: http://localhost:${port}`);
         console.log(`Hub DB: ${provisioner.hubPath}`);
+        console.log(
+            `Sao lưu tự động: mỗi ngày lúc ${scheduleHour >= 0 && scheduleHour <= 23 ? scheduleHour : 2}:00 → ${path.join(dataDir, 'backups')}`
+        );
         if (!process.env.NKIOT_SUPER_ADMIN_PASSWORD) {
             console.log(`Mật khẩu quản trị local: ${password}`);
             console.log('Lưu ý: Mật khẩu quản trị ngẫu nhiên đã được tạo cho phiên này.');

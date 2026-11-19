@@ -22,7 +22,10 @@
                     <span class="brand-text-title">NKiot</span>
                 </a>
                 <span class="brand-sub-badge">Control Plane</span>
-                <div class="hub-status-badge" title="Hub trung tâm kết nối kho chung giữa các nhà bán hàng">
+                <div
+                    class="hub-status-badge"
+                    title="Hub trung tâm kết nối kho chung giữa các nhà bán hàng"
+                >
                     <span class="status-dot pulse"></span>
                     <span>Hub Central: 127.0.0.1:4000</span>
                 </div>
@@ -31,26 +34,79 @@
             <!-- In-page Navigation Links (chỉ hiện khi đã đăng nhập) -->
             <nav id="nav-center-links" class="nav-center-links" hidden>
                 <a href="#stats-section" class="nav-tab-btn active">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M3 3v18h18" />
+                        <path d="m19 9-5 5-4-4-3 3" />
+                    </svg>
                     <span>Tổng quan</span>
                 </a>
                 <a href="#section-tenants" class="nav-tab-btn">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <polyline points="9 22 9 12 15 12 15 22" />
+                    </svg>
                     <span>Nhà bán hàng</span>
                 </a>
                 <a href="#section-create" class="nav-tab-btn">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
                     <span>Tạo mới</span>
                 </a>
                 <a href="#section-partners" class="nav-tab-btn">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    </svg>
                     <span>Kho chung</span>
                 </a>
             </nav>
 
             <!-- Actions Right (chỉ hiện khi đã đăng nhập) -->
             <div class="nav-right-actions">
-                <span id="nav-next-port-pill" class="nav-kpi-pill" title="Cổng mạng tự động cấp cho shop tiếp theo" hidden>
+                <span
+                    id="nav-next-port-pill"
+                    class="nav-kpi-pill"
+                    title="Cổng mạng tự động cấp cho shop tiếp theo"
+                    hidden
+                >
                     Cổng kế tiếp: <strong id="nav-next-port">3101</strong>
                 </span>
                 <div id="nav-user-tag" class="user-tag" hidden>
@@ -125,10 +181,14 @@
                         </button>
                     </form>
                     <div class="login-hint-box">
-                        <strong>Mật khẩu mặc định:</strong> <code>admin1234</code> (đã thiết lập cho phiên chạy hiện tại).
+                        <strong>Mật khẩu mặc định:</strong> <code>admin1234</code> (đã thiết lập cho
+                        phiên chạy hiện tại).
                     </div>
                     <div class="login-footer">
-                        <span>Hệ thống quản trị mạng lưới cục bộ · Loopback Chỉ định (127.0.0.1)</span>
+                        <span
+                            >Hệ thống quản trị mạng lưới cục bộ · Loopback Chỉ định
+                            (127.0.0.1)</span
+                        >
                     </div>
                 </div>
             </div>
@@ -141,7 +201,6 @@
 
         <!-- 3. MAIN APP VIEW -->
         <main id="app-view" class="app-container" hidden>
-
             <!-- HÀNG 1: 4 Thẻ KPI thống kê số liệu -->
             <div id="stats-section" class="stats-grid">
                 <div class="stat-card">
@@ -229,7 +288,16 @@
             <!-- Banner thông báo khi vừa tạo thành công (mặc định ẩn) -->
             <div id="created" class="launch-card" hidden>
                 <div class="launch-icon" aria-hidden="true">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                    <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                    >
+                        <polyline points="20 6 9 17 4 12" />
+                    </svg>
                 </div>
                 <div class="launch-details">
                     <h3>Nhà bán hàng đã được khởi tạo thành công!</h3>
@@ -241,7 +309,14 @@
                         </button>
                     </div>
                 </div>
-                <button type="button" id="btn-dismiss-created" class="btn-close-banner" aria-label="Đóng thông báo">✕</button>
+                <button
+                    type="button"
+                    id="btn-dismiss-created"
+                    class="btn-close-banner"
+                    aria-label="Đóng thông báo"
+                >
+                    ✕
+                </button>
             </div>
 
             <!-- HÀNG 2: Hai block chính đặt song song cân đối (Bảng Tenants + Form Tạo) -->
@@ -298,6 +373,18 @@
                             </div>
                         </div>
                     </div>
+                    <div id="backup-panel" class="backup-panel" hidden>
+                        <div class="backup-head">
+                            <div>
+                                <strong>Sao lưu tự động</strong>
+                                <span id="backup-schedule" class="backup-meta"></span>
+                            </div>
+                            <button type="button" id="btn-run-backup" class="glass-btn-secondary">
+                                Sao lưu ngay
+                            </button>
+                        </div>
+                        <ul id="backup-list" class="backup-list"></ul>
+                    </div>
                     <div class="table-container">
                         <table>
                             <thead>
@@ -328,7 +415,9 @@
                         <!-- Hàng 1: Mã & Tên -->
                         <div class="form-row">
                             <div class="form-group flex-1">
-                                <label for="tenant-id">Mã Tenant <span class="required">*</span></label>
+                                <label for="tenant-id"
+                                    >Mã Tenant <span class="required">*</span></label
+                                >
                                 <input
                                     type="text"
                                     id="tenant-id"
@@ -467,7 +556,9 @@
                                     👁
                                 </button>
                             </div>
-                            <span class="field-sub">Mặc định sẽ là <code>admin1234</code> nếu để trống.</span>
+                            <span class="field-sub"
+                                >Mặc định sẽ là <code>admin1234</code> nếu để trống.</span
+                            >
                         </div>
 
                         <!-- Hàng 6: Preview URL & Nút Tạo -->
@@ -519,7 +610,8 @@
                     <div>
                         <h2 class="card-title">Mạng lưới liên kết kho chung</h2>
                         <p class="card-sub">
-                            Mỗi nhà bán hàng có thể chia sẻ sản phẩm và tồn kho qua Hub trung tâm. Thiết lập hoặc ngắt liên kết 1-1 giữa các shop bên dưới.
+                            Mỗi nhà bán hàng có thể chia sẻ sản phẩm và tồn kho qua Hub trung tâm.
+                            Thiết lập hoặc ngắt liên kết 1-1 giữa các shop bên dưới.
                         </p>
                     </div>
                 </div>
@@ -532,7 +624,19 @@
                                 <select id="partner-a" name="a" required></select>
                             </div>
                             <div class="partner-arrow" aria-hidden="true">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                                <svg
+                                    width="20"
+                                    height="20"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                    <polyline points="12 5 19 12 12 19" />
+                                </svg>
                             </div>
                             <div class="form-group">
                                 <label for="partner-b">Tenant 2</label>
@@ -560,7 +664,12 @@
                                 </svg>
                                 <span>Thiết lập liên kết kho</span>
                             </button>
-                            <button type="submit" value="unlink" class="btn-danger-outline" title="Ngắt liên kết giữa 2 tenant đang chọn">
+                            <button
+                                type="submit"
+                                value="unlink"
+                                class="btn-danger-outline"
+                                title="Ngắt liên kết giữa 2 tenant đang chọn"
+                            >
                                 <span>Hủy liên kết cặp này</span>
                             </button>
                         </div>
@@ -576,11 +685,23 @@
         </main>
 
         <!-- Modal Đổi Mật Khẩu Shop -->
-        <div id="modal-reset-pwd" class="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="reset-pwd-title" hidden>
+        <div
+            id="modal-reset-pwd"
+            class="admin-modal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-pwd-title"
+            hidden
+        >
             <div class="admin-modal-box">
                 <div class="modal-header">
                     <h3 id="reset-pwd-title">Đổi mật khẩu Quản trị Shop</h3>
-                    <button type="button" class="btn-close-modal" id="btn-close-pwd-modal" aria-label="Đóng hộp thoại">
+                    <button
+                        type="button"
+                        class="btn-close-modal"
+                        id="btn-close-pwd-modal"
+                        aria-label="Đóng hộp thoại"
+                    >
                         ✕
                     </button>
                 </div>
@@ -622,20 +743,44 @@
         </div>
 
         <!-- Modal Xác Nhận Hành Động Quản Trị -->
-        <div id="modal-confirm-action" class="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" hidden>
+        <div
+            id="modal-confirm-action"
+            class="admin-modal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-modal-title"
+            hidden
+        >
             <div class="admin-modal-box">
                 <div class="modal-header">
                     <h3 id="confirm-modal-title">Xác nhận thao tác</h3>
-                    <button type="button" class="btn-close-modal" id="btn-close-confirm-modal" aria-label="Đóng hộp thoại">
+                    <button
+                        type="button"
+                        class="btn-close-modal"
+                        id="btn-close-confirm-modal"
+                        aria-label="Đóng hộp thoại"
+                    >
                         ✕
                     </button>
                 </div>
-                <p id="confirm-modal-message" style="font-size: 13.5px; color: var(--text-secondary); line-height: 1.55"></p>
+                <p
+                    id="confirm-modal-message"
+                    style="font-size: 13.5px; color: var(--text-secondary); line-height: 1.55"
+                ></p>
                 <div class="modal-actions">
                     <button type="button" class="glass-btn-secondary" id="btn-cancel-confirm-modal">
                         Hủy bỏ
                     </button>
-                    <button type="button" class="btn-danger-outline" id="btn-accept-confirm-modal" style="background: var(--color-rose); color: #fff; border-color: var(--color-rose)">
+                    <button
+                        type="button"
+                        class="btn-danger-outline"
+                        id="btn-accept-confirm-modal"
+                        style="
+                            background: var(--color-rose);
+                            color: #fff;
+                            border-color: var(--color-rose);
+                        "
+                    >
                         Xác nhận
                     </button>
                 </div>

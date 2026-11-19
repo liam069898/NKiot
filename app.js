@@ -147,6 +147,7 @@ async function initApp() {
     setupModalAccessibility();
     setupKeyboardShortcuts();
     setupTableCheckboxes();
+    setupAdvancedSearchInputs();
     setupSearchInputs();
     restoreDeliveryLabelSize();
     try {
@@ -1800,10 +1801,11 @@ function renderDashboard() {
                 });
             });
             branchImps.slice(0, 10).forEach((imp) => {
+                const ncc = importSupplierInfo(imp);
                 activities.push({
                     type: 'import',
                     title: imp.creator || 'Quản lý kho',
-                    action: `Nhập hàng ${imp.code}${imp.nccName ? ` từ ${imp.nccName}` : ''}`,
+                    action: `Nhập hàng ${imp.code}${ncc.name ? ` từ ${ncc.name}` : ''}`,
                     val: imp.needPay,
                     branch: imp.branch,
                     time: imp.time,
@@ -6753,6 +6755,8 @@ function copyAllProductImeis() {
 let productModalCallback = null;
 let currentProductImages = [];
 let currentProductVideoUrl = '';
+// Đếm số ảnh đang tải lên của form hàng hóa để chặn lưu khi chưa xong (tránh lưu thiếu ảnh).
+let productUploads = 0;
 
 function getConditionBadge(cond) {
     const map = {
@@ -6839,14 +6843,13 @@ async function prepareImageForUpload(file) {
         }
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
+        // Luôn xuất JPEG để nhẹ; tô nền trắng trước để vùng trong suốt (PNG/WebP) không bị đen.
+        const mime = 'image/jpeg';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
         ctx.drawImage(bitmap, 0, 0, w, h);
         bitmap.close();
         let quality = 0.85;
-        let mime = type;
-        if (type === 'image/png' || type === 'image/webp' || type === 'image/gif') {
-            // Ảnh có nền trong suốt thì giữ PNG; còn lại chuyển JPEG để nhỏ hơn.
-            mime = 'image/jpeg';
-        }
         let dataUrl = canvas.toDataURL(mime, quality);
         // Giảm chất lượng dần nếu vẫn lớn (chụp ảnh nhiều chi tiết).
         while (dataUrl.length > 1.4 * 1024 * 1024 && quality > 0.4) {
@@ -6874,6 +6877,7 @@ function removeProductImage(idx) {
 async function handleProductImageUpload(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+    productUploads++;
     showToast(`Đang tải lên ${files.length} ảnh...`, 'info');
     try {
         for (const file of files) {
@@ -6885,6 +6889,7 @@ async function handleProductImageUpload(e) {
     } catch (err) {
         showToast('Lỗi tải ảnh: ' + (err.message || 'Không thể tải lên'), 'error');
     } finally {
+        productUploads = Math.max(0, productUploads - 1);
         e.target.value = '';
     }
 }
@@ -7143,6 +7148,10 @@ function updateProductModalPriceColor(e) {
 
 async function saveProductFromModal(e) {
     e.preventDefault();
+    if (productUploads > 0) {
+        showToast('Chờ ảnh tải lên hoàn tất trước khi lưu hàng hóa.', 'warning');
+        return;
+    }
     const currentBranch =
         document.getElementById('product-form').dataset.importBranch || getCurrentBranch();
     const isAll = currentBranch === ALL_BRANCHES;
@@ -9717,7 +9726,8 @@ function invoiceQueryKey() {
         invoiceStatusFilter,
         document.getElementById('invoice-channel-filter')?.value || 'all',
         document.getElementById('invoice-search-input')?.value.trim() || '',
-        document.getElementById('invoice-date-filter')?.value || 'all'
+        document.getElementById('invoice-date-filter')?.value || 'all',
+        advancedSearchValues('invoice-search-input')
     ]);
 }
 function scheduleInvoiceSearch() {
@@ -9790,7 +9800,7 @@ async function renderInvoices(page = 1) {
     }
     invoicePage.key = key;
     if (count) count.textContent = 'Đang tải hóa đơn…';
-    const [branch, status, channel, q, date] = JSON.parse(key);
+    const [branch, status, channel, q, date, adv] = JSON.parse(key);
     if (status === 'starred') {
         const isAll = branch === ALL_BRANCHES;
         const returnsMap = new Map(
@@ -9830,13 +9840,13 @@ async function renderInvoices(page = 1) {
             starredList = starredList.filter((inv) => matchesDateFilter(inv.time, date));
         }
         if (q) {
-            const ql = q.toLowerCase();
-            starredList = starredList.filter(
-                (inv) =>
-                    (inv.code || '').toLowerCase().includes(ql) ||
-                    (inv.customer || '').toLowerCase().includes(ql) ||
-                    (inv.phone || '').toLowerCase().includes(ql)
+            const ql = foldText(q);
+            starredList = starredList.filter((inv) =>
+                [inv.code, inv.customer, inv.phone].some((v) => foldText(v).includes(ql))
             );
+        }
+        if (adv && Object.keys(adv).length) {
+            starredList = starredList.filter((inv) => matchesAdvancedSearch('invoices', inv, adv));
         }
         invoicePage.page = 1;
         invoicePage.pages = 1;
@@ -9855,6 +9865,7 @@ async function renderInvoices(page = 1) {
         pageSize: '50'
     });
     if (invoicePage.revision !== null) params.set('revision', String(invoicePage.revision));
+    Object.entries(adv || {}).forEach(([key, value]) => params.set(key, String(value)));
     const current = () =>
         ticket === invoicePage.request && KVStore.user?.id === user.id && key === invoiceQueryKey();
     try {
@@ -11672,6 +11683,11 @@ function sortImportsBy(field) {
     }
 }
 
+// Trả về thông tin nhà cung cấp hiện tại cho một phiếu nhập (dùng chung với tìm kiếm/xuất CSV).
+function importSupplierInfo(imp) {
+    return resolveImportSupplier(imp);
+}
+
 function renderImports() {
     const tbody = document.getElementById('import-tbody');
     if (!tbody) return;
@@ -11682,7 +11698,8 @@ function renderImports() {
     const q = (document.getElementById('import-search-input')?.value || '').toLowerCase().trim();
     const dateFilter = document.getElementById('import-date-filter')?.value || 'all';
     const statusFilter = document.getElementById('import-status-filter')?.value || 'all';
-    const scopeKey = `${currentBranch}|${q}|${dateFilter}|${statusFilter}|${importSortField}|${importSortAsc}`;
+    const adv = advancedSearchValues('import-search-input');
+    const scopeKey = `${currentBranch}|${q}|${dateFilter}|${statusFilter}|${JSON.stringify(adv)}|${importSortField}|${importSortAsc}`;
     if (scopeKey !== importRenderScope) {
         importRenderScope = scopeKey;
         importRenderLimit = 50;
@@ -11697,7 +11714,8 @@ function renderImports() {
             q,
             date: dateFilter,
             status: statusFilter,
-            starred: isRecordStarred(`imp:${imp.code}`)
+            starred: isRecordStarred(`imp:${imp.code}`),
+            adv
         })
     );
 
@@ -11715,8 +11733,14 @@ function renderImports() {
 
     if (importSortField) {
         list = [...list].sort((a, b) => {
-            let va = a[importSortField] ?? '';
-            let vb = b[importSortField] ?? '';
+            let va =
+                importSortField === 'nccName'
+                    ? importSupplierInfo(a).name
+                    : (a[importSortField] ?? '');
+            let vb =
+                importSortField === 'nccName'
+                    ? importSupplierInfo(b).name
+                    : (b[importSortField] ?? '');
             if (typeof va === 'string') {
                 va = va.toLowerCase();
                 vb = (vb || '').toString().toLowerCase();
@@ -11779,6 +11803,7 @@ function renderImports() {
                         Object.values(i.imeiDetails).some((d) => d?.images?.length > 0))
             );
         const isExpanded = expandedImportCode === row.code;
+        const ncc = importSupplierInfo(row);
         const tr = document.createElement('tr');
         tr.dataset.exportKey = String(row.code);
         tr.className = `table-row-hover transition cursor-pointer text-[13px] border-b border-gray-100/70 ${isCancelled ? 'bg-red-50/40 opacity-75' : ''} ${isExpanded ? 'bg-blue-50/70 font-medium border-l-4 border-l-[#0066cc]' : ''}`;
@@ -11816,12 +11841,23 @@ function renderImports() {
                     <span class="${isCancelled ? 'line-through text-gray-500' : ''}">${row.code}</span>
                     ${trustedHTML(hasPhotos ? renderHTML`<span class="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-blue-50 text-[#0066cc] border border-blue-200/80 inline-flex items-center space-x-0.5" title="Phiếu nhập có ảnh sản phẩm"><svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><span>Ảnh</span></span>` : '')}
                     ${trustedHTML(isCancelled ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-red-100 text-red-700">Đã hủy</span>` : '')}
+                    ${trustedHTML(
+                        (() => {
+                            const summary = importReturnSummary(row);
+                            return summary.count
+                                ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-amber-100 text-amber-800 border border-amber-200" title="Đã trả ${summary.qty} món qua ${summary.count} phiếu · ${formatVND(summary.totalRefund)} đ">↩ Đã trả ${summary.qty}</span>`
+                                : '';
+                        })()
+                    )}
                     ${trustedHTML(isAll && row.branch ? renderHTML`<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10.5px] font-semibold bg-gray-100 text-gray-700">${row.branch}</span>` : '')}
                 </div>
             </td>
             <td class="py-3 px-3 text-gray-600 font-mono text-[12px]">${row.time}</td>
-            <td class="py-3 px-3 text-gray-600 font-mono">${row.nccCode || ''}</td>
-            <td class="py-3 px-3 text-gray-900 font-medium">${row.nccName || ''}</td>
+            <td class="py-3 px-3 text-gray-600 font-mono">${ncc.code || ''}</td>
+            <td class="py-3 px-3 text-gray-900 font-medium">
+                <div>${ncc.name || ''}</div>
+                ${trustedHTML(ncc.phone ? renderHTML`<div class="text-[11px] text-gray-500 font-mono">${ncc.phone}</div>` : '')}
+            </td>
             <td class="py-3 px-3 text-right font-medium tabular-nums ${isCancelled ? 'line-through text-gray-400' : 'text-gray-800'}">${formatVND(row.needPay)}</td>
             <td class="py-3 px-3 text-right font-bold tabular-nums ${isCancelled ? 'line-through text-gray-400' : 'text-gray-900'}">${formatVND(row.paid)}</td>
             <td class="py-3 px-3 text-center">${methodBadge}</td>
@@ -12015,7 +12051,8 @@ function renderImportDetailHtml(imp) {
             <div class="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
                 <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-1">
                     <div class="text-[10.5px] font-bold text-gray-400 uppercase tracking-wider mb-1">Nhà cung cấp</div>
-                    <div class="font-bold text-gray-900">${escapeHTML(imp.nccName || 'Nhà cung cấp')} (${escapeHTML(imp.nccCode || '')})</div>
+                    <div class="font-bold text-gray-900">${escapeHTML(importSupplierInfo(imp).name || 'Nhà cung cấp')} (${escapeHTML(importSupplierInfo(imp).code || '')})</div>
+                    ${importSupplierInfo(imp).phone ? `<div class="text-gray-600">ĐT: <span class="font-mono">${escapeHTML(importSupplierInfo(imp).phone)}</span></div>` : ''}
                     <div class="text-gray-600">Người nhập: <span class="font-medium text-gray-800">${escapeHTML(imp.creator || 'Quản lý kho')}</span></div>
                 </div>
 
@@ -12068,6 +12105,9 @@ function renderImportDetailHtml(imp) {
                         </button>
                     `
                             : `
+                        <button type="button" onclick="openImportReturnModal('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>↩ Trả hàng NCC</span>
+                        </button>
                         <button type="button" onclick="cancelImport('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
                             <span>🚫 Hủy phiếu nhập</span>
                         </button>
@@ -12081,8 +12121,60 @@ function renderImportDetailHtml(imp) {
                     </button>
                 </div>
             </div>
+            ${trustedHTML(renderImportReturnHistory(imp))}
         </div>
     `;
+}
+
+// Lịch sử trả hàng nhập của một phiếu: mỗi dòng là một chứng từ PTN độc lập.
+function renderImportReturnHistory(imp) {
+    const summary = importReturnSummary(imp);
+    if (!summary.count)
+        return renderHTML`<div class="mt-2 text-[11.5px] text-gray-400 italic">Chưa trả hàng nhập lần nào.</div>`;
+    const rows = summary.returns
+        .slice()
+        .reverse()
+        .map((ret) => {
+            const qty = (ret.items || []).reduce((sum, row) => sum + (Number(row.qty) || 0), 0);
+            const itemsText = (ret.items || [])
+                .map((row) => `${row.name || row.code} ×${row.qty}`)
+                .join(', ');
+            return renderHTML`
+                <tr class="border-b border-gray-100 last:border-0">
+                    <td class="py-1.5 px-2 font-mono font-semibold text-amber-700">${ret.code}</td>
+                    <td class="py-1.5 px-2 text-gray-600">${ret.time || ''}</td>
+                    <td class="py-1.5 px-2 text-gray-700 truncate max-w-[240px]" title="${itemsText}">${itemsText}</td>
+                    <td class="py-1.5 px-2 text-center text-gray-700">${qty}</td>
+                    <td class="py-1.5 px-2 text-right font-semibold text-rose-600">${formatVND(ret.totalRefund)} đ</td>
+                    <td class="py-1.5 px-2 text-gray-600 text-[11.5px]">${ret.reason || ''}</td>
+                </tr>`;
+        });
+    return renderHTML`
+        <div class="mt-3 bg-amber-50/60 border border-amber-200/80 rounded-xl p-2.5">
+            <div class="flex flex-wrap items-center justify-between gap-1 mb-1.5">
+                <div class="text-[11.5px] font-bold text-amber-900 uppercase tracking-wider">
+                    Đã trả nhà cung cấp (${summary.count} phiếu · ${summary.qty} món)
+                </div>
+                <div class="text-[11.5px] font-semibold text-rose-700">Tổng ${formatVND(summary.totalRefund)} đ</div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-[12px] border-collapse">
+                    <thead class="text-gray-500 font-semibold">
+                        <tr>
+                            <th class="py-1 px-2">Mã trả</th>
+                            <th class="py-1 px-2">Thời gian</th>
+                            <th class="py-1 px-2">Hàng trả</th>
+                            <th class="py-1 px-2 text-center">SL</th>
+                            <th class="py-1 px-2 text-right">Giá trị</th>
+                            <th class="py-1 px-2">Lý do</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${trustedHTML(rows.map((row) => row.value).join(''))}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
 }
 
 function viewImportDetail(code) {
@@ -12095,8 +12187,9 @@ function viewImportDetail(code) {
 
     document.getElementById('imp-detail-code').textContent = imp.code;
     document.getElementById('imp-detail-time').textContent = imp.time;
+    const nccInfo = importSupplierInfo(imp);
     document.getElementById('imp-detail-ncc').textContent =
-        `${imp.nccName || 'Nhà cung cấp'} (${imp.nccCode || ''})`;
+        `${nccInfo.name || 'Nhà cung cấp'} (${nccInfo.code || ''})${nccInfo.phone ? ' · ' + nccInfo.phone : ''}`;
     document.getElementById('imp-detail-branch').textContent = imp.branch || FALLBACK_BRANCH;
     document.getElementById('imp-detail-creator').textContent = imp.creator || 'Quản lý kho';
     document.getElementById('imp-detail-note').textContent = imp.note || 'Không có';
@@ -12323,6 +12416,181 @@ async function cancelImport(code) {
     document.getElementById('import-detail-modal')?.classList.add('hidden');
     refreshCurrentView();
     showToast('Đã hủy phiếu nhập thành công!', 'success');
+}
+
+// ==========================================
+// 7.5. TRẢ HÀNG NHẬP (TRẢ NHÀ CUNG CẤP)
+// ==========================================
+let currentImportReturn = null;
+
+// Số lượng đã trả của từng mặt hàng và IMEI đã trả, gộp từ mọi lần trả trước.
+function importReturnedTotals(imp) {
+    const qty = new Map(),
+        serials = new Set();
+    for (const ret of KVStore.data.import_returns || []) {
+        if (!ret || ret.importCode !== imp.code) continue;
+        for (const row of ret.items || []) {
+            qty.set(row.code, (qty.get(row.code) || 0) + (Number(row.qty) || 0));
+            for (const serial of row.imeis || []) serials.add(serial);
+        }
+    }
+    return { qty, serials };
+}
+
+// Tổng hợp các lần trả của một phiếu nhập (dùng cho badge trong danh sách và lịch sử trong chi tiết).
+function importReturnSummary(imp) {
+    const list = (KVStore.data.import_returns || []).filter((r) => r?.importCode === imp.code);
+    let qty = 0,
+        totalRefund = 0;
+    for (const ret of list) {
+        totalRefund += Number(ret.totalRefund) || 0;
+        for (const row of ret.items || []) qty += Number(row.qty) || 0;
+    }
+    return { returns: list, count: list.length, qty, totalRefund };
+}
+
+function openImportReturnModal(importCode) {
+    const imp = (KVStore.data.imports || []).find(
+        (i) => i.code === importCode || i.id === importCode
+    );
+    if (!imp) {
+        showToast('Không tìm thấy phiếu nhập!', 'error');
+        return;
+    }
+    if (imp.status === 'cancelled') {
+        showToast('Phiếu nhập đã hủy nên không trả hàng được.', 'error');
+        return;
+    }
+    if (!imp.items || !imp.items.length) {
+        showToast('Phiếu nhập thiếu chi tiết; cần đối soát trước khi trả.', 'error');
+        return;
+    }
+    currentImportReturn = imp;
+    const { qty } = importReturnedTotals(imp);
+    document.getElementById('import-detail-modal')?.classList.add('hidden');
+    document.getElementById('imp-ret-code').textContent = imp.code;
+    const ncc = importSupplierInfo(imp);
+    document.getElementById('imp-ret-supplier').textContent = `${ncc.name || 'Nhà cung cấp'}${
+        ncc.phone ? ' · ' + ncc.phone : ''
+    }`;
+    document.getElementById('imp-ret-reason-input').value = '';
+
+    const tbody = document.getElementById('imp-ret-items-tbody');
+    tbody.replaceChildren();
+    imp.items.forEach((item, idx) => {
+        const remaining = Math.max(0, item.qty - (qty.get(item.code) || 0));
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-gray-100';
+        tr.innerHTML = renderHTML`
+            <td class="py-2.5 px-2 text-center">
+                <input type="checkbox" id="imp-ret-chk-${idx}" ${remaining ? '' : 'disabled'}
+                    onchange="recalculateImportReturn()" class="kv-checkbox">
+            </td>
+            <td class="py-2.5 px-2">
+                <div class="font-semibold text-gray-900">${item.name}</div>
+                <div class="text-[11px] text-gray-500 font-mono">${item.code}</div>
+            </td>
+            <td class="py-2.5 px-2 text-center font-bold text-gray-700">${item.qty}</td>
+            <td class="py-2.5 px-2 text-center ${remaining ? 'text-gray-700' : 'text-gray-400'}">${remaining}</td>
+            <td class="py-2.5 px-2 text-right text-gray-700">${formatVND(item.price)}</td>
+            <td class="py-2.5 px-2 text-center">
+                <input type="number" id="imp-ret-qty-${idx}" min="1" max="${remaining}" value="${remaining || 0}"
+                    ${remaining ? '' : 'disabled'}
+                    oninput="recalculateImportReturn()" data-remaining="${remaining}"
+                    class="w-16 border border-gray-200 rounded-lg px-1.5 py-1 text-center focus:outline-none focus:border-[#0066cc]">
+            </td>
+            <td class="py-2.5 px-2 text-right font-semibold text-rose-600" id="imp-ret-line-${idx}">0 đ</td>
+        `;
+        tbody.appendChild(tr);
+    });
+    document.getElementById('import-return-modal')?.classList.remove('hidden');
+    recalculateImportReturn();
+}
+
+function collectImportReturnItems() {
+    const imp = currentImportReturn;
+    if (!imp) return [];
+    const { qty: returnedQty, serials: returnedSerials } = importReturnedTotals(imp);
+    const rows = [];
+    imp.items.forEach((item, idx) => {
+        const check = document.getElementById(`imp-ret-chk-${idx}`);
+        const qtyInput = document.getElementById(`imp-ret-qty-${idx}`);
+        if (!check?.checked || !qtyInput) return;
+        const remaining = Math.max(0, item.qty - (returnedQty.get(item.code) || 0));
+        const qty = Math.min(remaining, Math.max(0, parseInt(qtyInput.value, 10) || 0));
+        if (!qty) return;
+        const row = { code: item.code, qty };
+        if (item.hasImei || item.imeis?.length) {
+            // Chọn các IMEI còn lại, bỏ qua những máy đã trả ở đợt trước.
+            row.imeis = (item.imeis || [])
+                .filter((serial) => !returnedSerials.has(serial))
+                .slice(0, qty);
+        }
+        rows.push(row);
+    });
+    return rows;
+}
+
+function recalculateImportReturn() {
+    const imp = currentImportReturn;
+    if (!imp) return;
+    const items = collectImportReturnItems();
+    const total = items.reduce((sum, row) => {
+        const item = imp.items.find((i) => i.code === row.code);
+        return sum + (item ? item.price * row.qty : 0);
+    }, 0);
+    imp.items.forEach((item, idx) => {
+        const check = document.getElementById(`imp-ret-chk-${idx}`);
+        const qtyInput = document.getElementById(`imp-ret-qty-${idx}`);
+        const line = document.getElementById(`imp-ret-line-${idx}`);
+        const picked = items.find((row) => row.code === item.code);
+        if (line) line.textContent = `${formatVND(picked ? item.price * picked.qty : 0)} đ`;
+        if (check?.checked && qtyInput && !picked)
+            qtyInput.value = String(qtyInput.dataset.remaining || 0);
+    });
+    // Cấn trừ phần còn nợ nhà cung cấp trước, phần dư mới là tiền họ hoàn lại.
+    const unpaid = Math.max(0, (Number(imp.needPay) || 0) - (Number(imp.paid) || 0));
+    const debtReduced = Math.min(unpaid, total);
+    const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = `${formatVND(value)} đ`;
+    };
+    setText('imp-ret-total', total);
+    setText('imp-ret-debt', debtReduced);
+    setText('imp-ret-cashback', total - debtReduced);
+}
+
+async function submitImportReturn() {
+    const imp = currentImportReturn;
+    if (!imp) return;
+    const items = collectImportReturnItems();
+    if (!items.length) {
+        showToast('Chọn ít nhất một sản phẩm để trả.', 'warning');
+        return;
+    }
+    const totals = importReturnedTotals(imp);
+    for (const row of items) {
+        const item = imp.items.find((i) => i.code === row.code);
+        const remaining = Math.max(0, item.qty - (totals.qty.get(row.code) || 0));
+        if (row.qty > remaining) {
+            showToast(`Số lượng trả "${item.name}" vượt mức còn lại (${remaining}).`, 'error');
+            return;
+        }
+        if (row.imeis && row.imeis.length !== row.qty) {
+            showToast(`Không đủ IMEI còn trong kho để trả "${item.name}".`, 'error');
+            return;
+        }
+    }
+    await KVStore.command('return_import', {
+        importId: imp.code,
+        items,
+        refundMethod: document.getElementById('imp-ret-refund-method')?.value || 'cash',
+        reason: document.getElementById('imp-ret-reason-input')?.value.trim() || ''
+    });
+    document.getElementById('import-return-modal')?.classList.add('hidden');
+    currentImportReturn = null;
+    refreshCurrentView();
+    showToast('Đã trả hàng nhập và cập nhật tồn kho.', 'success');
 }
 
 // Sao chép phiếu nhập đã hủy sang phiếu nhập mới để chỉnh sửa và lưu lại.
@@ -13866,13 +14134,14 @@ function renderSuppliers() {
     tbody.innerHTML = '';
     const q = (document.getElementById('supplier-search-input')?.value || '').toLowerCase().trim();
     let list = [...(KVStore.data.suppliers || [])];
+    const adv = advancedSearchValues('supplier-search-input');
     if (q) {
-        list = list.filter(
-            (s) =>
-                s.name.toLowerCase().includes(q) ||
-                s.code.toLowerCase().includes(q) ||
-                (s.phone && s.phone.includes(q))
+        list = list.filter((s) =>
+            [s.name, s.code, s.phone].some((v) => foldText(v).includes(foldText(q)))
         );
+    }
+    if (Object.keys(adv).length) {
+        list = list.filter((s) => matchesAdvancedSearch('suppliers', s, adv));
     }
 
     if (list.length === 0) {
@@ -14860,6 +15129,230 @@ function setupTableCheckboxes() {
     });
 }
 
+// ==========================================
+// 10.5. ADVANCED SEARCH PANELS
+// ==========================================
+// Mỗi ô tìm kiếm của các danh sách chứng từ có thêm nút bộ lọc mở panel nhập
+// nhiều điều kiện (AND) giống KiotViet. Điều kiện chỉ áp dụng khi bấm "Tìm kiếm".
+const ADVANCED_SEARCH_PANELS = Object.create(null);
+
+const ADVANCED_SEARCH_TARGETS = {
+    'invoice-search-input': { kind: 'invoices', onSearch: () => renderInvoices(1) },
+    'import-search-input': { kind: 'imports', onSearch: () => renderImports() },
+    'supplier-search-input': { kind: 'suppliers', onSearch: () => renderSuppliers() }
+};
+
+function advancedSearchState(inputId) {
+    return ADVANCED_SEARCH_PANELS[inputId] || null;
+}
+
+// Điều kiện đang áp dụng (đã trim, bỏ trường rỗng) để các hàm render/query đọc.
+function advancedSearchValues(inputId) {
+    const st = advancedSearchState(inputId);
+    if (!st) return {};
+    const values = {};
+    Object.entries(st.values).forEach(([key, value]) => {
+        const trimmed = String(value || '').trim();
+        if (trimmed) values[key] = trimmed;
+    });
+    return values;
+}
+
+function advancedSearchCount(inputId) {
+    return Object.keys(advancedSearchValues(inputId)).length;
+}
+
+function syncAdvancedSearch(inputId) {
+    const st = advancedSearchState(inputId);
+    if (!st) return;
+    const count = advancedSearchCount(inputId);
+    st.badge.textContent = String(count);
+    st.badge.classList.toggle('hidden', count === 0);
+    st.toggle.classList.toggle('text-[#0066cc]', count > 0);
+    st.toggle.classList.toggle('text-gray-400', count === 0);
+    st.syncClear?.();
+}
+
+function openAdvancedSearch(inputId, open = true) {
+    const st = advancedSearchState(inputId);
+    if (!st) return;
+    st.panel.classList.toggle('hidden', !open);
+    st.toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (!open) return;
+    Object.entries(st.fields).forEach(([key, field]) => {
+        if (!field.value) field.value = st.values[key] || '';
+    });
+    const first = Object.values(st.fields)[0];
+    if (first) first.focus();
+}
+
+function isAdvancedSearchOpen(inputId) {
+    const st = advancedSearchState(inputId);
+    return Boolean(st && !st.panel.classList.contains('hidden'));
+}
+
+// Đọc giá trị từ các ô trong panel rồi áp dụng tìm kiếm.
+function submitAdvancedSearch(inputId) {
+    const st = advancedSearchState(inputId);
+    if (!st) return false;
+    const values = {};
+    Object.entries(st.fields).forEach(([key, field]) => {
+        const trimmed = field.value.trim();
+        if (trimmed) values[key] = trimmed;
+    });
+    st.values = values;
+    syncAdvancedSearch(inputId);
+    openAdvancedSearch(inputId, false);
+    st.onSearch();
+    return true;
+}
+
+// Áp dụng điều kiện theo chương trình (dùng cho test và các nút lọc nhanh).
+function applyAdvancedSearch(inputId, values = {}) {
+    const st = advancedSearchState(inputId);
+    if (!st) return false;
+    const next = {};
+    Object.entries(st.fields).forEach(([key, field]) => {
+        const trimmed = String(values[key] ?? '').trim();
+        field.value = trimmed;
+        if (trimmed) next[key] = trimmed;
+    });
+    st.values = next;
+    syncAdvancedSearch(inputId);
+    openAdvancedSearch(inputId, false);
+    st.onSearch();
+    return true;
+}
+
+// Xóa toàn bộ điều kiện nâng cao; trả về true nếu trước đó có điều kiện.
+function clearAdvancedSearch(inputId) {
+    const st = advancedSearchState(inputId);
+    if (!st) return false;
+    const had = advancedSearchCount(inputId) > 0;
+    Object.values(st.fields).forEach((field) => {
+        field.value = '';
+    });
+    st.values = {};
+    syncAdvancedSearch(inputId);
+    return had;
+}
+
+function setupAdvancedSearchPanel(inputId, config) {
+    const input = document.getElementById(inputId);
+    const wrapper = input?.parentElement;
+    if (!wrapper || ADVANCED_SEARCH_PANELS[inputId]) return;
+    wrapper.classList.add('relative');
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.id = `${inputId}-advanced-toggle`;
+    toggle.dataset.advancedToggleFor = inputId;
+    toggle.setAttribute('aria-label', 'Bộ lọc tìm kiếm nâng cao');
+    toggle.setAttribute('aria-haspopup', 'dialog');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.title = 'Tìm kiếm nâng cao';
+    toggle.className =
+        'absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg text-gray-400 hover:text-[#0066cc] hover:bg-gray-100/80 flex items-center justify-center transition cursor-pointer';
+    toggle.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="w-4 h-4" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg><span class="hidden absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-[#0066cc] text-white text-[9px] font-bold leading-[14px] text-center"></span>`;
+
+    const panel = document.createElement('div');
+    panel.id = `${inputId}-advanced-panel`;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Tìm kiếm nâng cao');
+    panel.className =
+        'hidden absolute left-0 sm:left-auto sm:right-0 top-[calc(100%+6px)] z-40 w-full sm:w-[420px] bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden';
+
+    const body = document.createElement('div');
+    body.className = 'p-2.5 space-y-2 max-h-[60vh] overflow-y-auto';
+
+    const footer = document.createElement('div');
+    footer.className =
+        'flex items-center justify-end gap-2 px-2.5 py-2 border-t border-gray-100 bg-gray-50/70';
+
+    const collapseBtn = document.createElement('button');
+    collapseBtn.type = 'button';
+    collapseBtn.dataset.advancedCollapse = inputId;
+    collapseBtn.className =
+        'glass-btn-secondary text-gray-700 hover:text-gray-900 font-medium px-3 py-1.5 rounded-xl text-[12.5px]';
+    collapseBtn.textContent = 'Thu gọn';
+
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'button';
+    submitBtn.dataset.advancedSubmit = inputId;
+    submitBtn.className =
+        'glass-btn-primary text-white font-semibold px-3.5 py-1.5 rounded-xl text-[12.5px]';
+    submitBtn.textContent = 'Tìm kiếm';
+
+    const fields = {};
+    (ADVANCED_SEARCH_FIELDS[config.kind] || []).forEach((field) => {
+        const el = document.createElement('input');
+        el.type = 'text';
+        el.id = `${inputId}-adv-${field.key}`;
+        el.dataset.advancedKey = field.key;
+        el.placeholder = field.label;
+        el.setAttribute('aria-label', field.label);
+        el.autocomplete = 'off';
+        el.className =
+            'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[13px] text-gray-800 placeholder:text-gray-400 focus:outline-none focus:border-[#0066cc] focus:ring-2 focus:ring-blue-500/15 transition';
+        el.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                submitAdvancedSearch(inputId);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                openAdvancedSearch(inputId, false);
+                input.focus();
+            }
+        });
+        body.appendChild(el);
+        fields[field.key] = el;
+    });
+
+    footer.append(collapseBtn, submitBtn);
+    panel.append(body, footer);
+    wrapper.append(toggle, panel);
+
+    ADVANCED_SEARCH_PANELS[inputId] = {
+        kind: config.kind,
+        onSearch: config.onSearch,
+        fields,
+        values: {},
+        panel,
+        toggle,
+        badge: toggle.querySelector('span'),
+        syncClear: null
+    };
+
+    toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openAdvancedSearch(inputId, !isAdvancedSearchOpen(inputId));
+    });
+    collapseBtn.addEventListener('click', () => {
+        openAdvancedSearch(inputId, false);
+        input.focus();
+    });
+    submitBtn.addEventListener('click', () => submitAdvancedSearch(inputId));
+    panel.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            openAdvancedSearch(inputId, false);
+            input.focus();
+        }
+    });
+    document.addEventListener('mousedown', (event) => {
+        if (isAdvancedSearchOpen(inputId) && !wrapper.contains(event.target))
+            openAdvancedSearch(inputId, false);
+    });
+}
+
+function setupAdvancedSearchInputs() {
+    if (typeof document === 'undefined') return;
+    Object.entries(ADVANCED_SEARCH_TARGETS).forEach(([inputId, config]) =>
+        setupAdvancedSearchPanel(inputId, config)
+    );
+}
+
 function setupSearchInputs() {
     if (typeof document === 'undefined') return;
     const searchIds = [
@@ -14881,29 +15374,34 @@ function setupSearchInputs() {
         input.dataset.clearEnhanced = 'true';
         wrapper.classList.add('relative');
 
+        const hasAdvanced = Boolean(advancedSearchState(id));
         const clearBtn = document.createElement('button');
         clearBtn.type = 'button';
         clearBtn.dataset.clearFor = id;
         clearBtn.setAttribute('aria-label', 'Xóa tìm kiếm');
         clearBtn.title = 'Xóa tìm kiếm (Esc)';
-        clearBtn.className =
-            'hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-200/70 flex items-center justify-center text-xs font-bold leading-none transition cursor-pointer';
+        clearBtn.className = `hidden absolute ${hasAdvanced ? 'right-9' : 'right-2'} top-1/2 -translate-y-1/2 w-5 h-5 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-200/70 flex items-center justify-center text-xs font-bold leading-none transition cursor-pointer`;
         clearBtn.innerHTML = '&times;';
         wrapper.appendChild(clearBtn);
 
         const syncClearBtn = () => {
-            clearBtn.classList.toggle('hidden', !input.value);
+            clearBtn.classList.toggle('hidden', !input.value && advancedSearchCount(id) === 0);
         };
+        const advancedState = advancedSearchState(id);
+        if (advancedState) advancedState.syncClear = syncClearBtn;
         input.addEventListener('input', syncClearBtn);
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && input.value) {
-                e.stopPropagation();
-                input.value = '';
-                syncClearBtn();
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-            }
+            if (e.key !== 'Escape') return;
+            const hadAdvanced = advancedSearchCount(id) > 0;
+            if (!input.value && !hadAdvanced) return;
+            e.stopPropagation();
+            clearAdvancedSearch(id);
+            input.value = '';
+            syncClearBtn();
+            input.dispatchEvent(new Event('input', { bubbles: true }));
         });
         clearBtn.addEventListener('click', () => {
+            clearAdvancedSearch(id);
             input.value = '';
             syncClearBtn();
             input.focus();
@@ -15801,6 +16299,7 @@ function guardMutation(fn) {
 checkoutPos = guardMutation(checkoutPos);
 cancelInvoice = guardMutation(cancelInvoice);
 submitReturnGoods = guardMutation(submitReturnGoods);
+submitImportReturn = guardMutation(submitImportReturn);
 saveNewImport = guardMutation(saveNewImport);
 cancelImport = guardMutation(cancelImport);
 collectCustomerDebt = guardMutation(collectCustomerDebt);
