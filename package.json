@@ -1,6 +1,6 @@
 {
     "name": "minikiot-webapp",
-    "version": "1.18.0",
+    "version": "1.18.1",
     "description": "NKiot - POS với Node.js, SQLite và giao diện JavaScript",
     "main": "server.js",
     "scripts": {
@@ -11,10 +11,11 @@
         "check": "node scripts/check.js",
         "backup": "node backup.js",
         "assets:build": "tailwindcss -i ./tailwind.input.css -o ./public/tailwind.css --minify",
+        "assets:check": "node scripts/check-assets.js",
         "format": "prettier --write *.js tests/*.js scripts/*.js .prettierrc.json package.json",
         "format:check": "prettier --check *.js tests/*.js scripts/*.js .prettierrc.json package.json",
         "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
-        "verify": "npm run format:check && npm run check && npm test"
+        "verify": "npm run format:check && npm run check && npm test && npm run assets:check"
     },
     "keywords": [
         "kiotviet",

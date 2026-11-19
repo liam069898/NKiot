@@ -22,6 +22,17 @@ function makeDb(source) {
     db.close();
 }
 
+test('public/tailwind.css is built from the current source', () => {
+    // Chặn phát hành giao diện thiếu style: file CSS phải khớp bản build từ source.
+    const { execFileSync } = require('node:child_process');
+    const root = path.join(__dirname, '..');
+    const output = execFileSync(process.execPath, [path.join(root, 'scripts', 'check-assets.js')], {
+        cwd: root,
+        encoding: 'utf8'
+    });
+    assert.match(output, /đồng bộ với source/);
+});
+
 test('scheduled filenames are stable per day and per ISO week', () => {
     const d = new Date('2026-11-18T05:00:00Z');
     assert.equal(scheduledFilename('daily', d).name, 'daily-20261118.db');

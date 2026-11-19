@@ -122,7 +122,11 @@ npm ci
 npm run check
 npm test
 npm run format:check
+npm run assets:check   # public/tailwind.css phải khớp bản build từ source
+npm run verify         # chạy cả 4 bước trên theo thứ tự
 ```
+
+`npm run verify` được CI (`.github/workflows/verify.yml`) chạy trên mọi push và pull request, kèm bước build lại Tailwind rồi `git diff --exit-code` để chặn phát hành giao diện thiếu style. Thêm class Tailwind mới vào `index.html`/`app.js`/`admin.*` thì phải chạy `npm run assets:build` và commit `public/tailwind.css`.
 
 Các thư viện npm chỉ phục vụ phát triển/kiểm thử. Bộ test dùng SQLite tạm và jsdom, nối frontend tới HTTP handler thật bằng request/response giả lập; không sử dụng `minikiot.db` hiện tại. Bao gồm phân quyền, chống mất/ghi trùng giao dịch, tồn kho/IMEI, hoàn tiền/công nợ, XSS, báo cáo, migration và phục hồi bản sao. Chưa thay thế kiểm thử trên trình duyệt thật, máy in, scanner, mobile và tải lớn.
 
