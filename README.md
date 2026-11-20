@@ -104,6 +104,13 @@ Nút xuất JSON trong giao diện chỉ xuất dữ liệu tài khoản đượ
 - Quyền: cần quyền `imports`. Phiếu nhập đã hủy hoặc thiếu giá nhập lịch sử sẽ bị từ chối kèm yêu cầu đối soát.
 - Danh sách Nhập hàng hiện badge `↩ Đã trả N` trên phiếu đã trả; mở chi tiết phiếu để xem lịch sử từng chứng từ trả (mã, thời gian, hàng, số lượng, giá trị, lý do) và tổng đã trả nhà cung cấp.
 
+## Báo cáo Lãi lỗ
+
+- Trang Báo cáo có thêm tab **Lãi lỗ**: doanh thu thuần − giá vốn hàng bán − chi phí hoạt động = **lợi nhuận trước thuế (tạm tính)**. Số này chưa trừ thuế TNDN, khấu hao và chi phí phân bổ nên được ghi rõ là tạm tính.
+- Chi phí hoạt động lấy từ Sổ quỹ theo nhóm: mặt bằng, lương, vận chuyển, điện nước & mạng, chi khác. **Nhập hàng và trả nợ nhà cung cấp không tính là chi phí của kỳ** để tránh tính trùng với giá vốn khi bán. Các khoản chi chưa phân loại được gom riêng kèm cảnh báo.
+- Doanh thu, giá vốn và lợi nhuận gộp được tính chung một hàm với tab Bán hàng (`computeSalesFigures`) nên hai báo cáo không lệch nhau. Thiếu giá vốn lịch sử thì hiển thị "Chưa xác định" thay vì bịa số lãi.
+- Có biểu đồ doanh thu/lợi nhuận ròng theo ngày, cơ cấu chi phí theo nhóm, bảng kết quả kinh doanh chi tiết và xuất CSV/in như các báo cáo khác.
+
 ## Sửa lỗi toàn vẹn dữ liệu sau review
 
 - Trả hàng có IMEI phải gửi/chọn đúng serial nhận lại; backend từ chối serial đã trả, ngoài hóa đơn hoặc không khớp số lượng. Hủy hóa đơn chỉ hoàn các serial chưa trả.

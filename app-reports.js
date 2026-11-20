@@ -3,7 +3,7 @@ let currentReportTab = 'sales';
 
 function switchReportTab(tab) {
     currentReportTab = tab;
-    ['sales', 'products', 'cashflow', 'inventory'].forEach((t) => {
+    ['sales', 'pnl', 'products', 'cashflow', 'inventory'].forEach((t) => {
         const btn = document.getElementById(`rep-tab-${t}`);
         if (!btn) return;
         if (t === tab) {
@@ -394,6 +394,142 @@ function onReportDateFilterChange() {
     renderReports();
 }
 
+// --- Báo cáo Lãi lỗ (lợi nhuận ròng tạm tính) ---
+// Các khoản chi trong Sổ quỹ thuộc danh sách này được tính là CHI PHÍ HOẠT ĐỘNG
+// và bị trừ khỏi lợi nhuận. Các khoản khác (nhập hàng, trả nợ NCC) không phải chi phí
+// của kỳ nên không đưa vào lãi lỗ để tránh tính trùng.
+const OPERATING_EXPENSE_CATEGORIES = [
+    'Chi phí mặt bằng',
+    'Chi phí lương nhân viên',
+    'Chi phí vận chuyển',
+    'Chi phí điện nước & mạng',
+    'Chi khác'
+];
+// Các phiếu chi KHÔNG phải chi phí hoạt động: nhập hàng (ghi vào kho, giá vốn tính khi bán),
+// trả nợ NCC (không tạo lợi nhuận) và các khoản hoàn tiền khách (đã phản ánh ở doanh thu thuần).
+const NON_OPERATING_CHI_CATEGORIES = new Set([
+    'Nhập hàng',
+    'Chi trả nợ NCC',
+    'Trả hàng bán',
+    'Hủy hóa đơn',
+    'Hoàn phí giao hàng'
+]);
+
+function isOperatingExpenseChi(entry) {
+    if (!entry || entry.type !== 'chi') return false;
+    const cat = entry.category || 'Chưa phân loại';
+    if (OPERATING_EXPENSE_CATEGORIES.includes(cat)) return true;
+    return !NON_OPERATING_CHI_CATEGORIES.has(cat);
+}
+
+// Tính doanh thu, giá vốn và lợi nhuận gộp cho một kỳ — tách riêng để tab Bán hàng
+// và tab Lãi lỗ dùng chung cùng một cách tính.
+function computeSalesFigures(data, currentBranch, dateFilter, customFrom, customTo) {
+    const isAll =
+        currentBranch ===
+        (typeof ALL_BRANCHES !== 'undefined' ? ALL_BRANCHES : 'Toàn bộ chi nhánh');
+    const branchInvoices = (data.invoices || []).filter(
+        (i) =>
+            (isAll || (i.branch || FALLBACK_BRANCH) === currentBranch) &&
+            (i.status !== 'cancelled' || i.bookingVersion === 2)
+    );
+    const validInvoices = branchInvoices.filter((i) =>
+        matchesDateFilter(i.time, dateFilter, customFrom, customTo)
+    );
+    const legacyCancelled = new Set(
+        (data.invoices || [])
+            .filter((i) => i.status === 'cancelled' && i.bookingVersion !== 2)
+            .map((i) => i.code)
+    );
+    const branchReturns = (data.returns || []).filter(
+        (r) =>
+            (isAll || (r.branch || FALLBACK_BRANCH) === currentBranch) &&
+            !legacyCancelled.has(r.invoiceCode)
+    );
+    const validReturns = branchReturns.filter((r) =>
+        matchesDateFilter(r.time, dateFilter, customFrom, customTo)
+    );
+
+    const grossRevenue = validInvoices.reduce((a, c) => a + (c.total || 0), 0);
+    const totalReturns = validReturns.reduce(
+        (a, c) => a + (c.returnValue ?? c.totalRefund ?? 0),
+        0
+    );
+    const netRevenue = grossRevenue - totalReturns;
+
+    let totalCost = 0;
+    validInvoices.forEach((inv) =>
+        (inv.items || []).forEach((item) => {
+            totalCost += (item.costPrice ?? 0) * item.qty;
+        })
+    );
+    validReturns.forEach((ret) =>
+        (ret.items || []).forEach((item) => {
+            totalCost -= (item.costPrice ?? 0) * item.qty;
+        })
+    );
+    const unknownCost =
+        validInvoices.some((inv) => inv.items.some((item) => item.costPrice == null)) ||
+        validReturns.some((ret) => ret.items.some((item) => item.costPrice == null));
+    const grossProfit = netRevenue - totalCost;
+    const margin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : '0.0';
+
+    return {
+        isAll,
+        validInvoices,
+        validReturns,
+        grossRevenue,
+        totalReturns,
+        netRevenue,
+        totalCost,
+        grossProfit,
+        margin,
+        invoicesCount: validInvoices.length,
+        returnsCount: validReturns.length,
+        unknownCost
+    };
+}
+
+function computeOperatingExpenses(data, currentBranch, dateFilter, customFrom, customTo) {
+    const isAll =
+        currentBranch ===
+        (typeof ALL_BRANCHES !== 'undefined' ? ALL_BRANCHES : 'Toàn bộ chi nhánh');
+    const validCashbook = (data.cashbook || []).filter(
+        (c) =>
+            (isAll || (c.branch || FALLBACK_BRANCH) === currentBranch) &&
+            matchesDateFilter(c.time, dateFilter, customFrom, customTo)
+    );
+
+    const byCategory = Object.create(null);
+    let unclassified = 0;
+    let count = 0;
+    validCashbook.forEach((c) => {
+        if (c.type !== 'chi') return;
+        const amt = Number(c.amount) || 0;
+        if (amt <= 0) return;
+        const cat = c.category || 'Chưa phân loại';
+        if (OPERATING_EXPENSE_CATEGORIES.includes(cat)) {
+            byCategory[cat] = (byCategory[cat] || 0) + amt;
+            count += 1;
+        } else if (!NON_OPERATING_CHI_CATEGORIES.has(cat)) {
+            unclassified += amt;
+            count += 1;
+        }
+    });
+    const classified = OPERATING_EXPENSE_CATEGORIES.reduce(
+        (sum, cat) => sum + (byCategory[cat] || 0),
+        0
+    );
+    return {
+        byCategory,
+        classified,
+        unclassified,
+        total: classified + unclassified,
+        count,
+        validCashbook
+    };
+}
+
 function renderReports() {
     const data = KVStore.data;
     const currentBranch = getCurrentBranch();
@@ -476,6 +612,8 @@ function renderReports() {
 
     if (currentReportTab === 'sales') {
         renderSalesReportTab(data, currentBranch, branchProducts, dateFilter, customFrom, customTo);
+    } else if (currentReportTab === 'pnl') {
+        renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, customFrom, customTo);
     } else if (currentReportTab === 'products') {
         renderProductsReportTab(
             data,
@@ -516,58 +654,21 @@ function renderSalesReportTab(
     customFrom,
     customTo
 ) {
-    const isAll =
-        currentBranch ===
-        (typeof ALL_BRANCHES !== 'undefined' ? ALL_BRANCHES : 'Toàn bộ chi nhánh');
-    const branchInvoices = (data.invoices || []).filter(
-        (i) =>
-            (isAll || (i.branch || FALLBACK_BRANCH) === currentBranch) &&
-            (i.status !== 'cancelled' || i.bookingVersion === 2)
-    );
-    const validInvoices = branchInvoices.filter((i) =>
-        matchesDateFilter(i.time, dateFilter, customFrom, customTo)
-    );
-
-    const legacyCancelled = new Set(
-        (data.invoices || [])
-            .filter((i) => i.status === 'cancelled' && i.bookingVersion !== 2)
-            .map((i) => i.code)
-    );
-    const branchReturns = (data.returns || []).filter(
-        (r) =>
-            (isAll || (r.branch || FALLBACK_BRANCH) === currentBranch) &&
-            !legacyCancelled.has(r.invoiceCode)
-    );
-    const validReturns = branchReturns.filter((r) =>
-        matchesDateFilter(r.time, dateFilter, customFrom, customTo)
-    );
-
-    const grossRevenue = validInvoices.reduce((a, c) => a + (c.total || 0), 0);
-    const totalReturns = validReturns.reduce(
-        (a, c) => a + (c.returnValue ?? c.totalRefund ?? 0),
-        0
-    );
-    const netRevenue = grossRevenue - totalReturns;
-
-    let totalCost = 0;
-    validInvoices.forEach((inv) => {
-        (inv.items || []).forEach((item) => {
-            totalCost += (item.costPrice ?? 0) * item.qty;
-        });
-    });
-    validReturns.forEach((ret) =>
-        (ret.items || []).forEach((item) => {
-            totalCost -= (item.costPrice ?? 0) * item.qty;
-        })
-    );
-    const unknownCost =
-        validInvoices.some((inv) => inv.items.some((item) => item.costPrice == null)) ||
-        validReturns.some((ret) => ret.items.some((item) => item.costPrice == null));
-    const grossProfit = netRevenue - totalCost;
-    const margin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : '0.0';
-    const invoicesCount = validInvoices.length;
+    const {
+        isAll,
+        validInvoices,
+        validReturns,
+        grossRevenue,
+        totalReturns,
+        netRevenue,
+        totalCost,
+        grossProfit,
+        margin,
+        invoicesCount,
+        returnsCount,
+        unknownCost
+    } = computeSalesFigures(data, currentBranch, dateFilter, customFrom, customTo);
     const aov = invoicesCount > 0 ? Math.round(grossRevenue / invoicesCount) : 0;
-    const returnsCount = validReturns.length;
 
     // 1. KPI Cards
     updateKpiCard(
@@ -1285,6 +1386,285 @@ function renderCashflowReportTab(
             <div class="flex items-center space-x-4">
                 <span>Chênh lệch ròng: <strong class="${netCash >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${netCash >= 0 ? '+' : ''}${formatVND(netCash)} đ</strong></span>
                 <span>Tồn quỹ hiện tại: <strong class="text-gray-900">${formatVND(allBalance)} đ</strong></span>
+            </div>
+        `;
+    }
+}
+
+// Báo cáo Lãi lỗ (P&L): doanh thu thuần − giá vốn − chi phí hoạt động = lợi nhuận trước thuế.
+// Hiển thị số "tạm tính" vì chưa trừ thuế TNDN, khấu hao và chi phí phân bổ.
+function renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, customFrom, customTo) {
+    const figures = computeSalesFigures(data, currentBranch, dateFilter, customFrom, customTo);
+    const expenses = computeOperatingExpenses(
+        data,
+        currentBranch,
+        dateFilter,
+        customFrom,
+        customTo
+    );
+    const netProfit = figures.grossProfit - expenses.total;
+    const netMargin =
+        figures.netRevenue > 0 ? ((netProfit / figures.netRevenue) * 100).toFixed(1) : '—';
+    const expenseRatio =
+        figures.netRevenue > 0 ? ((expenses.total / figures.netRevenue) * 100).toFixed(1) : '—';
+
+    // 1. KPI Cards
+    updateKpiCard(
+        1,
+        '₫',
+        'Doanh thu thuần',
+        `${formatVND(figures.netRevenue)} đ`,
+        renderHTML`<span class="text-emerald-600 font-semibold">Đã trừ trả hàng (${formatVND(figures.totalReturns)} đ)</span>`,
+        'bg-blue-500/15 text-[#0066cc]'
+    );
+    updateKpiCard(
+        2,
+        '',
+        'Lợi nhuận gộp',
+        figures.unknownCost ? 'Thiếu giá vốn lịch sử' : `${formatVND(figures.grossProfit)} đ`,
+        renderHTML`Tỷ suất: <span class="font-bold text-[#0066cc]">${figures.unknownCost ? '—' : figures.margin + '%'}</span>`,
+        'bg-emerald-500/15 text-emerald-600'
+    );
+    updateKpiCard(
+        3,
+        '',
+        'Chi phí hoạt động',
+        `${formatVND(expenses.total)} đ`,
+        renderHTML`<span class="font-semibold text-gray-800">${expenses.count}</span> phiếu chi · ${expenseRatio}% doanh thu`,
+        'bg-amber-500/15 text-amber-600'
+    );
+    updateKpiCard(
+        4,
+        '',
+        'Lợi nhuận trước thuế (tạm tính)',
+        figures.unknownCost
+            ? 'Thiếu giá vốn lịch sử'
+            : `${netProfit >= 0 ? '' : '-'}${formatVND(Math.abs(netProfit))} đ`,
+        renderHTML`Biên ròng: <span class="font-bold ${netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${figures.unknownCost ? '—' : netMargin + '%'}</span>`,
+        netProfit >= 0 ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-600'
+    );
+
+    // 2. Chart Titles & Legends
+    const mainTitleEl = document.getElementById('rep-main-chart-title');
+    if (mainTitleEl) mainTitleEl.textContent = 'Xu hướng Doanh thu & Lợi nhuận ròng';
+    const mainLegendEl = document.getElementById('rep-main-chart-legend');
+    if (mainLegendEl) {
+        mainLegendEl.innerHTML = renderHTML`
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#0066cc]"></span><span>Doanh thu</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span><span>Lợi nhuận ròng</span></span>
+        `;
+    }
+    const sideTitleEl = document.getElementById('rep-side-chart-title');
+    if (sideTitleEl) sideTitleEl.textContent = 'Cơ cấu chi phí hoạt động';
+    const sideBadgeEl = document.getElementById('rep-side-chart-badge');
+    if (sideBadgeEl) sideBadgeEl.textContent = 'Theo nhóm';
+
+    // 3. Main Chart: doanh thu thuần và lợi nhuận ròng theo ngày
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const dayMap = Object.create(null);
+    const ensureDay = (dateObj) => {
+        const key = dateObj
+            ? `${pad2(dateObj.getDate())}/${pad2(dateObj.getMonth() + 1)}/${dateObj.getFullYear()}`
+            : 'Khác';
+        if (!dayMap[key]) {
+            dayMap[key] = {
+                dayKey: key,
+                dateObj: dateObj || new Date(0),
+                gross: 0,
+                cost: 0,
+                returns: 0,
+                expense: 0,
+                count: 0,
+                unknownCost: false
+            };
+        }
+        return dayMap[key];
+    };
+    figures.validInvoices.forEach((inv) => {
+        const bucket = ensureDay(parseRecordDate(inv.time));
+        bucket.gross += inv.total || 0;
+        bucket.count += 1;
+        (inv.items || []).forEach((item) => {
+            bucket.cost += (item.costPrice ?? 0) * item.qty;
+            bucket.unknownCost ||= item.costPrice == null;
+        });
+    });
+    figures.validReturns.forEach((ret) => {
+        const bucket = ensureDay(parseRecordDate(ret.time));
+        bucket.returns += ret.returnValue ?? ret.totalRefund ?? 0;
+        (ret.items || []).forEach((item) => {
+            bucket.cost -= (item.costPrice ?? 0) * item.qty;
+            bucket.unknownCost ||= item.costPrice == null;
+        });
+    });
+    expenses.validCashbook.forEach((c) => {
+        if (!isOperatingExpenseChi(c)) return;
+        const bucket = ensureDay(parseRecordDate(c.time));
+        bucket.expense += Number(c.amount) || 0;
+    });
+
+    const daysSorted = Object.values(dayMap).sort((a, b) => a.dateObj - b.dateObj);
+    const chartItems = daysSorted.map((d) => {
+        const net = d.gross - d.returns;
+        return {
+            label: d.dayKey.slice(0, 5),
+            fullName: d.dayKey,
+            val1: net,
+            val2: d.unknownCost ? null : net - d.cost - d.expense
+        };
+    });
+    renderDualBarChart(
+        'rep-main-chart-container',
+        chartItems,
+        'Doanh thu thuần',
+        'bg-[#0066cc]',
+        'Lợi nhuận ròng',
+        'bg-emerald-500'
+    );
+
+    // 4. Side Chart: cơ cấu chi phí hoạt động
+    const expenseBreakdown = OPERATING_EXPENSE_CATEGORIES.map((cat) => {
+        const colors = {
+            'Chi phí mặt bằng': 'bg-amber-500',
+            'Chi phí lương nhân viên': 'bg-[#0066cc]',
+            'Chi phí vận chuyển': 'bg-indigo-600',
+            'Chi phí điện nước & mạng': 'bg-emerald-500',
+            'Chi khác': 'bg-gray-400'
+        };
+        return {
+            label: cat,
+            value: expenses.byCategory[cat] || 0,
+            dotClass: colors[cat],
+            barClass: colors[cat]
+        };
+    }).filter((item) => item.value > 0);
+    if (expenses.unclassified > 0) {
+        expenseBreakdown.push({
+            label: 'Chi chưa phân loại (cần xem lại)',
+            value: expenses.unclassified,
+            dotClass: 'bg-rose-500',
+            barClass: 'bg-rose-500'
+        });
+    }
+    renderBreakdownBars('rep-breakdown-container', expenseBreakdown);
+
+    // 5. Table: Báo cáo kết quả kinh doanh
+    const tableTitleEl = document.getElementById('rep-table-title');
+    if (tableTitleEl) tableTitleEl.textContent = 'Báo cáo kết quả kinh doanh (Lãi lỗ)';
+    const thead = document.getElementById('rep-table-thead');
+    if (thead) {
+        thead.innerHTML = renderHTML`
+            <tr class="bg-gray-100/80 text-gray-700 font-bold border-b border-gray-200">
+                <th class="py-2.5 px-3">Khoản mục</th>
+                <th class="py-2.5 px-3">Ghi chú</th>
+                <th class="py-2.5 px-3 text-right">Số tiền</th>
+            </tr>
+        `;
+    }
+
+    const rows = [];
+    rows.push({ kind: 'header', label: 'Doanh thu' });
+    rows.push({
+        kind: 'line',
+        label: 'Doanh thu bán hàng',
+        note: 'Đã trừ giảm giá trên hóa đơn',
+        value: figures.grossRevenue
+    });
+    rows.push({
+        kind: 'line',
+        label: 'Hàng bán trả lại',
+        note: `${figures.returnsCount} phiếu trả hàng`,
+        value: -figures.totalReturns
+    });
+    rows.push({ kind: 'subtotal', label: 'Doanh thu thuần', value: figures.netRevenue });
+    rows.push({ kind: 'header', label: 'Giá vốn' });
+    rows.push({
+        kind: 'line',
+        label: 'Giá vốn hàng bán thuần',
+        note: 'Theo giá vốn lịch sử từng dòng',
+        value: -figures.totalCost,
+        unknown: figures.unknownCost
+    });
+    rows.push({
+        kind: 'subtotal',
+        label: 'Lợi nhuận gộp',
+        note: figures.unknownCost ? 'Thiếu giá vốn lịch sử' : `Tỷ suất ${figures.margin}%`,
+        value: figures.grossProfit,
+        unknown: figures.unknownCost
+    });
+    rows.push({ kind: 'header', label: 'Chi phí hoạt động' });
+    OPERATING_EXPENSE_CATEGORIES.forEach((cat) => {
+        const value = expenses.byCategory[cat] || 0;
+        if (value > 0) rows.push({ kind: 'line', label: cat, value: -value });
+    });
+    if (expenses.unclassified > 0) {
+        rows.push({
+            kind: 'line',
+            label: 'Chi chưa phân loại',
+            note: 'Cần xem lại trong Sổ quỹ',
+            value: -expenses.unclassified,
+            warn: true
+        });
+    }
+    rows.push({
+        kind: 'subtotal',
+        label: 'Tổng chi phí hoạt động',
+        note: `${expenses.count} phiếu chi`,
+        value: -expenses.total
+    });
+    rows.push({ kind: 'header', label: 'Kết quả' });
+    rows.push({
+        kind: 'total',
+        label: 'Lợi nhuận trước thuế (tạm tính)',
+        note: 'Chưa trừ thuế, khấu hao và chi phí phân bổ',
+        value: netProfit,
+        unknown: figures.unknownCost
+    });
+
+    const valueHtml = (row) => {
+        if (row.unknown) return '<span class="font-semibold text-amber-600">Chưa xác định</span>';
+        const v = Number(row.value) || 0;
+        const color = v < 0 ? 'text-rose-600' : v > 0 ? 'text-emerald-600' : 'text-gray-500';
+        return `<span class="${color}">${formatVND(v)} đ</span>`;
+    };
+
+    const tbody = document.getElementById('rep-table-tbody');
+    if (tbody) {
+        tbody.innerHTML = rows
+            .map((row) => {
+                if (row.kind === 'header') {
+                    return renderHTML`
+                        <tr class="bg-gray-50/80">
+                            <td colspan="3" class="py-2 px-3 text-[11px] font-bold uppercase tracking-wider text-gray-500">${row.label}</td>
+                        </tr>
+                    `;
+                }
+                const bold = row.kind === 'subtotal' || row.kind === 'total';
+                const indent = row.kind === 'line' ? 'pl-6' : '';
+                const base =
+                    row.kind === 'total' ? 'bg-emerald-50/50' : bold ? 'bg-gray-50/50' : '';
+                return renderHTML`
+                    <tr class="hover:bg-blue-50/40 transition-colors ${base}">
+                        <td class="py-2.5 px-3 ${indent} ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}">${row.label}</td>
+                        <td class="py-2.5 px-3 text-gray-500 text-[12px] ${row.warn ? 'text-rose-500 font-semibold' : ''}">${row.note || ''}</td>
+                        <td class="py-2.5 px-3 text-right tabular-nums ${bold ? 'font-bold' : 'font-medium'}">${trustedHTML(valueHtml(row))}</td>
+                    </tr>
+                `;
+            })
+            .join('');
+    }
+
+    const tableBadgeEl = document.getElementById('rep-table-badge');
+    if (tableBadgeEl)
+        tableBadgeEl.textContent = `${figures.invoicesCount} đơn · ${expenses.count} phiếu chi`;
+
+    const footer = document.getElementById('rep-table-footer');
+    if (footer) {
+        footer.innerHTML = renderHTML`
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-[11.5px] text-gray-500">Lợi nhuận trước thuế là số <strong>tạm tính</strong>: chưa trừ thuế TNDN, khấu hao, chi phí phân bổ và các khoản chưa ghi nhận.</span>
+                ${expenses.unclassified > 0 ? renderHTML`<span class="kv-badge kv-badge-warning text-[11px]">Còn ${formatVND(expenses.unclassified)} đ chi chưa phân loại</span>` : ''}
+                ${figures.unknownCost ? renderHTML`<span class="kv-badge kv-badge-warning text-[11px]">Thiếu giá vốn lịch sử</span>` : ''}
             </div>
         `;
     }

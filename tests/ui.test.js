@@ -350,6 +350,75 @@ test('cancellation in a later period preserves original sale and books reversal 
     dom.window.close();
 });
 
+test('P&L report computes net profit before tax and excludes inventory and debt payments', () => {
+    const dom = browser(),
+        w = dom.window;
+    w.eval(
+        `KVStore.data.invoices=[{id:'I1',code:'I1',branch:'Kalo HCM',status:'completed',time:getCurrentDateTimeString(),total:1000000,paid:1000000,discount:0,paymentMethod:'cash',items:[{code:'SP',name:'Product',qty:1,price:1000000,costPrice:600000,total:1000000,netTotal:1000000}]}];
+         KVStore.data.returns=[];
+         KVStore.data.cashbook=[
+             {code:'PC1',time:getCurrentDateTimeString(),type:'chi',amount:100000,category:'Chi phí mặt bằng',branch:'Kalo HCM'},
+             {code:'PC2',time:getCurrentDateTimeString(),type:'chi',amount:50000,category:'Chi phí lương nhân viên',branch:'Kalo HCM'},
+             {code:'PC3',time:getCurrentDateTimeString(),type:'chi',amount:200000,category:'Nhập hàng',branch:'Kalo HCM'},
+             {code:'PC4',time:getCurrentDateTimeString(),type:'chi',amount:300000,category:'Chi trả nợ NCC',branch:'Kalo HCM'},
+             {code:'PC5',time:getCurrentDateTimeString(),type:'chi',amount:40000,category:'Chi chưa rõ',branch:'Kalo HCM'},
+             {code:'PC6',time:getCurrentDateTimeString(),type:'chi',amount:80000,category:'Trả hàng bán',branch:'Kalo HCM'},
+             {code:'PC7',time:getCurrentDateTimeString(),type:'chi',amount:60000,category:'Hủy hóa đơn',branch:'Kalo HCM'},
+             {code:'PC8',time:getCurrentDateTimeString(),type:'chi',amount:20000,category:'Hoàn phí giao hàng',branch:'Kalo HCM'}
+         ];`
+    );
+    const exp = w.eval("computeOperatingExpenses(KVStore.data,'Kalo HCM','all','','')");
+    assert.equal(exp.classified, 150000);
+    assert.equal(exp.unclassified, 40000);
+    assert.equal(exp.total, 190000);
+    const cards = {};
+    w.updateKpiCard = (idx, icon, label, value) => (cards[label] = value);
+    w.eval("renderPnlReportTab(KVStore.data,'Kalo HCM',KVStore.data.products,'all','','')");
+    assert.equal(cards['Doanh thu thuần'], '1.000.000 đ');
+    assert.equal(cards['Lợi nhuận gộp'], '400.000 đ');
+    assert.equal(cards['Chi phí hoạt động'], '190.000 đ');
+    assert.equal(cards['Lợi nhuận trước thuế (tạm tính)'], '210.000 đ');
+    const tbodyText = w.document.getElementById('rep-table-tbody').textContent;
+    assert.match(tbodyText, /Lợi nhuận trước thuế \(tạm tính\)/);
+    assert.match(tbodyText, /Chi chưa phân loại/);
+    assert.match(tbodyText, /Chi phí mặt bằng/);
+    assert.ok(!tbodyText.includes('Nhập hàng'), 'nhập hàng không được là chi phí hoạt động');
+    assert.ok(!tbodyText.includes('Chi trả nợ NCC'), 'trả nợ NCC không được là chi phí hoạt động');
+    assert.ok(
+        !tbodyText.includes('Trả hàng bán'),
+        'hoàn tiền trả hàng không được tính trùng thành chi phí'
+    );
+    assert.ok(
+        !tbodyText.includes('Hủy hóa đơn'),
+        'hoàn tiền hủy đơn không được tính trùng thành chi phí'
+    );
+    assert.ok(
+        !tbodyText.includes('Hoàn phí giao hàng'),
+        'hoàn phí ship không được tính trùng thành chi phí'
+    );
+    const footerText = w.document.getElementById('rep-table-footer').textContent;
+    assert.match(footerText, /tạm tính/);
+    assert.match(footerText, /chưa phân loại/);
+    dom.window.close();
+});
+
+test('P&L report flags missing historical cost instead of fabricating a profit', () => {
+    const dom = browser(),
+        w = dom.window;
+    w.eval(
+        `KVStore.data.invoices=[{id:'OLD',code:'OLD',branch:'Kalo HCM',status:'completed',time:getCurrentDateTimeString(),total:1000000,paid:1000000,items:[{code:'SP',name:'Old',qty:1,price:1000000,total:1000000}]}];
+         KVStore.data.returns=[];KVStore.data.cashbook=[{code:'PC1',time:getCurrentDateTimeString(),type:'chi',amount:50000,category:'Chi phí mặt bằng',branch:'Kalo HCM'}];`
+    );
+    const cards = {};
+    w.updateKpiCard = (idx, icon, label, value) => (cards[label] = value);
+    w.eval("renderPnlReportTab(KVStore.data,'Kalo HCM',KVStore.data.products,'all','','')");
+    assert.equal(cards['Lợi nhuận gộp'], 'Thiếu giá vốn lịch sử');
+    assert.equal(cards['Lợi nhuận trước thuế (tạm tính)'], 'Thiếu giá vốn lịch sử');
+    const tbodyText = w.document.getElementById('rep-table-tbody').textContent;
+    assert.match(tbodyText, /Chưa xác định/);
+    dom.window.close();
+});
+
 test('staff form starts without a default password and preserves separate user-management permission', () => {
     const dom = browser(),
         w = dom.window;
