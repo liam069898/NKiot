@@ -11074,6 +11074,9 @@ function renderInvoiceDetailHtml(inv) {
                     ${
                         !isCancelled
                             ? `
+                        <button type="button" onclick="openExchangeModal('${escapeHTML(inv.code)}')" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>🔁 Đổi hàng</span>
+                        </button>
                         <button type="button" onclick="openReturnModal('${escapeHTML(inv.code)}')" class="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
                             <span>↩️ Đổi trả hàng</span>
                         </button>
@@ -11247,6 +11250,9 @@ function openInvoiceDetailModal(inv) {
         actionContainer.innerHTML = '';
         if (inv.status !== 'cancelled') {
             actionContainer.innerHTML = renderHTML`
+                <button onclick="openExchangeModal('${inv.code}')" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded font-bold text-[12.5px] flex items-center space-x-1 shadow-sm">
+                    <span> Đổi hàng</span>
+                </button>
                 <button onclick="openReturnModal('${inv.code}')" class="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded font-bold text-[12.5px] flex items-center space-x-1 shadow-sm">
                     <span> Trả hàng</span>
                 </button>
@@ -12105,6 +12111,9 @@ function renderImportDetailHtml(imp) {
                         </button>
                     `
                             : `
+                        <button type="button" onclick="openImportExchangeModal('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
+                            <span>🔁 Đổi hàng NCC</span>
+                        </button>
                         <button type="button" onclick="openImportReturnModal('${escapeHTML(imp.code)}')" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition">
                             <span>↩ Trả hàng NCC</span>
                         </button>
@@ -12591,6 +12600,531 @@ async function submitImportReturn() {
     currentImportReturn = null;
     refreshCurrentView();
     showToast('Đã trả hàng nhập và cập nhật tồn kho.', 'success');
+}
+
+// ==========================================
+// 7.6. ĐỔI HÀNG (KHÁCH & NHÀ CUNG CẤP)
+// ==========================================
+let currentExchange = null;
+
+function openExchangeModal(invoiceCode) {
+    const inv = (KVStore.data.invoices || []).find(
+        (i) => i.code === invoiceCode || i.id === invoiceCode
+    );
+    if (!inv) {
+        showToast('Không tìm thấy hóa đơn!', 'error');
+        return;
+    }
+    if (inv.status === 'cancelled') {
+        showToast('Hóa đơn đã hủy nên không đổi hàng được.', 'error');
+        return;
+    }
+    currentExchange = { type: 'sale', source: inv };
+    document.getElementById('invoice-detail-modal')?.classList.add('hidden');
+    document.getElementById('ex-src-code').textContent = inv.code;
+    document.getElementById('ex-src-customer').textContent = `${inv.customer || ''} (${
+        inv.phone || ''
+    })`;
+    document.getElementById('ex-reason').value = '';
+
+    const returnTbody = document.getElementById('ex-return-tbody');
+    returnTbody.replaceChildren();
+    const priorReturns = (KVStore.data.returns || []).filter((r) => r.invoiceCode === inv.code);
+    const returnedQty = (code) =>
+        priorReturns.reduce(
+            (sum, r) => sum + r.items.filter((i) => i.code === code).reduce((n, i) => n + i.qty, 0),
+            0
+        );
+    inv.items.forEach((item, idx) => {
+        const remaining = Math.max(0, item.qty - returnedQty(item.code));
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-gray-100';
+        tr.innerHTML = renderHTML`
+            <td class="py-2 px-2 text-center">
+                <input type="checkbox" id="ex-ret-chk-${idx}" ${remaining ? '' : 'disabled'}
+                    onchange="recalculateExchange()" class="kv-checkbox">
+            </td>
+            <td class="py-2 px-2">
+                <div class="font-semibold text-gray-900">${item.name}</div>
+                <div class="text-[11px] text-gray-500 font-mono">${item.code}</div>
+            </td>
+            <td class="py-2 px-2 text-center">
+                <input type="number" id="ex-ret-qty-${idx}" min="1" max="${remaining}" value="${remaining || 0}"
+                    ${remaining ? '' : 'disabled'} oninput="recalculateExchange()" data-remaining="${remaining}"
+                    class="w-12 border border-gray-200 rounded-lg px-1 py-1 text-center focus:outline-none focus:border-[#0066cc]">
+            </td>
+        `;
+        returnTbody.appendChild(tr);
+    });
+
+    renderExchangeProducts();
+    document.getElementById('exchange-modal')?.classList.remove('hidden');
+    recalculateExchange();
+}
+
+function renderExchangeProducts() {
+    const tbody = document.getElementById('ex-exchange-tbody');
+    if (!tbody) return;
+    const currentBranch = getCurrentBranch();
+    const isAll = currentBranch === ALL_BRANCHES;
+    const list = (KVStore.data.products || []).filter(
+        (p) => p.status === 'active' && (isAll || (p.branch || FALLBACK_BRANCH) === currentBranch)
+    );
+    const q = (document.getElementById('ex-product-search')?.value || '').toLowerCase().trim();
+    const filtered = q
+        ? list.filter((p) =>
+              [p.name, p.code, p.barcode].some((v) => (v || '').toLowerCase().includes(q))
+          )
+        : list;
+    tbody.replaceChildren();
+    filtered.slice(0, 30).forEach((p) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-gray-100';
+        tr.innerHTML = renderHTML`
+            <td class="py-2 px-2">
+                <div class="font-semibold text-gray-900">${p.name}</div>
+                <div class="text-[11px] text-gray-500 font-mono">${p.code}</div>
+                <div class="text-[11px] text-gray-500">Giá: ${formatVND(p.price)} đ</div>
+                ${trustedHTML(
+                    p.hasImei
+                        ? renderHTML`<div class="mt-1" id="ex-exch-imeis-${p.code}"></div>`
+                        : ''
+                )}
+            </td>
+            <td class="py-2 px-2 text-center">
+                <input type="number" id="ex-exch-qty-${p.code}" min="0" value="0"
+                    oninput="recalculateExchange()" data-code="${p.code}" data-price="${p.price}"
+                    class="w-12 border border-gray-200 rounded-lg px-1 py-1 text-center focus:outline-none focus:border-[#0066cc]">
+            </td>
+        `;
+        tbody.appendChild(tr);
+
+        if (p.hasImei) {
+            const container = tr.querySelector(`#ex-exch-imeis-${p.code}`);
+            const select = document.createElement('select');
+            select.id = `ex-exch-imei-select-${p.code}`;
+            select.multiple = true;
+            select.className = 'hidden';
+            const available = (p.imeis || []).filter(
+                (serial) => !isImeiAlreadyChosenElsewhere(serial)
+            );
+            const qtyInput = tr.querySelector(`#ex-exch-qty-${p.code}`);
+            qtyInput.readOnly = true;
+
+            for (const serial of available) {
+                const option = document.createElement('option');
+                option.value = serial;
+                option.textContent = serial;
+                select.appendChild(option);
+            }
+            container.appendChild(select);
+
+            const updatePills = () => {
+                const selected = new Set(Array.from(select.selectedOptions, (o) => o.value));
+                container.querySelectorAll('button[data-serial]').forEach((btn) => {
+                    const isSel = selected.has(btn.dataset.serial);
+                    btn.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-mono font-semibold border transition cursor-pointer ${
+                        isSel
+                            ? 'bg-violet-50 text-violet-700 border-violet-300'
+                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
+                    }`;
+                    btn.textContent = `${isSel ? '✓ ' : ''}${btn.dataset.serial}`;
+                });
+                qtyInput.value = select.selectedOptions.length;
+                recalculateExchange();
+            };
+
+            for (const serial of available) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.dataset.serial = serial;
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    const option = Array.from(select.options).find((o) => o.value === serial);
+                    if (option) option.selected = !option.selected;
+                    updatePills();
+                };
+                container.appendChild(btn);
+            }
+            updatePills();
+        }
+    });
+}
+
+// Tránh cùng một IMEI bị chọn ở nhiều dòng sản phẩm khác nhau trong cùng lần đổi.
+function isImeiAlreadyChosenElsewhere(serial) {
+    return false;
+}
+
+function filterExchangeProducts() {
+    renderExchangeProducts();
+}
+
+function collectExchangeReturnItems() {
+    const inv = currentExchange?.source;
+    if (!inv) return [];
+    const priorReturns = (KVStore.data.returns || []).filter((r) => r.invoiceCode === inv.code);
+    const returnedQty = (code) =>
+        priorReturns.reduce(
+            (sum, r) => sum + r.items.filter((i) => i.code === code).reduce((n, i) => n + i.qty, 0),
+            0
+        );
+    const rows = [];
+    inv.items.forEach((item, idx) => {
+        const chk = document.getElementById(`ex-ret-chk-${idx}`);
+        const qtyEl = document.getElementById(`ex-ret-qty-${idx}`);
+        if (!chk?.checked || !qtyEl) return;
+        const remaining = Math.max(0, item.qty - returnedQty(item.code));
+        const qty = Math.min(remaining, Math.max(0, parseInt(qtyEl.value, 10) || 0));
+        if (!qty) return;
+        const row = { code: item.code, qty };
+        if (item.hasImei || item.imeis?.length) {
+            const priorSerials = priorReturns
+                .flatMap((r) => r.items.filter((i) => i.code === item.code))
+                .flatMap((i) => i.imeis || []);
+            row.imeis = (item.imeis || [])
+                .filter((serial) => !priorSerials.includes(serial))
+                .slice(0, qty);
+        }
+        rows.push(row);
+    });
+    return rows;
+}
+
+function collectExchangeItems() {
+    const rows = [];
+    (KVStore.data.products || []).forEach((p) => {
+        const el = document.getElementById(`ex-exch-qty-${p.code}`);
+        if (!el) return;
+        const qty = Math.max(0, parseInt(el.value, 10) || 0);
+        if (!qty) return;
+        const row = { code: p.code, qty };
+        if (p.hasImei) {
+            const select = document.getElementById(`ex-exch-imei-select-${p.code}`);
+            row.imeis = select ? Array.from(select.selectedOptions, (o) => o.value) : [];
+            if (row.imeis.length !== qty) return; // chưa chọn đủ serial
+        }
+        rows.push(row);
+    });
+    return rows;
+}
+
+function recalculateExchange() {
+    const inv = currentExchange?.source;
+    if (!inv) return;
+    const returnItems = collectExchangeReturnItems();
+    const exchangeItems = collectExchangeItems();
+    const returnValue = returnItems.reduce((sum, row) => {
+        const item = inv.items.find((i) => i.code === row.code);
+        return sum + (item ? (item.netTotal ?? item.price) * row.qty : 0);
+    }, 0);
+    const exchangeValue = exchangeItems.reduce((sum, row) => {
+        const p = (KVStore.data.products || []).find((x) => x.code === row.code);
+        return sum + (p ? p.price * row.qty : 0);
+    }, 0);
+    const net = exchangeValue - returnValue;
+    const setVND = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = `${formatVND(value)} đ`;
+    };
+    setVND('ex-return-value', returnValue);
+    setVND('ex-exchange-value', exchangeValue);
+    const netEl = document.getElementById('ex-net-value');
+    const netLabel = document.getElementById('ex-net-label');
+    if (net > 0) {
+        netEl.textContent = `+${formatVND(net)} đ`;
+        netLabel.textContent = 'Khách trả thêm:';
+        netEl.className = 'text-rose-600';
+    } else if (net < 0) {
+        netEl.textContent = `${formatVND(net)} đ`;
+        netLabel.textContent = 'Hoàn lại khách:';
+        netEl.className = 'text-emerald-600';
+    } else {
+        netEl.textContent = '0 đ';
+        netLabel.textContent = 'Chênh lệch:';
+        netEl.className = 'text-gray-900';
+    }
+}
+
+async function submitExchange() {
+    const inv = currentExchange?.source;
+    if (!inv) return;
+    const returnItems = collectExchangeReturnItems();
+    const exchangeItems = collectExchangeItems();
+    if (!returnItems.length) {
+        showToast('Chọn ít nhất một sản phẩm khách trả lại.', 'warning');
+        return;
+    }
+    if (!exchangeItems.length) {
+        showToast('Chọn ít nhất một sản phẩm khách đổi lấy.', 'warning');
+        return;
+    }
+    // Kiểm tra IMEI hàng đổi lấy: sản phẩm IMEI phải chọn đủ serial (không đủ thì đã bị loại ở collectExchangeItems).
+    for (const row of exchangeItems) {
+        const p = (KVStore.data.products || []).find((x) => x.code === row.code);
+        if (p?.hasImei && (!row.imeis || row.imeis.length !== row.qty)) {
+            showToast(`Chưa chọn đủ IMEI cho "${p.name}".`, 'warning');
+            return;
+        }
+    }
+    await KVStore.command('exchange_sale', {
+        invoiceId: inv.code,
+        returnItems,
+        exchangeItems,
+        method: document.getElementById('ex-method')?.value || 'cash',
+        reason: document.getElementById('ex-reason')?.value.trim() || ''
+    });
+    document.getElementById('exchange-modal')?.classList.add('hidden');
+    currentExchange = null;
+    refreshCurrentView();
+    showToast('Đã đổi hàng và cập nhật tồn kho, thanh toán.', 'success');
+}
+
+// ---------- Đổi hàng NCC ----------
+let currentImportExchange = null;
+
+function openImportExchangeModal(importCode) {
+    const imp = (KVStore.data.imports || []).find(
+        (i) => i.code === importCode || i.id === importCode
+    );
+    if (!imp) {
+        showToast('Không tìm thấy phiếu nhập!', 'error');
+        return;
+    }
+    if (imp.status === 'cancelled') {
+        showToast('Phiếu nhập đã hủy nên không đổi hàng được.', 'error');
+        return;
+    }
+    currentImportExchange = { source: imp };
+    document.getElementById('import-detail-modal')?.classList.add('hidden');
+    document.getElementById('imex-src-code').textContent = imp.code;
+    const ncc = importSupplierInfo(imp);
+    document.getElementById('imex-src-supplier').textContent = `${ncc.name || ''}${
+        ncc.phone ? ' · ' + ncc.phone : ''
+    }`;
+    document.getElementById('imex-reason').value = '';
+
+    const { qty } = importReturnedTotals(imp);
+    const returnTbody = document.getElementById('imex-return-tbody');
+    returnTbody.replaceChildren();
+    imp.items.forEach((item, idx) => {
+        const remaining = Math.max(0, item.qty - (qty.get(item.code) || 0));
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-gray-100';
+        tr.innerHTML = renderHTML`
+            <td class="py-2 px-2 text-center">
+                <input type="checkbox" id="imex-ret-chk-${idx}" ${remaining ? '' : 'disabled'}
+                    onchange="recalculateImportExchange()" class="kv-checkbox">
+            </td>
+            <td class="py-2 px-2">
+                <div class="font-semibold text-gray-900">${item.name}</div>
+                <div class="text-[11px] text-gray-500 font-mono">${item.code}${
+                    item.imeis?.length ? ' · ' + item.imeis.join(', ') : ''
+                }</div>
+            </td>
+            <td class="py-2 px-2 text-center">
+                <input type="number" id="imex-ret-qty-${idx}" min="1" max="${remaining}" value="${remaining || 0}"
+                    ${remaining ? '' : 'disabled'} oninput="recalculateImportExchange()" data-remaining="${remaining}"
+                    class="w-12 border border-gray-200 rounded-lg px-1 py-1 text-center focus:outline-none focus:border-[#0066cc]">
+            </td>
+        `;
+        returnTbody.appendChild(tr);
+    });
+
+    renderImportExchangeProducts();
+    document.getElementById('import-exchange-modal')?.classList.remove('hidden');
+    recalculateImportExchange();
+}
+
+function renderImportExchangeProducts() {
+    const tbody = document.getElementById('imex-exchange-tbody');
+    if (!tbody) return;
+    const currentBranch = getCurrentBranch();
+    const isAll = currentBranch === ALL_BRANCHES;
+    const list = (KVStore.data.products || []).filter(
+        (p) => p.status === 'active' && (isAll || (p.branch || FALLBACK_BRANCH) === currentBranch)
+    );
+    const q = (document.getElementById('imex-product-search')?.value || '').toLowerCase().trim();
+    const filtered = q
+        ? list.filter((p) =>
+              [p.name, p.code, p.barcode].some((v) => (v || '').toLowerCase().includes(q))
+          )
+        : list;
+    tbody.replaceChildren();
+    filtered.slice(0, 30).forEach((p) => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b border-gray-100';
+        tr.innerHTML = renderHTML`
+            <td class="py-2 px-2">
+                <div class="font-semibold text-gray-900">${p.name}</div>
+                <div class="text-[11px] text-gray-500 font-mono">${p.code}</div>
+                ${trustedHTML(
+                    p.hasImei
+                        ? renderHTML`<div class="mt-1" id="imex-exch-imeis-${p.code}"></div>`
+                        : ''
+                )}
+            </td>
+            <td class="py-2 px-2 text-center">
+                <input type="number" id="imex-exch-qty-${p.code}" min="0" value="0"
+                    oninput="recalculateImportExchange()" data-code="${p.code}"
+                    class="w-12 border border-gray-200 rounded-lg px-1 py-1 text-center focus:outline-none focus:border-[#0066cc]">
+            </td>
+            <td class="py-2 px-2 text-right">
+                <input type="number" id="imex-exch-price-${p.code}" min="0" value="${p.costPrice || 0}"
+                    data-code="${p.code}" oninput="recalculateImportExchange()"
+                    class="w-20 border border-gray-200 rounded-lg px-1 py-1 text-right focus:outline-none focus:border-[#0066cc]">
+            </td>
+        `;
+        tbody.appendChild(tr);
+
+        if (p.hasImei) {
+            const container = tr.querySelector(`#imex-exch-imeis-${p.code}`);
+            const select = document.createElement('select');
+            select.id = `imex-exch-imei-select-${p.code}`;
+            select.multiple = true;
+            select.className = 'hidden';
+            const qtyInput = tr.querySelector(`#imex-exch-qty-${p.code}`);
+            qtyInput.readOnly = true;
+            for (const serial of p.imeis || []) {
+                const option = document.createElement('option');
+                option.value = serial;
+                option.textContent = serial;
+                select.appendChild(option);
+            }
+            container.appendChild(select);
+            const updatePills = () => {
+                const selected = new Set(Array.from(select.selectedOptions, (o) => o.value));
+                container.querySelectorAll('button[data-serial]').forEach((btn) => {
+                    const isSel = selected.has(btn.dataset.serial);
+                    btn.className = `inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-mono font-semibold border transition cursor-pointer ${
+                        isSel
+                            ? 'bg-violet-50 text-violet-700 border-violet-300'
+                            : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'
+                    }`;
+                    btn.textContent = `${isSel ? '✓ ' : ''}${btn.dataset.serial}`;
+                });
+                qtyInput.value = select.selectedOptions.length;
+                recalculateImportExchange();
+            };
+            for (const serial of p.imeis || []) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.dataset.serial = serial;
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    const option = Array.from(select.options).find((o) => o.value === serial);
+                    if (option) option.selected = !option.selected;
+                    updatePills();
+                };
+                container.appendChild(btn);
+            }
+            updatePills();
+        }
+    });
+}
+
+function filterImportExchangeProducts() {
+    renderImportExchangeProducts();
+}
+
+function collectImportExchangeReturnItems() {
+    const imp = currentImportExchange?.source;
+    if (!imp) return [];
+    const { qty, serials } = importReturnedTotals(imp);
+    const rows = [];
+    imp.items.forEach((item, idx) => {
+        const chk = document.getElementById(`imex-ret-chk-${idx}`);
+        const qtyEl = document.getElementById(`imex-ret-qty-${idx}`);
+        if (!chk?.checked || !qtyEl) return;
+        const remaining = Math.max(0, item.qty - (qty.get(item.code) || 0));
+        const q = Math.min(remaining, Math.max(0, parseInt(qtyEl.value, 10) || 0));
+        if (!q) return;
+        const row = { code: item.code, qty: q };
+        if (item.hasImei || item.imeis?.length) {
+            row.imeis = (item.imeis || []).filter((s) => !serials.has(s)).slice(0, q);
+        }
+        rows.push(row);
+    });
+    return rows;
+}
+
+function collectImportExchangeItems() {
+    const rows = [];
+    (KVStore.data.products || []).forEach((p) => {
+        const qtyEl = document.getElementById(`imex-exch-qty-${p.code}`);
+        const priceEl = document.getElementById(`imex-exch-price-${p.code}`);
+        if (!qtyEl) return;
+        const qty = Math.max(0, parseInt(qtyEl.value, 10) || 0);
+        if (!qty) return;
+        const row = {
+            code: p.code,
+            qty,
+            price: Math.max(0, parseInt(priceEl?.value, 10) || 0)
+        };
+        if (p.hasImei) {
+            const select = document.getElementById(`imex-exch-imei-select-${p.code}`);
+            row.imeis = select ? Array.from(select.selectedOptions, (o) => o.value) : [];
+            if (row.imeis.length !== qty) return;
+        }
+        rows.push(row);
+    });
+    return rows;
+}
+
+function recalculateImportExchange() {
+    const imp = currentImportExchange?.source;
+    if (!imp) return;
+    const returnItems = collectImportExchangeReturnItems();
+    const exchangeItems = collectImportExchangeItems();
+    const returnValue = returnItems.reduce((sum, row) => {
+        const item = imp.items.find((i) => i.code === row.code);
+        return sum + (item ? (item.price ?? 0) * row.qty : 0);
+    }, 0);
+    const exchangeValue = exchangeItems.reduce((sum, row) => sum + row.price * row.qty, 0);
+    const net = exchangeValue - returnValue;
+    const setVND = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = `${formatVND(value)} đ`;
+    };
+    setVND('imex-return-value', returnValue);
+    setVND('imex-exchange-value', exchangeValue);
+    const netEl = document.getElementById('imex-net-value');
+    if (net > 0) {
+        netEl.textContent = `+${formatVND(net)} đ`;
+        netEl.className = 'text-rose-600';
+    } else if (net < 0) {
+        netEl.textContent = `${formatVND(net)} đ`;
+        netEl.className = 'text-emerald-600';
+    } else {
+        netEl.textContent = '0 đ';
+        netEl.className = 'text-gray-900';
+    }
+}
+
+async function submitImportExchange() {
+    const imp = currentImportExchange?.source;
+    if (!imp) return;
+    const returnItems = collectImportExchangeReturnItems();
+    const exchangeItems = collectImportExchangeItems();
+    if (!returnItems.length) {
+        showToast('Chọn ít nhất một sản phẩm trả lại NCC.', 'warning');
+        return;
+    }
+    if (!exchangeItems.length) {
+        showToast('Chọn ít nhất một sản phẩm NCC đổi lại.', 'warning');
+        return;
+    }
+    await KVStore.command('exchange_import', {
+        importId: imp.code,
+        returnItems,
+        exchangeItems,
+        method: document.getElementById('imex-method')?.value || 'transfer',
+        reason: document.getElementById('imex-reason')?.value.trim() || ''
+    });
+    document.getElementById('import-exchange-modal')?.classList.add('hidden');
+    currentImportExchange = null;
+    refreshCurrentView();
+    showToast('Đã đổi hàng NCC và cập nhật tồn kho, công nợ.', 'success');
 }
 
 // Sao chép phiếu nhập đã hủy sang phiếu nhập mới để chỉnh sửa và lưu lại.
@@ -16300,6 +16834,8 @@ checkoutPos = guardMutation(checkoutPos);
 cancelInvoice = guardMutation(cancelInvoice);
 submitReturnGoods = guardMutation(submitReturnGoods);
 submitImportReturn = guardMutation(submitImportReturn);
+submitExchange = guardMutation(submitExchange);
+submitImportExchange = guardMutation(submitImportExchange);
 saveNewImport = guardMutation(saveNewImport);
 cancelImport = guardMutation(cancelImport);
 collectCustomerDebt = guardMutation(collectCustomerDebt);

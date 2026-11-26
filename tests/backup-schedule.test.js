@@ -161,6 +161,39 @@ test('legacy databases upgraded to v14 gain the missing extra column without dat
     }
 });
 
+test('migration 16 creates the exchanges table with the extra column', () => {
+    const { applyMigrations, LATEST_SCHEMA_VERSION } = require('../migrations');
+    const d = new DatabaseSync(':memory:');
+    try {
+        d.exec(`
+            CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, appliedAt TEXT NOT NULL);
+            CREATE TABLE invoices (id TEXT PRIMARY KEY, branch TEXT);
+            CREATE TABLE returns (invoiceCode TEXT);
+        `);
+        applyMigrations(d, { entityTables: ['exchanges'] });
+        const columns = d
+            .prepare('PRAGMA table_info(exchanges)')
+            .all()
+            .map((c) => c.name);
+        assert.ok(columns.includes('extra'), 'bảng exchanges phải có cột extra');
+        assert.ok(columns.includes('sourceCode'), 'bảng exchanges phải có cột sourceCode');
+        assert.ok(
+            d
+                .prepare(
+                    "SELECT 1 FROM sqlite_master WHERE type='index' AND name='exchanges_source'"
+                )
+                .get(),
+            'phải có index exchanges_source'
+        );
+        assert.equal(
+            d.prepare('SELECT MAX(version) v FROM schema_migrations').get().v,
+            LATEST_SCHEMA_VERSION
+        );
+    } finally {
+        d.close();
+    }
+});
+
 test('hub snapshots validate against the hub schema instead of tenant tables', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nkiot-hub-backup-'));
     try {

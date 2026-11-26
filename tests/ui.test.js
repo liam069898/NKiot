@@ -419,6 +419,84 @@ test('P&L report flags missing historical cost instead of fabricating a profit',
     dom.window.close();
 });
 
+test('exchange modal collects return and replacement items and shows the net settlement', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'I1', code: 'I1', branch: 'Kalo HCM', status: 'completed',
+                time: '18/11/2026 10:00', customer: 'Khách', phone: '090', total: 100000, paid: 100000,
+                items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000, netTotal: 100000, total: 100000 }]
+            }];
+            KVStore.data.returns = [];
+            KVStore.data.products = [
+                { id: 'SP1', code: 'SP1', name: 'Máy A', branch: 'Kalo HCM', status: 'active', price: 100000, costPrice: 60000, hasImei: false, stock: 5 },
+                { id: 'SP2', code: 'SP2', name: 'Máy B', branch: 'Kalo HCM', status: 'active', price: 150000, costPrice: 90000, hasImei: false, stock: 5 }
+            ];
+            openExchangeModal('I1');
+        `);
+        const modal = doc.getElementById('exchange-modal');
+        assert.equal(modal.classList.contains('hidden'), false, 'modal đổi hàng phải mở');
+        assert.equal(doc.getElementById('ex-src-code').textContent, 'I1');
+
+        doc.getElementById('ex-ret-chk-0').checked = true;
+        doc.getElementById('ex-exch-qty-SP2').value = '1';
+        w.recalculateExchange();
+        assert.match(doc.getElementById('ex-return-value').textContent, /100\.000/);
+        assert.match(doc.getElementById('ex-exchange-value').textContent, /150\.000/);
+        assert.match(doc.getElementById('ex-net-value').textContent, /\+50\.000/);
+
+        const returnItems = w.collectExchangeReturnItems();
+        const exchangeItems = w.collectExchangeItems();
+        assert.equal(returnItems.length, 1);
+        assert.equal(returnItems[0].code, 'SP1');
+        assert.equal(exchangeItems.length, 1);
+        assert.equal(exchangeItems[0].code, 'SP2');
+    } finally {
+        w.close();
+    }
+});
+
+test('exchange modal renders IMEI pills for replacement products and collects chosen serials', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'I1', code: 'I1', branch: 'Kalo HCM', status: 'completed',
+                time: '18/11/2026 10:00', customer: 'Khách', phone: '090', total: 100000, paid: 100000,
+                items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000, netTotal: 100000, total: 100000 }]
+            }];
+            KVStore.data.returns = [];
+            KVStore.data.products = [
+                { id: 'SPIMEI', code: 'SPIMEI', name: 'Máy IMEI', branch: 'Kalo HCM', status: 'active', price: 200000, costPrice: 120000, hasImei: true, imeis: ['S1','S2','S3'], stock: 3 }
+            ];
+            openExchangeModal('I1');
+        `);
+        const container = doc.getElementById('ex-exch-imeis-SPIMEI');
+        assert.ok(container, 'sản phẩm IMEI phải có khối chọn serial');
+        const pills = container.querySelectorAll('button[data-serial]');
+        assert.equal(pills.length, 3, 'phải hiển thị 3 serial đang có');
+
+        // Bấm chọn 2 serial.
+        pills[0].click();
+        pills[1].click();
+        const qty = doc.getElementById('ex-exch-qty-SPIMEI');
+        assert.equal(qty.value, '2', 'ô số lượng phải bằng số serial đã chọn');
+
+        const items = w.collectExchangeItems();
+        assert.equal(items.length, 1);
+        assert.equal(items[0].code, 'SPIMEI');
+        assert.equal(items[0].qty, 2);
+        assert.deepEqual(JSON.parse(JSON.stringify(items[0].imeis)), ['S1', 'S2']);
+    } finally {
+        w.close();
+    }
+});
+
 test('staff form starts without a default password and preserves separate user-management permission', () => {
     const dom = browser(),
         w = dom.window;

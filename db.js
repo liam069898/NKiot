@@ -18,6 +18,7 @@ const ENTITY_TABLES = [
     'invoices',
     'imports',
     'import_returns',
+    'exchanges',
     'cashbook',
     'returns',
     'stocktakes',
@@ -216,6 +217,27 @@ function initDb() {
             items TEXT,
             totalRefund REAL DEFAULT 0,
             refundMethod TEXT,
+            reason TEXT,
+            cashier TEXT,
+            branch TEXT,
+            extra TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE IF NOT EXISTS exchanges (
+            id TEXT PRIMARY KEY,
+            code TEXT,
+            type TEXT,
+            sourceCode TEXT,
+            returnCode TEXT,
+            exchangeCode TEXT,
+            items TEXT,
+            exchangeItems TEXT,
+            returnValue REAL DEFAULT 0,
+            exchangeValue REAL DEFAULT 0,
+            debtReduction REAL DEFAULT 0,
+            credit REAL DEFAULT 0,
+            net REAL DEFAULT 0,
+            method TEXT,
             reason TEXT,
             cashier TEXT,
             branch TEXT,
@@ -556,6 +578,29 @@ function getAllData() {
             };
         });
 
+    // 10c. Exchanges (đổi hàng)
+    const exchanges = d
+        .prepare('SELECT * FROM exchanges ORDER BY rowid')
+        .all()
+        .map((r) => {
+            const { extra, ...known } = r;
+            let fields = {};
+            try {
+                fields = JSON.parse(extra || '{}');
+            } catch {}
+            return {
+                ...fields,
+                ...known,
+                items: parseItems(r.items),
+                exchangeItems: parseItems(r.exchangeItems),
+                returnValue: Number(r.returnValue) || 0,
+                exchangeValue: Number(r.exchangeValue) || 0,
+                debtReduction: Number(r.debtReduction) || 0,
+                credit: Number(r.credit) || 0,
+                net: Number(r.net) || 0
+            };
+        });
+
     // 11. Stocktakes
     const stocktakes = d
         .prepare('SELECT * FROM stocktakes ORDER BY rowid')
@@ -735,6 +780,7 @@ function getAllData() {
         cashbook,
         returns,
         import_returns,
+        exchanges,
         stocktakes,
         transfers,
         users,
@@ -1139,6 +1185,30 @@ const ROW_WRITERS = {
             r.reason || '',
             r.cashier || '',
             r.branch || FALLBACK_BRANCH
+        ]
+    ],
+    exchanges: [
+        cols(
+            'id code type sourceCode returnCode exchangeCode items exchangeItems returnValue exchangeValue debtReduction credit net method reason cashier branch'
+        ),
+        (e) => [
+            e.id || '',
+            e.code || '',
+            e.type || '',
+            e.sourceCode || '',
+            e.returnCode || '',
+            e.exchangeCode || '',
+            items(e.items),
+            items(e.exchangeItems),
+            Number(e.returnValue) || 0,
+            Number(e.exchangeValue) || 0,
+            Number(e.debtReduction) || 0,
+            Number(e.credit) || 0,
+            Number(e.net) || 0,
+            e.method || '',
+            e.reason || '',
+            e.cashier || '',
+            e.branch || FALLBACK_BRANCH
         ]
     ],
     stocktakes: [

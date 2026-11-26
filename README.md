@@ -104,6 +104,14 @@ Nút xuất JSON trong giao diện chỉ xuất dữ liệu tài khoản đượ
 - Quyền: cần quyền `imports`. Phiếu nhập đã hủy hoặc thiếu giá nhập lịch sử sẽ bị từ chối kèm yêu cầu đối soát.
 - Danh sách Nhập hàng hiện badge `↩ Đã trả N` trên phiếu đã trả; mở chi tiết phiếu để xem lịch sử từng chứng từ trả (mã, thời gian, hàng, số lượng, giá trị, lý do) và tổng đã trả nhà cung cấp.
 
+## Đổi hàng
+
+- **Đổi hàng với khách:** từ chi tiết hóa đơn bán chọn **Đổi hàng** → chọn sản phẩm khách trả lại và sản phẩm đổi lấy, hệ thống đối soát giá trị hai bên và chỉ thu thêm/hoàn lại phần chênh lệch.
+- **Đổi hàng với nhà cung cấp:** từ chi tiết phiếu nhập chọn **Đổi hàng NCC** → chọn máy/sản phẩm trả lại (máy lỗi) và hàng NCC đổi lại; công nợ được cấn trừ và chỉ ghi thu/chi phần chênh lệch.
+- Mỗi lần đổi tạo chứng từ `DH……` liên kết ba chứng từ: chứng từ gốc, phiếu trả và chứng từ thay thế. Toàn bộ chạy trong một giao dịch nên không thể lệch tồn kho hay công nợ; gửi lại cùng request ID không tạo lần đổi thứ hai.
+- Hàng trả về vẫn nhập lại kho như luồng trả hàng hiện tại; người dùng tự ghi chú "lỗi" nếu cần. Đổi hàng không sinh doanh thu/quỹ ảo: phần cấn trừ không được ghi thêm vào doanh thu hoặc chi phí.
+- Ngang giá không phát sinh thu/chi; hàng mới đắt hơn thì khách/NCC trả thêm, rẻ hơn thì hoàn lại.
+
 ## Báo cáo Lãi lỗ
 
 - Trang Báo cáo có thêm tab **Lãi lỗ**: doanh thu thuần − giá vốn hàng bán − chi phí hoạt động = **lợi nhuận trước thuế (tạm tính)**. Số này chưa trừ thuế TNDN, khấu hao và chi phí phân bổ nên được ghi rõ là tạm tính.

@@ -31,6 +31,7 @@ const readable = {
     invoices: ['invoices', 'reports', 'dashboard'],
     imports: ['imports', 'reports', 'dashboard'],
     import_returns: ['imports', 'reports', 'dashboard'],
+    exchanges: ['invoices', 'imports', 'reports', 'dashboard'],
     cashbook: ['cashbook', 'reports'],
     returns: ['invoices', 'reports', 'dashboard'],
     stocktakes: ['stocktakes'],

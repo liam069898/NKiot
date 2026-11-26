@@ -10,6 +10,7 @@ const CODE_PREFIXES = {
     HD: { table: 'invoices', minPad: 6 },
     PN: { table: 'imports', minPad: 6 },
     PTN: { table: 'import_returns', minPad: 6 },
+    DH: { table: 'exchanges', minPad: 6 },
     PCH: { table: 'transfers', minPad: 6 },
     PKK: { table: 'stocktakes', minPad: 6 },
     TH: { table: 'returns', minPad: 6 },

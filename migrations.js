@@ -372,6 +372,38 @@ const MIGRATIONS = [
             // Bản 14 đầu tiên tạo bảng thiếu `extra`; bổ sung cho DB đã chạy migration đó.
             addColumn(db, 'import_returns', "extra TEXT NOT NULL DEFAULT '{}'");
         }
+    },
+    {
+        version: 16,
+        name: 'exchanges',
+        up(db) {
+            // Đổi hàng: một chứng từ liên kết bộ ba (chứng từ gốc, phiếu trả, chứng từ thay thế).
+            // `items` là hàng trả, `exchangeItems` là hàng nhận thay thế.
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS exchanges (
+                    id TEXT PRIMARY KEY,
+                    code TEXT,
+                    type TEXT,
+                    sourceCode TEXT,
+                    returnCode TEXT,
+                    exchangeCode TEXT,
+                    items TEXT,
+                    exchangeItems TEXT,
+                    returnValue REAL DEFAULT 0,
+                    exchangeValue REAL DEFAULT 0,
+                    debtReduction REAL DEFAULT 0,
+                    credit REAL DEFAULT 0,
+                    net REAL DEFAULT 0,
+                    method TEXT,
+                    reason TEXT,
+                    cashier TEXT,
+                    branch TEXT
+                );
+                CREATE INDEX IF NOT EXISTS exchanges_source ON exchanges(sourceCode);
+            `);
+            // Mọi bảng entity phải có cột `extra` (xem assertReadableRecords trong db.js).
+            addColumn(db, 'exchanges', "extra TEXT NOT NULL DEFAULT '{}'");
+        }
     }
 ];
 

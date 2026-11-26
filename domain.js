@@ -187,6 +187,7 @@ function averageCost(stock, cost, qty, price) {
 function sale(data, user, input, options = {}) {
     requirePermission(user, options.permission || 'pos');
     const cod = options.cod === true || input.cod === true;
+    const exchange = options.exchange === true;
     const channel = options.channel || (cod ? 'delivery' : 'counter');
     const br = branch(data, user, input.branch);
     if (!Array.isArray(input.items) || !input.items.length) fail('Giỏ hàng trống.');
@@ -292,7 +293,7 @@ function sale(data, user, input, options = {}) {
         ];
     }
 
-    if (!cod && retail && paid < total)
+    if (!cod && !exchange && retail && paid < total)
         fail('Khách lẻ chưa trả đủ tiền. Hãy chọn khách hàng để ghi nợ.');
 
     const distinctMethods = new Set(finalPayments.filter((p) => p.amount > 0).map((p) => p.method));
@@ -336,7 +337,7 @@ function sale(data, user, input, options = {}) {
         cust.points = amount(cust.points + Math.floor(total / 100000));
         if (!cod) cust.debt = amount(cust.debt + total - paid);
     }
-    if (finalPayments.length > 1) {
+    if (!exchange && finalPayments.length > 1) {
         for (const p of finalPayments) {
             if (p.amount > 0) {
                 voucher(data, {
@@ -352,7 +353,7 @@ function sale(data, user, input, options = {}) {
                 });
             }
         }
-    } else {
+    } else if (!exchange) {
         voucher(data, {
             type: 'thu',
             category: 'Bán hàng',
@@ -824,6 +825,18 @@ function applyReturnedStock(p, qty, imeis) {
     }
 }
 
+// Dư nợ thực tế còn lại của một phiếu nhập:
+// cần trả − đã trả − phần nợ đã cấn trừ qua các lần trả hàng nhập.
+// Dùng chung cho trả hàng nhập và thanh toán nợ NCC để không tính trùng khi trả nhiều đợt.
+function importOutstandingDebt(data, imp) {
+    const paid = amount(imp.paid || 0);
+    const needPay = amount(imp.needPay || 0);
+    const reduced = (data.import_returns || [])
+        .filter((r) => r && r.importCode === imp.code)
+        .reduce((sum, r) => sum + (Number(r.debtReduced) || 0), 0);
+    return Math.max(0, needPay - paid - reduced);
+}
+
 // Trả hàng nhập (một phần hoặc toàn bộ) cho nhà cung cấp.
 // Không sửa phiếu nhập gốc: mỗi lần trả là chứng từ riêng trong `import_returns`,
 // nhờ vậy đối chiếu được lịch sử và trả được nhiều đợt.
@@ -896,8 +909,8 @@ function importReturn(data, user, input) {
     });
 
     const totalRefund = amount(items.reduce((sum, row) => sum + row.total, 0));
-    const paid = amount(imp.paid || 0);
-    const unpaid = amount(amount(imp.needPay || 0) - paid);
+    // Dư nợ thực tế sau khi trừ các lần trả trước; tránh cấn trùng công nợ khi trả nhiều đợt.
+    const unpaid = importOutstandingDebt(data, imp);
     // Phần chưa trả nhà cung cấp được cấn trừ trước; phần dư mới là tiền họ hoàn lại.
     const debtReduced = Math.min(unpaid, totalRefund);
     const cashBack = amount(totalRefund - debtReduced);
@@ -972,7 +985,9 @@ function payDebt(data, user, input) {
                       data.customers.filter((c) => c.phone === partner.phone).length === 1))
     );
     const outstanding = (doc) =>
-        Math.max(0, (supplier ? doc.needPay : doc.total - (doc.returnedTotal || 0)) - doc.paid);
+        supplier
+            ? importOutstandingDebt(data, doc)
+            : Math.max(0, doc.total - (doc.returnedTotal || 0) - doc.paid);
     const openingDebt = Math.max(
         0,
         partner.debt - documents.reduce((sum, d) => sum + outstanding(d), 0)
@@ -1966,6 +1981,216 @@ function settleDeliveryCodOrder(data, user, input) {
     return order;
 }
 
+// Đổi hàng với khách: trả lại món đã mua, lấy món khác, bù phần chênh lệch.
+// Chạy toàn bộ trong một transaction: gọi returnGoods và sale nội bộ, nếu bước sau
+// thất bại thì toàn bộ bị rollback nên không thể lệch kho/công nợ.
+function exchangeSale(data, user, input) {
+    requirePermission(user, 'invoices');
+    const inv = data.invoices.find((i) => i.id === input.invoiceId || i.code === input.invoiceId);
+    if (!inv) fail('Không tìm thấy hóa đơn để đổi hàng.');
+    branch(data, user, branchOf(inv));
+    if (inv.status === 'cancelled') fail('Hóa đơn đã hủy; không đổi hàng được.', 409);
+    if (!Array.isArray(input.returnItems) || !input.returnItems.length)
+        fail('Chọn ít nhất một sản phẩm khách trả lại.');
+    if (!Array.isArray(input.exchangeItems) || !input.exchangeItems.length)
+        fail('Chọn ít nhất một sản phẩm khách đổi lấy.');
+
+    const br = branchOf(inv);
+    const method = paymentMethod(input.method || 'cash');
+
+    // 1. Trả lại hàng cũ (sinh phiếu TH, hoàn kho, giảm nợ, hoàn tiền nếu có).
+    const ret = returnGoods(
+        data,
+        user,
+        {
+            invoiceId: inv.id,
+            items: input.returnItems,
+            refundMethod: input.method || 'cash',
+            reason: (input.reason || 'Đổi hàng').slice(0, 500)
+        },
+        false,
+        true
+    );
+
+    // 2. Bán hàng mới (trừ kho, ghi doanh thu mới). Giá trị chênh lệch xử lý ở dưới.
+    const newInv = sale(
+        data,
+        user,
+        {
+            branch: br,
+            items: input.exchangeItems,
+            customerId: inv.customerId || undefined,
+            discount: 0,
+            given: 0,
+            paymentMethod: method,
+            note: `Đổi hàng từ ${inv.code}`
+        },
+        {
+            permission: 'invoices',
+            channel: inv.channel === 'delivery' ? 'delivery' : 'counter',
+            exchange: true
+        }
+    );
+
+    const returnValue = amount(ret.returnValue ?? ret.totalRefund ?? 0);
+    const exchangeValue = amount(newInv.total);
+    const credit = Math.min(returnValue, exchangeValue);
+    const net = exchangeValue - returnValue;
+
+    // 3. Chốt thanh toán chênh lệch, không ghi nhầm doanh thu/quỹ.
+    if (net > 0) {
+        newInv.paid = amount(net);
+        newInv.redPaid = false;
+        if (!Array.isArray(newInv.payments)) newInv.payments = [];
+        newInv.payments.push({ amount: net, method, ...timestamp() });
+        voucher(data, {
+            type: 'thu',
+            category: 'Thu bù đổi hàng',
+            value: net,
+            person: inv.customer,
+            method,
+            branch: br,
+            invoiceId: newInv.id,
+            note: `Thu thêm đổi hàng ${newInv.code} (từ ${inv.code})`
+        });
+    } else if (net < 0) {
+        newInv.paid = 0;
+        newInv.redPaid = false;
+        voucher(data, {
+            type: 'chi',
+            category: 'Hoàn tiền đổi hàng',
+            value: -net,
+            person: inv.customer,
+            method,
+            branch: br,
+            invoiceId: newInv.id,
+            note: `Hoàn thêm đổi hàng ${newInv.code} (từ ${inv.code})`
+        });
+    } else {
+        newInv.paid = 0;
+        newInv.redPaid = false;
+    }
+
+    const id = code(data, 'DH');
+    const record = {
+        id,
+        code: id,
+        type: 'sale',
+        sourceCode: inv.code,
+        returnCode: ret.code,
+        exchangeCode: newInv.code,
+        items: ret.items,
+        exchangeItems: newInv.items,
+        returnValue,
+        exchangeValue,
+        debtReduction: amount(ret.debtReduction || 0),
+        credit,
+        net,
+        method: methodLabel(method),
+        reason: (input.reason || 'Đổi hàng').slice(0, 500),
+        cashier: user.name || '',
+        branch: br,
+        ...timestamp()
+    };
+    if (!Array.isArray(data.exchanges)) data.exchanges = [];
+    data.exchanges.unshift(record);
+    return record;
+}
+
+// Đổi hàng với nhà cung cấp: trả máy lỗi, nhận máy/sản phẩm thay thế, bù chênh lệch.
+// Cũng chạy nguyên tử: gọi importReturn và importGoods nội bộ trong cùng transaction.
+function exchangeImport(data, user, input) {
+    requirePermission(user, 'imports');
+    const imp = data.imports.find((i) => i.id === input.importId || i.code === input.importId);
+    if (!imp) fail('Không tìm thấy phiếu nhập để đổi hàng.');
+    branch(data, user, branchOf(imp));
+    if (imp.status === 'cancelled') fail('Phiếu nhập đã hủy; không đổi hàng được.', 409);
+    if (!Array.isArray(input.returnItems) || !input.returnItems.length)
+        fail('Chọn ít nhất một sản phẩm trả lại NCC.');
+    if (!Array.isArray(input.exchangeItems) || !input.exchangeItems.length)
+        fail('Chọn ít nhất một sản phẩm NCC đổi lại.');
+
+    const br = branchOf(imp);
+    const method = paymentMethod(input.method || 'transfer');
+
+    // 1. Trả hàng NCC (trừ kho, cấn nợ, sinh phiếu thu nếu NCC hoàn tiền).
+    const ret = importReturn(data, user, {
+        importId: imp.id,
+        items: input.returnItems,
+        refundMethod: input.method || 'transfer',
+        reason: (input.reason || 'Đổi hàng NCC').slice(0, 500)
+    });
+
+    // 2. Nhập hàng thay thế (cộng kho, tăng công nợ/tổng mua).
+    const newImp = importGoods(data, user, {
+        branch: br,
+        supplierCode: imp.nccCode,
+        items: input.exchangeItems,
+        paid: 0,
+        paymentMethod: input.method || 'transfer',
+        note: `Đổi hàng từ ${imp.code}`
+    });
+
+    const returnValue = amount(ret.totalRefund);
+    const exchangeValue = amount(newImp.needPay);
+    const credit = Math.min(returnValue, exchangeValue);
+    const net = exchangeValue - returnValue;
+
+    // 3. Chốt thanh toán chênh lệch.
+    if (net > 0) {
+        newImp.paid = amount(net);
+        voucher(data, {
+            type: 'chi',
+            category: 'Chi bù đổi hàng NCC',
+            value: net,
+            person: newImp.nccName || imp.nccName || 'Nhà cung cấp',
+            method,
+            branch: br,
+            importId: newImp.id,
+            note: `Chi thêm đổi hàng ${newImp.code} (từ ${imp.code})`
+        });
+    } else if (net < 0) {
+        newImp.paid = 0;
+        voucher(data, {
+            type: 'thu',
+            category: 'Thu bù đổi hàng NCC',
+            value: -net,
+            person: newImp.nccName || imp.nccName || 'Nhà cung cấp',
+            method,
+            branch: br,
+            importId: newImp.id,
+            note: `NCC hoàn thêm đổi hàng ${newImp.code} (từ ${imp.code})`
+        });
+    } else {
+        newImp.paid = 0;
+    }
+
+    const id = code(data, 'DH');
+    const record = {
+        id,
+        code: id,
+        type: 'import',
+        sourceCode: imp.code,
+        returnCode: ret.code,
+        exchangeCode: newImp.code,
+        items: ret.items,
+        exchangeItems: newImp.items,
+        returnValue,
+        exchangeValue,
+        debtReduction: amount(ret.debtReduced || 0),
+        credit,
+        net,
+        method: methodLabel(method),
+        reason: (input.reason || 'Đổi hàng NCC').slice(0, 500),
+        cashier: user.name || '',
+        branch: br,
+        ...timestamp()
+    };
+    if (!Array.isArray(data.exchanges)) data.exchanges = [];
+    data.exchanges.unshift(record);
+    return record;
+}
+
 function execute(data, user, type, input) {
     if (!input || typeof input !== 'object' || Array.isArray(input))
         fail('Nội dung thao tác không hợp lệ.');
@@ -2072,6 +2297,32 @@ function execute(data, user, type, input) {
                 createdAt: rImp.createdAt
             });
             return rImp;
+        }
+        case 'exchange_sale': {
+            const ex = exchangeSale(data, user, input);
+            recordActivity(data, {
+                type: 'exchange',
+                title: user.name || ex.cashier || 'Thu ngân',
+                action: `Đổi hàng khách ${ex.code} (${ex.sourceCode} → ${ex.exchangeCode})${ex.net ? `, bù ${ex.net > 0 ? '+' : '-'}${ex.net !== 0 ? Math.abs(ex.net).toLocaleString('vi-VN') : '0'} đ` : ''}`,
+                val: ex.net,
+                branch: ex.branch,
+                time: ex.time,
+                createdAt: ex.createdAt
+            });
+            return ex;
+        }
+        case 'exchange_import': {
+            const ex = exchangeImport(data, user, input);
+            recordActivity(data, {
+                type: 'exchange',
+                title: user.name || ex.cashier || 'Quản lý kho',
+                action: `Đổi hàng NCC ${ex.code} (${ex.sourceCode} → ${ex.exchangeCode})${ex.net ? `, bù ${ex.net > 0 ? '+' : '-'}${ex.net !== 0 ? Math.abs(ex.net).toLocaleString('vi-VN') : '0'} đ` : ''}`,
+                val: ex.net,
+                branch: ex.branch,
+                time: ex.time,
+                createdAt: ex.createdAt
+            });
+            return ex;
         }
         case 'debt': {
             const res = payDebt(data, user, input);
@@ -2210,5 +2461,7 @@ module.exports = {
     productHasHistory,
     cancelDeliveryOrder,
     returnDeliveryOrder,
-    importReturn
+    importReturn,
+    exchangeSale,
+    exchangeImport
 };

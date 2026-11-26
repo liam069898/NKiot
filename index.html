@@ -9318,6 +9318,297 @@
             </div>
         </div>
 
+        <!-- 4.4 EXCHANGE MODAL (ĐỔI HÀNG) -->
+        <div
+            id="exchange-modal"
+            class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[110] flex items-center justify-center p-4"
+        >
+            <div
+                class="bg-white/95 backdrop-blur-2xl rounded-2xl shadow-2xl max-w-4xl w-full p-5 sm:p-6 max-h-[92vh] flex flex-col border border-white/80"
+            >
+                <div
+                    class="flex justify-between items-center mb-3 border-b border-gray-100/80 pb-2.5"
+                >
+                    <div>
+                        <h2 class="font-bold text-[17px] text-gray-900 tracking-tight">Đổi hàng</h2>
+                        <div class="text-[12px] text-gray-500 mt-0.5">
+                            Từ hóa đơn:
+                            <strong id="ex-src-code" class="text-[#0066cc]"></strong> ·
+                            <span id="ex-src-customer" class="font-medium text-gray-800"></span>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onclick="document.getElementById('exchange-modal').classList.add('hidden')"
+                        class="w-8 h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
+                        aria-label="Đóng"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div class="overflow-y-auto flex-1 pr-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Hàng khách trả -->
+                    <div>
+                        <div class="text-[12.5px] font-semibold text-gray-700 mb-2">
+                            Hàng khách trả lại:
+                        </div>
+                        <div class="border border-orange-200/70 rounded-xl overflow-hidden mb-2">
+                            <table class="w-full text-left text-[12px] border-collapse">
+                                <thead
+                                    class="bg-orange-50/80 text-orange-950 font-semibold border-b border-orange-200"
+                                >
+                                    <tr>
+                                        <th class="py-2 px-2 text-center w-8">Chọn</th>
+                                        <th class="py-2 px-2">Sản phẩm</th>
+                                        <th class="py-2 px-2 text-center w-14">SL trả</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ex-return-tbody"></tbody>
+                            </table>
+                        </div>
+
+                        <div class="text-[12.5px] font-semibold text-gray-700 mb-2">
+                            Hàng khách đổi lấy:
+                        </div>
+                        <div class="border border-violet-200/70 rounded-xl overflow-hidden mb-2">
+                            <table class="w-full text-left text-[12px] border-collapse">
+                                <thead
+                                    class="bg-violet-50/80 text-violet-950 font-semibold border-b border-violet-200"
+                                >
+                                    <tr>
+                                        <th class="py-2 px-2">Sản phẩm</th>
+                                        <th class="py-2 px-2 text-center w-14">SL</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ex-exchange-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input
+                                id="ex-product-search"
+                                type="text"
+                                placeholder="Tìm hàng để đổi..."
+                                oninput="filterExchangeProducts()"
+                                class="flex-1 border border-gray-200/85 rounded-xl px-3 py-1.5 text-[12.5px] focus:outline-none focus:border-[#0066cc]"
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Đối soát -->
+                    <div class="bg-gray-50/70 rounded-xl p-3.5 text-[13px] space-y-2">
+                        <div class="text-[12px] font-bold text-gray-500 uppercase tracking-wider">
+                            Đối soát đổi hàng
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Giá trị hàng trả:</span>
+                            <span id="ex-return-value" class="font-semibold text-orange-600"
+                                >0 đ</span
+                            >
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Giá trị hàng đổi:</span>
+                            <span id="ex-exchange-value" class="font-semibold text-violet-600"
+                                >0 đ</span
+                            >
+                        </div>
+                        <div class="border-t border-gray-200 my-1"></div>
+                        <div class="flex justify-between font-bold text-[14px]">
+                            <span id="ex-net-label" class="text-gray-800">Chênh lệch:</span>
+                            <span id="ex-net-value" class="text-gray-900">0 đ</span>
+                        </div>
+                        <div class="pt-2">
+                            <label class="block font-medium text-gray-700 mb-1"
+                                >Hình thức thanh toán</label
+                            >
+                            <select
+                                id="ex-method"
+                                class="w-full border border-gray-200/85 rounded-xl px-3 py-2 bg-white font-medium text-gray-800 focus:outline-none focus:border-[#0066cc]"
+                            >
+                                <option value="cash">Tiền mặt</option>
+                                <option value="transfer">Chuyển khoản</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-medium text-gray-700 mb-1">Lý do</label>
+                            <input
+                                id="ex-reason"
+                                type="text"
+                                placeholder="Lý do đổi hàng..."
+                                class="w-full border border-gray-200/85 rounded-xl px-3 py-2 focus:outline-none focus:border-[#0066cc]"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-2.5 pt-4 border-t border-gray-100/80 mt-3">
+                    <button
+                        type="button"
+                        onclick="document.getElementById('exchange-modal').classList.add('hidden')"
+                        class="glass-btn-secondary px-4.5 py-2 text-gray-700 hover:text-gray-900 rounded-xl font-medium text-[13px] transition"
+                    >
+                        Hủy bỏ
+                    </button>
+                    <button
+                        type="button"
+                        onclick="submitExchange()"
+                        class="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-bold text-[13px] transition"
+                    >
+                        Xác nhận đổi hàng
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4.5 IMPORT EXCHANGE MODAL (ĐỔI HÀNG NCC) -->
+        <div
+            id="import-exchange-modal"
+            class="kv-modal hidden fixed inset-0 bg-black/40 backdrop-blur-md z-[110] flex items-center justify-center p-4"
+        >
+            <div
+                class="bg-white/95 backdrop-blur-2xl rounded-2xl shadow-2xl max-w-3xl w-full p-5 sm:p-6 max-h-[92vh] flex flex-col border border-white/80"
+            >
+                <div
+                    class="flex justify-between items-center mb-3 border-b border-gray-100/80 pb-2.5"
+                >
+                    <div>
+                        <h2 class="font-bold text-[17px] text-gray-900 tracking-tight">
+                            Đổi hàng với nhà cung cấp
+                        </h2>
+                        <div class="text-[12px] text-gray-500 mt-0.5">
+                            Từ phiếu nhập:
+                            <strong id="imex-src-code" class="text-[#0066cc]"></strong> ·
+                            <span id="imex-src-supplier" class="font-medium text-gray-800"></span>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onclick="
+                            document.getElementById('import-exchange-modal').classList.add('hidden')
+                        "
+                        class="w-8 h-8 rounded-full bg-gray-100/80 hover:bg-gray-200/80 text-gray-500 hover:text-gray-800 flex items-center justify-center font-bold text-sm transition"
+                        aria-label="Đóng"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div class="overflow-y-auto flex-1 pr-1 space-y-3">
+                    <div>
+                        <div class="text-[12.5px] font-semibold text-gray-700 mb-2">
+                            Hàng trả lại NCC (máy lỗi):
+                        </div>
+                        <div class="border border-orange-200/70 rounded-xl overflow-hidden">
+                            <table class="w-full text-left text-[12px] border-collapse">
+                                <thead
+                                    class="bg-orange-50/80 text-orange-950 font-semibold border-b border-orange-200"
+                                >
+                                    <tr>
+                                        <th class="py-2 px-2 text-center w-8">Chọn</th>
+                                        <th class="py-2 px-2">Sản phẩm / IMEI</th>
+                                        <th class="py-2 px-2 text-center w-14">SL</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="imex-return-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-[12.5px] font-semibold text-gray-700 mb-2">
+                            Hàng NCC đổi lại:
+                        </div>
+                        <div class="border border-violet-200/70 rounded-xl overflow-hidden">
+                            <table class="w-full text-left text-[12px] border-collapse">
+                                <thead
+                                    class="bg-violet-50/80 text-violet-950 font-semibold border-b border-violet-200"
+                                >
+                                    <tr>
+                                        <th class="py-2 px-2">Sản phẩm</th>
+                                        <th class="py-2 px-2 text-center w-14">SL</th>
+                                        <th class="py-2 px-2 text-right w-24">Giá nhập</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="imex-exchange-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="flex items-center gap-2 mt-2">
+                            <input
+                                id="imex-product-search"
+                                type="text"
+                                placeholder="Tìm hàng để đổi..."
+                                oninput="filterImportExchangeProducts()"
+                                class="flex-1 border border-gray-200/85 rounded-xl px-3 py-1.5 text-[12.5px] focus:outline-none focus:border-[#0066cc]"
+                            />
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50/70 rounded-xl p-3.5 text-[13px] space-y-2">
+                        <div class="text-[12px] font-bold text-gray-500 uppercase tracking-wider">
+                            Đối soát đổi hàng NCC
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Giá trị hàng trả:</span>
+                            <span id="imex-return-value" class="font-semibold text-orange-600"
+                                >0 đ</span
+                            >
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Giá trị hàng nhận:</span>
+                            <span id="imex-exchange-value" class="font-semibold text-violet-600"
+                                >0 đ</span
+                            >
+                        </div>
+                        <div class="border-t border-gray-200 my-1"></div>
+                        <div class="flex justify-between font-bold text-[14px]">
+                            <span class="text-gray-800">Chênh lệch:</span>
+                            <span id="imex-net-value" class="text-gray-900">0 đ</span>
+                        </div>
+                        <div class="pt-2">
+                            <label class="block font-medium text-gray-700 mb-1"
+                                >Hình thức thanh toán</label
+                            >
+                            <select
+                                id="imex-method"
+                                class="w-full border border-gray-200/85 rounded-xl px-3 py-2 bg-white font-medium text-gray-800 focus:outline-none focus:border-[#0066cc]"
+                            >
+                                <option value="transfer">Chuyển khoản</option>
+                                <option value="cash">Tiền mặt</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-medium text-gray-700 mb-1">Lý do</label>
+                            <input
+                                id="imex-reason"
+                                type="text"
+                                placeholder="Lý do đổi hàng..."
+                                class="w-full border border-gray-200/85 rounded-xl px-3 py-2 focus:outline-none focus:border-[#0066cc]"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-2.5 pt-4 border-t border-gray-100/80 mt-3">
+                    <button
+                        type="button"
+                        onclick="
+                            document.getElementById('import-exchange-modal').classList.add('hidden')
+                        "
+                        class="glass-btn-secondary px-4.5 py-2 text-gray-700 hover:text-gray-900 rounded-xl font-medium text-[13px] transition"
+                    >
+                        Hủy bỏ
+                    </button>
+                    <button
+                        type="button"
+                        onclick="submitImportExchange()"
+                        class="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-bold text-[13px] transition"
+                    >
+                        Xác nhận đổi hàng
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- 5. STORE SETTINGS & VIETQR MODAL -->
         <div
             id="settings-modal"
