@@ -2905,6 +2905,445 @@ test('exchange_sale settles the difference as extra payment or refund', () => {
         1
     );
 });
+// Đổi hàng chỉ được ghi quỹ đúng phần chênh lệch thật; phần hàng trả là cấn trừ, không sinh
+// phiếu thu/chi ảo và không được làm công nợ khách/NCC lệch khỏi dư nợ tính từ chứng từ.
+const cashFund = () =>
+    db.getAllData().cashbook.reduce((sum, c) => sum + (c.type === 'thu' ? c.amount : -c.amount), 0);
+const customerDebtFromDocs = () =>
+    db
+        .getAllData()
+        .invoices.reduce(
+            (sum, i) => sum + Math.max(0, i.total - (i.returnedTotal || 0) - i.paid),
+            0
+        );
+const supplierDebtFromDocs = () => {
+    const data = db.getAllData();
+    return data.imports.reduce((sum, i) => {
+        const reduced = data.import_returns
+            .filter((r) => r.importCode === i.code)
+            .reduce((n, r) => n + (r.debtReduced || 0), 0);
+        return sum + Math.max(0, i.needPay - i.paid - reduced);
+    }, 0);
+};
+
+test('exchange_sale never books phantom refunds or debt for a paid invoice', () => {
+    const sold = command('sale', {
+        branch: 'A',
+        customerId: 'C',
+        items: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        given: 100000,
+        paymentMethod: 'cash'
+    }).result;
+    assert.equal(cashFund(), 100000);
+
+    const ex = command('exchange_sale', {
+        invoiceId: sold.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        exchangeItems: [{ code: 'SP', qty: 1, imeis: ['I2'] }],
+        method: 'cash'
+    }).result;
+
+    assert.equal(ex.net, 0);
+    // Không có khoản hoàn tiền nào vì khách chỉ đổi máy, không lấy lại tiền.
+    assert.equal(cashFund(), 100000);
+    assert.deepEqual(
+        db.getAllData().cashbook.filter((c) => c.category.includes('đổi hàng')),
+        []
+    );
+    const data = db.getAllData();
+    assert.equal(data.customers.find((c) => c.id === 'C').debt, 0);
+    const newInv = data.invoices.find((i) => i.code === ex.exchangeCode);
+    assert.equal(newInv.paid, 100000);
+    assert.equal(newInv.redPaid, false);
+    assert.equal(data.customers.find((c) => c.id === 'C').debt, customerDebtFromDocs());
+    assert.equal(ex.customerId, 'C');
+});
+
+test('exchange_sale charges only the difference on upgrade and refunds only the difference on downgrade', () => {
+    const data0 = db.getAllData();
+    data0.products.push({
+        id: 'SP2',
+        code: 'SP2',
+        name: 'Product 2',
+        branch: 'A',
+        stock: 5,
+        price: 150000,
+        costPrice: 80000,
+        unit: 'Chiếc',
+        category: 'Test',
+        status: 'active',
+        hasImei: false,
+        imeis: [],
+        minStock: 0
+    });
+    db.saveAllData(data0);
+
+    // Đổi lên: khách chỉ trả thêm 50.000, quỹ tăng đúng 50.000.
+    const up = command('sale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        given: 100000,
+        paymentMethod: 'cash'
+    }).result;
+    const exUp = command('exchange_sale', {
+        invoiceId: up.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        exchangeItems: [{ code: 'SP2', qty: 1 }],
+        method: 'cash'
+    }).result;
+    assert.equal(exUp.net, 50000);
+    assert.equal(cashFund(), 150000);
+    const newInv = db.getAllData().invoices.find((i) => i.code === exUp.exchangeCode);
+    assert.equal(newInv.total, 150000);
+    assert.equal(newInv.paid, 150000);
+    assert.equal(newInv.redPaid, false);
+
+    // Đổi xuống: chỉ hoàn 50.000, không hoàn lại toàn bộ 150.000 đã thu.
+    const down = command('sale', {
+        branch: 'A',
+        items: [{ code: 'SP2', qty: 1 }],
+        given: 150000,
+        paymentMethod: 'cash'
+    }).result;
+    const exDown = command('exchange_sale', {
+        invoiceId: down.code,
+        returnItems: [{ code: 'SP2', qty: 1 }],
+        exchangeItems: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        method: 'cash'
+    }).result;
+    assert.equal(exDown.net, -50000);
+    // Quỹ: 100k (bán SP) + 50k (khách bù) + 150k (bán SP2) - 50k (hoàn) = 250k.
+    assert.equal(cashFund(), 250000);
+    const refunds = db.getAllData().cashbook.filter((c) => c.category === 'Hoàn tiền đổi hàng');
+    assert.equal(refunds.length, 1);
+    assert.equal(refunds[0].amount, 50000);
+});
+
+test('exchange_sale keeps customer debt equal to the debt of its documents', () => {
+    // Hóa đơn gốc còn nợ 100.000, đổi máy ngang giá: khách vẫn nợ đúng 100.000 (không xóa nợ).
+    const sold = command('sale', {
+        branch: 'A',
+        customerId: 'C',
+        items: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        given: 0,
+        paymentMethod: 'cash'
+    }).result;
+    assert.equal(db.getAllData().customers.find((c) => c.id === 'C').debt, 100000);
+
+    command('exchange_sale', {
+        invoiceId: sold.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        exchangeItems: [{ code: 'SP', qty: 1, imeis: ['I2'] }],
+        method: 'cash'
+    });
+    let cust = db.getAllData().customers.find((c) => c.id === 'C');
+    assert.equal(cust.debt, 100000);
+    assert.equal(cust.debt, customerDebtFromDocs());
+    assert.equal(cashFund(), 0);
+
+    // Đổi lên trên hóa đơn đã trả đủ: chỉ phần chênh lệch còn nợ, khớp hóa đơn gốc.
+    const data0 = db.getAllData();
+    data0.products.push({
+        id: 'SP3',
+        code: 'SP3',
+        name: 'Product 3',
+        branch: 'A',
+        stock: 2,
+        price: 150000,
+        costPrice: 80000,
+        unit: 'Chiếc',
+        category: 'Test',
+        status: 'active',
+        hasImei: false,
+        imeis: [],
+        minStock: 0
+    });
+    db.saveAllData(data0);
+    const paid = command('sale', {
+        branch: 'A',
+        customerId: 'C',
+        items: [{ code: 'SP', qty: 1, imeis: ['I3'] }],
+        given: 100000,
+        paymentMethod: 'cash'
+    }).result;
+    command('exchange_sale', {
+        invoiceId: paid.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I3'] }],
+        exchangeItems: [{ code: 'SP3', qty: 1 }],
+        method: 'cash'
+    });
+    cust = db.getAllData().customers.find((c) => c.id === 'C');
+    assert.equal(cust.debt, 100000);
+    assert.equal(cust.debt, customerDebtFromDocs());
+});
+
+test('exchange_import settles supplier debt with the difference only', () => {
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 2, price: 50000, imeis: ['I4', 'I5'] }],
+        paid: 100000,
+        paymentMethod: 'bank'
+    }).result;
+    assert.equal(cashFund(), -100000);
+
+    // Ngang giá: quỹ và công nợ không đổi, không sinh phiếu thu/chi ảo.
+    command('exchange_import', {
+        importId: imported.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I4'] }],
+        exchangeItems: [{ code: 'SP', qty: 1, price: 50000, imeis: ['I6'] }],
+        method: 'transfer'
+    });
+    assert.equal(cashFund(), -100000);
+    const supplier = db.getAllData().suppliers.find((s) => s.id === 'S');
+    assert.equal(supplier.debt, 0);
+    assert.equal(supplier.debt, supplierDebtFromDocs());
+    assert.deepEqual(
+        db.getAllData().cashbook.filter((c) => c.category.includes('đổi hàng')),
+        []
+    );
+});
+
+test('exchange_import charges or receives only the difference and keeps supplier debt consistent', () => {
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 2, price: 50000, imeis: ['I4', 'I5'] }],
+        paid: 100000,
+        paymentMethod: 'bank'
+    }).result;
+
+    // Máy đổi giá cao hơn 20.000: chỉ chi thêm 20.000.
+    command('exchange_import', {
+        importId: imported.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I4'] }],
+        exchangeItems: [{ code: 'SP', qty: 1, price: 70000, imeis: ['I6'] }],
+        method: 'transfer'
+    });
+    assert.equal(cashFund(), -120000);
+    let supplier = db.getAllData().suppliers.find((s) => s.id === 'S');
+    assert.equal(supplier.debt, 0);
+    assert.equal(supplier.debt, supplierDebtFromDocs());
+
+    // Phiếu nhập còn nợ: đổi ngang giá không được xóa nợ cũ.
+    const unpaid = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 1, price: 50000, imeis: ['I7'] }],
+        paid: 0,
+        paymentMethod: 'bank'
+    }).result;
+    assert.equal(db.getAllData().suppliers.find((s) => s.id === 'S').debt, 50000);
+    command('exchange_import', {
+        importId: unpaid.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I7'] }],
+        exchangeItems: [{ code: 'SP', qty: 1, price: 50000, imeis: ['I8'] }],
+        method: 'transfer'
+    });
+    supplier = db.getAllData().suppliers.find((s) => s.id === 'S');
+    assert.equal(supplier.debt, 50000);
+    assert.equal(supplier.debt, supplierDebtFromDocs());
+    assert.equal(cashFund(), -120000);
+});
+test('exchange_sale honours an edited sale price and requires the posPrice permission', () => {
+    const sold = command('sale', {
+        branch: 'A',
+        items: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        given: 100000,
+        paymentMethod: 'cash'
+    }).result;
+    const data0 = db.getAllData();
+    data0.products.push({
+        id: 'SP2',
+        code: 'SP2',
+        name: 'Product 2',
+        branch: 'A',
+        stock: 5,
+        price: 150000,
+        costPrice: 80000,
+        unit: 'Chiếc',
+        category: 'Test',
+        status: 'active',
+        hasImei: false,
+        imeis: [],
+        minStock: 0
+    });
+    db.saveAllData(data0);
+
+    // Sửa giá đổi thành 120.000: hóa đơn mới ghi đúng giá đó, khách chỉ bù 20.000.
+    const ex = command('exchange_sale', {
+        invoiceId: sold.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I1'] }],
+        exchangeItems: [{ code: 'SP2', qty: 1, salePrice: 120000 }],
+        method: 'cash'
+    }).result;
+    assert.equal(ex.exchangeValue, 120000);
+    assert.equal(ex.net, 20000);
+    assert.equal(cashFund(), 120000);
+    const newInv = db.getAllData().invoices.find((i) => i.code === ex.exchangeCode);
+    assert.equal(newInv.items[0].price, 120000);
+    assert.equal(newInv.items[0].total, 120000);
+    assert.equal(newInv.paid, 120000);
+
+    // Nhân viên không có quyền `posPrice` không được tự đổi giá.
+    const cashier = {
+        ...admin,
+        id: 'CASHIER2',
+        code: 'CASHIER2',
+        username: 'cashier2',
+        role: 'cashier',
+        branch: 'A',
+        branches: ['A'],
+        permissions: { invoices: true, pos: true }
+    };
+    const data1 = db.getAllData();
+    data1.users.push(cashier);
+    db.saveAllData(data1);
+    const savedAdmin = admin;
+    admin = db.getAllData().users.find((u) => u.id === 'CASHIER2');
+    try {
+        const sold2 = command('sale', {
+            branch: 'A',
+            items: [{ code: 'SP', qty: 1, imeis: ['I2'] }],
+            given: 100000,
+            paymentMethod: 'cash'
+        }).result;
+        assert.throws(
+            () =>
+                command('exchange_sale', {
+                    invoiceId: sold2.code,
+                    returnItems: [{ code: 'SP', qty: 1, imeis: ['I2'] }],
+                    exchangeItems: [{ code: 'SP2', qty: 1, salePrice: 100000 }],
+                    method: 'cash'
+                }),
+            { status: 403 }
+        );
+    } finally {
+        admin = savedAdmin;
+    }
+});
+
+test('exchange on a partly-unpaid document only moves real money', () => {
+    const data0 = db.getAllData();
+    for (const [code, price] of [
+        ['X100', 100000],
+        ['X150', 150000]
+    ])
+        data0.products.push({
+            id: code,
+            code,
+            name: code,
+            branch: 'A',
+            stock: 5,
+            price,
+            costPrice: 10000,
+            unit: 'Chiếc',
+            category: 'Test',
+            status: 'active',
+            hasImei: false,
+            imeis: [],
+            minStock: 0
+        });
+    db.saveAllData(data0);
+
+    // Hóa đơn 150k còn nợ toàn bộ, đổi xuống 100k: không được chi tiền cho khách.
+    const unpaid = command('sale', {
+        branch: 'A',
+        customerId: 'C',
+        items: [{ code: 'X150', qty: 1 }],
+        given: 0,
+        paymentMethod: 'cash'
+    }).result;
+    command('exchange_sale', {
+        invoiceId: unpaid.code,
+        returnItems: [{ code: 'X150', qty: 1 }],
+        exchangeItems: [{ code: 'X100', qty: 1 }],
+        method: 'cash'
+    });
+    assert.equal(cashFund(), 0);
+    assert.equal(db.getAllData().customers.find((c) => c.id === 'C').debt, 100000);
+    assert.equal(customerDebtFromDocs(), 100000);
+
+    // Hóa đơn 150k đã trả 50k, đổi xuống 100k: không hoàn tiền, khách còn nợ 50k của hóa đơn mới.
+    const partial = command('sale', {
+        branch: 'A',
+        customerId: 'C',
+        items: [{ code: 'X150', qty: 1 }],
+        given: 50000,
+        paymentMethod: 'cash'
+    }).result;
+    command('exchange_sale', {
+        invoiceId: partial.code,
+        returnItems: [{ code: 'X150', qty: 1 }],
+        exchangeItems: [{ code: 'X100', qty: 1 }],
+        method: 'cash'
+    });
+    assert.equal(cashFund(), 50000);
+    assert.equal(db.getAllData().customers.find((c) => c.id === 'C').debt, 150000);
+    assert.equal(customerDebtFromDocs(), 150000);
+});
+
+test('exchange_import on an unpaid import never books a supplier refund', () => {
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 1, price: 50000, imeis: ['I4'] }],
+        paid: 0,
+        paymentMethod: 'bank'
+    }).result;
+    command('exchange_import', {
+        importId: imported.code,
+        returnItems: [{ code: 'SP', qty: 1, imeis: ['I4'] }],
+        exchangeItems: [{ code: 'SP', qty: 1, price: 30000, imeis: ['I6'] }],
+        method: 'transfer'
+    });
+    assert.equal(cashFund(), 0);
+    const supplier = db.getAllData().suppliers.find((s) => s.id === 'S');
+    assert.equal(supplier.debt, 30000);
+    assert.equal(supplier.debt, supplierDebtFromDocs());
+});
+
+test('return_import ignores a client-supplied settleInCash flag', () => {
+    const imported = command('import', {
+        branch: 'A',
+        supplierCode: 'S',
+        items: [{ code: 'SP', qty: 1, price: 50000, imeis: ['I4'] }],
+        paid: 50000,
+        paymentMethod: 'bank'
+    }).result;
+    command('return_import', {
+        importId: imported.code,
+        items: [{ code: 'SP', qty: 1, imeis: ['I4'] }],
+        refundMethod: 'cash',
+        settleInCash: false
+    });
+    // NCC phải hoàn 50k và phải có phiếu thu, kể cả khi client cố tắt.
+    assert.equal(cashFund(), 0);
+    assert.equal(db.getAllData().cashbook.filter((c) => c.category === 'Trả hàng nhập').length, 1);
+});
+
+test('a normal partial return keeps the invoice paid amount and customer debt consistent', () => {
+    const data0 = db.getAllData();
+    data0.products[0].hasImei = false;
+    data0.products[0].imeis = [];
+    db.saveAllData(data0);
+    const sold = command('sale', {
+        branch: 'A',
+        customerId: 'C',
+        items: [{ code: 'SP', qty: 2 }],
+        given: 40000,
+        paymentMethod: 'cash'
+    }).result;
+    command('return', {
+        invoiceId: sold.code,
+        items: [{ code: 'SP', qty: 1 }],
+        refundMethod: 'cash'
+    });
+    const inv = db.getAllData().invoices.find((i) => i.code === sold.code);
+    assert.equal(inv.paid, 40000);
+    assert.equal(db.getAllData().customers.find((c) => c.id === 'C').debt, 60000);
+    assert.equal(customerDebtFromDocs(), 60000);
+});
 
 test('self-delivery lifecycle: no VTP task, COD settlement books cashbook receipt, returnDelivery restores IMEI, and /api/invoices filters channel', async () => {
     const targetImei = db.getAllData().products[0].imeis[0];

@@ -188,6 +188,8 @@ function sale(data, user, input, options = {}) {
     requirePermission(user, options.permission || 'pos');
     const cod = options.cod === true || input.cod === true;
     const exchange = options.exchange === true;
+    // `deferDebt`: người gọi (đổi hàng) tự chốt công nợ sau khi đã trừ phần cấn/hủy.
+    const deferDebt = options.deferDebt === true;
     const channel = options.channel || (cod ? 'delivery' : 'counter');
     const br = branch(data, user, input.branch);
     if (!Array.isArray(input.items) || !input.items.length) fail('Giỏ hàng trống.');
@@ -335,7 +337,7 @@ function sale(data, user, input, options = {}) {
     if (!retail) {
         cust.totalSpent = amount(cust.totalSpent + total);
         cust.points = amount(cust.points + Math.floor(total / 100000));
-        if (!cod) cust.debt = amount(cust.debt + total - paid);
+        if (!cod && !deferDebt) cust.debt = amount(cust.debt + total - paid);
     }
     if (!exchange && finalPayments.length > 1) {
         for (const p of finalPayments) {
@@ -376,8 +378,11 @@ function lineNet(inv, item) {
     const total = inv.items.reduce((s, i) => s + i.qty * i.price, 0);
     return total ? ratio(amount(item.qty * item.price), inv.total, total, true) : 0;
 }
-function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
+// `options.settleInCash = false`: không chi quỹ phần tiền hàng trả; caller (đổi hàng) cấn trừ
+// `slip.cashRefund` sang chứng từ thay thế. Chỉ gọi nội bộ, client không bật được cờ này.
+function returnGoods(data, user, input, cancel = false, skipPermCheck = false, options = {}) {
     if (!skipPermCheck) requirePermission(user, 'invoices');
+    const settleInCash = options.settleInCash !== false;
     const inv = data.invoices.find((i) => i.id === input.invoiceId || i.code === input.invoiceId);
     if (!inv) fail('Không tìm thấy hóa đơn.');
     branch(data, user, branchOf(inv));
@@ -470,6 +475,9 @@ function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
     const debtReduction = inv.cod ? 0 : Math.min(value, uncollected);
     const codReduction = inv.cod ? Math.min(value, uncollected) : 0;
     const refund = value - debtReduction - codReduction;
+    // Ghi sổ theo giá trị hàng trả thực tế; chỉ phần hoàn bằng tiền mới rời quỹ.
+    // Chế độ cấn trừ (đổi hàng) không chi quỹ; caller cấn `cashRefund` sang chứng từ mới.
+    const settledValue = settleInCash ? refund : 0;
     if (debtReduction && !cust) fail('Không xác định được khách hàng để giảm công nợ.');
     if (cust) {
         cust.debt = Math.max(0, cust.debt - debtReduction);
@@ -481,20 +489,20 @@ function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
                     Math.floor((inv.total - already - value) / 100000))
         );
     }
+    // Phiếu trả lưu dưới dạng tổng tiền hoàn, kèm phần hoàn bằng tiền để đối soát sổ quỹ.
     const fallbackMethod = ['cash', 'transfer', 'card'].includes(inv.paymentMethod)
         ? inv.paymentMethod
         : 'cash';
+    const refundMethod = paymentMethod(input.refundMethod || fallbackMethod);
+    // Chỉ phần khách đã thực trả (refund) rời khỏi hóa đơn gốc; phần giảm nợ không phải tiền.
+    // Đổi hàng: khoản này chuyển sang hóa đơn mới (cấn trừ) thay vì chi ra quỹ.
     if (Array.isArray(inv.payments) && refund)
-        inv.payments.push({
-            amount: -refund,
-            method: input.refundMethod || fallbackMethod,
-            ...timestamp()
-        });
+        inv.payments.push({ amount: -refund, method: refundMethod, ...timestamp() });
     inv.paid = Math.max(0, inv.paid - refund);
     inv.returnedTotal = already + value;
     inv.hasReturned = !!(previous.length || items.length);
     inv.redPaid = inv.total - inv.returnedTotal > inv.paid;
-    const method = paymentMethod(input.refundMethod || fallbackMethod),
+    const method = refundMethod,
         id = code(data, 'TH');
     const slip = {
         id,
@@ -506,7 +514,10 @@ function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
         customerId: cust?.id || null,
         phone: inv.phone,
         items,
-        totalRefund: refund,
+        // `totalRefund`: tiền thực chi ra quỹ (0 khi cấn trừ sang chứng từ đổi hàng).
+        totalRefund: settledValue,
+        // Phần giá trị hàng trả khách đã thực trả tiền (không gồm phần giảm nợ/COD).
+        cashRefund: refund,
         returnValue: value,
         debtReduction,
         refundMethod: methodLabel(method),
@@ -519,7 +530,7 @@ function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
     voucher(data, {
         type: 'chi',
         category: cancel ? 'Hủy hóa đơn' : 'Trả hàng bán',
-        value: refund,
+        value: settledValue,
         person: inv.customer,
         method,
         branch: branchOf(inv),
@@ -536,8 +547,10 @@ function returnGoods(data, user, input, cancel = false, skipPermCheck = false) {
     }
     return slip;
 }
-function importGoods(data, user, input) {
+function importGoods(data, user, input, options = {}) {
     requirePermission(user, 'imports');
+    // `deferDebt`: người gọi (đổi hàng NCC) tự chốt công nợ sau khi đã cấn trừ hàng trả.
+    const deferDebt = options.deferDebt === true;
     const br = branch(data, user, input.branch),
         supplier = data.suppliers.find((s) => s.code === input.supplierCode);
     if (!supplier) fail('Chọn nhà cung cấp hợp lệ.');
@@ -648,7 +661,7 @@ function importGoods(data, user, input) {
         copiedFrom: input.copiedFrom || '',
         copiedBy: input.copiedFrom ? user.name || '' : ''
     };
-    supplier.debt = amount(supplier.debt + total - paid);
+    if (!deferDebt) supplier.debt = amount(supplier.debt + total - paid);
     supplier.totalBought = amount(supplier.totalBought + total);
     data.imports.unshift(record);
     voucher(data, {
@@ -840,7 +853,7 @@ function importOutstandingDebt(data, imp) {
 // Trả hàng nhập (một phần hoặc toàn bộ) cho nhà cung cấp.
 // Không sửa phiếu nhập gốc: mỗi lần trả là chứng từ riêng trong `import_returns`,
 // nhờ vậy đối chiếu được lịch sử và trả được nhiều đợt.
-function importReturn(data, user, input) {
+function importReturn(data, user, input, options = {}) {
     requirePermission(user, 'imports');
     const imp = data.imports.find((i) => i.id === input.importId || i.code === input.importId);
     if (!imp) fail('Không tìm thấy phiếu nhập.');
@@ -913,7 +926,10 @@ function importReturn(data, user, input) {
     const unpaid = importOutstandingDebt(data, imp);
     // Phần chưa trả nhà cung cấp được cấn trừ trước; phần dư mới là tiền họ hoàn lại.
     const debtReduced = Math.min(unpaid, totalRefund);
-    const cashBack = amount(totalRefund - debtReduced);
+    // `options.settleInCash = false` (chỉ đổi hàng gọi nội bộ): không ghi phiếu thu,
+    // caller cấn phần NCC phải hoàn sang phiếu nhập mới. Client không bật được cờ này.
+    const settleInCash = options.settleInCash !== false;
+    const cashBack = settleInCash ? amount(totalRefund - debtReduced) : 0;
     if (supplier) {
         if (supplier.debt < debtReduced)
             fail('Công nợ nhà cung cấp đã thay đổi; cần đối soát thủ công.', 409);
@@ -934,6 +950,8 @@ function importReturn(data, user, input) {
         totalRefund,
         debtReduced,
         cashBack,
+        // Phần NCC phải hoàn được cấn sang phiếu nhập thay thế (chỉ khác 0 khi đổi hàng).
+        settledValue: settleInCash ? 0 : amount(totalRefund - debtReduced),
         refundMethod: paymentMethod(input.refundMethod || 'cash'),
         reason: typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) : '',
         cashier: user.name || '',
@@ -1984,6 +2002,9 @@ function settleDeliveryCodOrder(data, user, input) {
 // Đổi hàng với khách: trả lại món đã mua, lấy món khác, bù phần chênh lệch.
 // Chạy toàn bộ trong một transaction: gọi returnGoods và sale nội bộ, nếu bước sau
 // thất bại thì toàn bộ bị rollback nên không thể lệch kho/công nợ.
+//
+// Quy ước tiền: hàng trả có giá trị `returnValue`. Chứng từ thay thế chỉ ghi nhận phần
+// chênh lệch (`net`) vào quỹ; phần còn lại là cấn trừ nên không sinh phiếu thu/chi ảo.
 function exchangeSale(data, user, input) {
     requirePermission(user, 'invoices');
     const inv = data.invoices.find((i) => i.id === input.invoiceId || i.code === input.invoiceId);
@@ -1997,29 +2018,31 @@ function exchangeSale(data, user, input) {
 
     const br = branchOf(inv);
     const method = paymentMethod(input.method || 'cash');
+    const cust = customerFor(data, inv);
 
-    // 1. Trả lại hàng cũ (sinh phiếu TH, hoàn kho, giảm nợ, hoàn tiền nếu có).
+    // 1. Trả lại hàng cũ: hoàn kho, giảm nợ nhưng KHÔNG xuất quỹ (sẽ cấn trừ bên dưới).
     const ret = returnGoods(
         data,
         user,
         {
             invoiceId: inv.id,
             items: input.returnItems,
-            refundMethod: input.method || 'cash',
+            refundMethod: method,
             reason: (input.reason || 'Đổi hàng').slice(0, 500)
         },
         false,
-        true
+        true,
+        { settleInCash: false }
     );
 
-    // 2. Bán hàng mới (trừ kho, ghi doanh thu mới). Giá trị chênh lệch xử lý ở dưới.
+    // 2. Bán hàng mới: trừ kho. Chưa thu tiền và chưa cộng nợ; chốt ở bước 3 để tránh lệch.
     const newInv = sale(
         data,
         user,
         {
             branch: br,
             items: input.exchangeItems,
-            customerId: inv.customerId || undefined,
+            customerId: cust?.id || undefined,
             discount: 0,
             given: 0,
             paymentMethod: method,
@@ -2028,48 +2051,66 @@ function exchangeSale(data, user, input) {
         {
             permission: 'invoices',
             channel: inv.channel === 'delivery' ? 'delivery' : 'counter',
-            exchange: true
+            exchange: true,
+            deferDebt: true
         }
     );
 
-    const returnValue = amount(ret.returnValue ?? ret.totalRefund ?? 0);
+    const returnValue = amount(ret.returnValue ?? 0);
     const exchangeValue = amount(newInv.total);
-    const credit = Math.min(returnValue, exchangeValue);
+    // `net` là chênh lệch giá trị hàng. Tiền thật thì khác: chỉ phần khách đã trả cho món trả
+    // (`cashRefund`) mới cấn được; phần giảm nợ chỉ xóa nợ cũ, không phải tiền.
+    const paidForReturn = amount(ret.cashRefund || 0);
     const net = exchangeValue - returnValue;
+    const credit = Math.min(paidForReturn, exchangeValue);
+    const cashIn = Math.max(0, net); // khách đổi lên: thu thêm đúng phần chênh lệch
+    const cashOut = Math.max(0, paidForReturn - exchangeValue); // chỉ hoàn phần đã thực trả
+    const unpaid = exchangeValue - credit - cashIn;
+    if (unpaid > 0 && !cust)
+        fail('Hóa đơn gốc chưa thu đủ; chọn khách hàng để ghi nợ phần còn lại khi đổi hàng.');
 
-    // 3. Chốt thanh toán chênh lệch, không ghi nhầm doanh thu/quỹ.
-    if (net > 0) {
-        newInv.paid = amount(net);
-        newInv.redPaid = false;
-        if (!Array.isArray(newInv.payments)) newInv.payments = [];
-        newInv.payments.push({ amount: net, method, ...timestamp() });
+    // 3. Cấn trừ vào hóa đơn mới; chỉ tiền thật mới đi qua quỹ.
+    if (!Array.isArray(newInv.payments)) newInv.payments = [];
+    if (credit > 0)
+        newInv.payments.push({
+            amount: credit,
+            method,
+            exchangeId: ret.code,
+            note: `Cấn trừ hàng trả ${ret.code}`,
+            ...timestamp()
+        });
+    if (cashIn > 0) {
+        newInv.payments.push({ amount: cashIn, method, ...timestamp() });
         voucher(data, {
             type: 'thu',
             category: 'Thu bù đổi hàng',
-            value: net,
+            value: cashIn,
             person: inv.customer,
             method,
             branch: br,
             invoiceId: newInv.id,
+            customerId: cust?.id,
             note: `Thu thêm đổi hàng ${newInv.code} (từ ${inv.code})`
         });
-    } else if (net < 0) {
-        newInv.paid = 0;
-        newInv.redPaid = false;
+    }
+    if (cashOut > 0)
         voucher(data, {
             type: 'chi',
             category: 'Hoàn tiền đổi hàng',
-            value: -net,
+            value: cashOut,
             person: inv.customer,
             method,
             branch: br,
             invoiceId: newInv.id,
+            customerId: cust?.id,
             note: `Hoàn thêm đổi hàng ${newInv.code} (từ ${inv.code})`
         });
-    } else {
-        newInv.paid = 0;
-        newInv.redPaid = false;
-    }
+    newInv.paid = amount(credit + cashIn);
+    newInv.redPaid = unpaid > 0;
+    newInv.paymentMethod = method;
+
+    // returnGoods đã trừ phần giảm nợ; sale (deferDebt) chưa cộng nợ → chỉ cộng phần còn thiếu.
+    if (cust) cust.debt = amount(cust.debt + unpaid);
 
     const id = code(data, 'DH');
     const record = {
@@ -2090,6 +2131,8 @@ function exchangeSale(data, user, input) {
         reason: (input.reason || 'Đổi hàng').slice(0, 500),
         cashier: user.name || '',
         branch: br,
+        customerId: cust?.id || null,
+        customer: inv.customer || '',
         ...timestamp()
     };
     if (!Array.isArray(data.exchanges)) data.exchanges = [];
@@ -2099,6 +2142,7 @@ function exchangeSale(data, user, input) {
 
 // Đổi hàng với nhà cung cấp: trả máy lỗi, nhận máy/sản phẩm thay thế, bù chênh lệch.
 // Cũng chạy nguyên tử: gọi importReturn và importGoods nội bộ trong cùng transaction.
+// Hàng trả cấn trừ vào phiếu nhập mới; chỉ chênh lệch mới sinh phiếu thu/chi.
 function exchangeImport(data, user, input) {
     requirePermission(user, 'imports');
     const imp = data.imports.find((i) => i.id === input.importId || i.code === input.importId);
@@ -2112,58 +2156,76 @@ function exchangeImport(data, user, input) {
 
     const br = branchOf(imp);
     const method = paymentMethod(input.method || 'transfer');
+    const supplier = data.suppliers.find((s) => s.id === imp.supplierId || s.code === imp.nccCode);
 
-    // 1. Trả hàng NCC (trừ kho, cấn nợ, sinh phiếu thu nếu NCC hoàn tiền).
-    const ret = importReturn(data, user, {
-        importId: imp.id,
-        items: input.returnItems,
-        refundMethod: input.method || 'transfer',
-        reason: (input.reason || 'Đổi hàng NCC').slice(0, 500)
-    });
+    // 1. Trả hàng NCC: trừ kho, cấn nợ nhưng KHÔNG ghi phiếu thu (sẽ cấn trừ bên dưới).
+    const ret = importReturn(
+        data,
+        user,
+        {
+            importId: imp.id,
+            items: input.returnItems,
+            refundMethod: method,
+            reason: (input.reason || 'Đổi hàng NCC').slice(0, 500)
+        },
+        { settleInCash: false }
+    );
 
-    // 2. Nhập hàng thay thế (cộng kho, tăng công nợ/tổng mua).
-    const newImp = importGoods(data, user, {
-        branch: br,
-        supplierCode: imp.nccCode,
-        items: input.exchangeItems,
-        paid: 0,
-        paymentMethod: input.method || 'transfer',
-        note: `Đổi hàng từ ${imp.code}`
-    });
+    // 2. Nhập hàng thay thế: cộng kho, chưa ghi nhận công nợ (chốt ở bước 3).
+    const newImp = importGoods(
+        data,
+        user,
+        {
+            branch: br,
+            supplierCode: imp.nccCode,
+            items: input.exchangeItems,
+            paid: 0,
+            paymentMethod: method,
+            note: `Đổi hàng từ ${imp.code}`
+        },
+        { deferDebt: true }
+    );
 
     const returnValue = amount(ret.totalRefund);
     const exchangeValue = amount(newImp.needPay);
-    const credit = Math.min(returnValue, exchangeValue);
+    // Phần đã cấn vào công nợ NCC (debtReduced) không phải tiền; chỉ phần shop đã thực trả
+    // cho hàng trả (NCC phải hoàn) mới cấn được sang phiếu nhập mới.
+    const paidForReturn = amount(returnValue - amount(ret.debtReduced || 0));
     const net = exchangeValue - returnValue;
+    const credit = Math.min(paidForReturn, exchangeValue);
+    const cashOut = Math.max(0, net); // nhận hàng đắt hơn: shop chi thêm đúng phần chênh lệch
+    const cashIn = Math.max(0, paidForReturn - exchangeValue); // NCC chỉ hoàn phần shop đã trả
+    const unpaid = exchangeValue - credit - cashOut;
 
-    // 3. Chốt thanh toán chênh lệch.
-    if (net > 0) {
-        newImp.paid = amount(net);
+    // 3. Cấn trừ vào phiếu nhập mới; chỉ tiền thật mới đi qua quỹ.
+    newImp.paid = amount(credit + cashOut);
+    if (cashOut > 0)
         voucher(data, {
             type: 'chi',
             category: 'Chi bù đổi hàng NCC',
-            value: net,
+            value: cashOut,
             person: newImp.nccName || imp.nccName || 'Nhà cung cấp',
             method,
             branch: br,
             importId: newImp.id,
+            supplierId: supplier?.id,
             note: `Chi thêm đổi hàng ${newImp.code} (từ ${imp.code})`
         });
-    } else if (net < 0) {
-        newImp.paid = 0;
+    if (cashIn > 0)
         voucher(data, {
             type: 'thu',
             category: 'Thu bù đổi hàng NCC',
-            value: -net,
+            value: cashIn,
             person: newImp.nccName || imp.nccName || 'Nhà cung cấp',
             method,
             branch: br,
             importId: newImp.id,
+            supplierId: supplier?.id,
             note: `NCC hoàn thêm đổi hàng ${newImp.code} (từ ${imp.code})`
         });
-    } else {
-        newImp.paid = 0;
-    }
+
+    // importReturn đã trừ phần cấn nợ; importGoods (deferDebt) chưa cộng nợ → cộng phần còn thiếu.
+    if (supplier) supplier.debt = amount(supplier.debt + unpaid);
 
     const id = code(data, 'DH');
     const record = {
@@ -2184,6 +2246,9 @@ function exchangeImport(data, user, input) {
         reason: (input.reason || 'Đổi hàng NCC').slice(0, 500),
         cashier: user.name || '',
         branch: br,
+        supplierId: supplier?.id || imp.supplierId || null,
+        nccCode: imp.nccCode || '',
+        supplierName: newImp.nccName || imp.nccName || '',
         ...timestamp()
     };
     if (!Array.isArray(data.exchanges)) data.exchanges = [];

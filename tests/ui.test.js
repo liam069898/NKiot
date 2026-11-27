@@ -458,6 +458,43 @@ test('exchange modal collects return and replacement items and shows the net set
         w.close();
     }
 });
+test('exchange modal shows only real cash for a partly-unpaid invoice', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'I1', code: 'I1', branch: 'Kalo HCM', status: 'completed', customerId: 'C',
+                time: '18/11/2026 10:00', customer: 'Khách', phone: '090', total: 150000, paid: 50000,
+                items: [{ code: 'SP2', name: 'Máy B', qty: 1, price: 150000, netTotal: 150000, total: 150000 }]
+            }];
+            KVStore.data.returns = [];
+            KVStore.data.products = [
+                { id: 'SP1', code: 'SP1', name: 'Máy A', branch: 'Kalo HCM', status: 'active', price: 100000, costPrice: 60000, hasImei: false, stock: 5 },
+                { id: 'SP2', code: 'SP2', name: 'Máy B', branch: 'Kalo HCM', status: 'active', price: 150000, costPrice: 90000, hasImei: false, stock: 5 }
+            ];
+            openExchangeModal('I1');
+        `);
+        doc.getElementById('ex-ret-chk-0').checked = true;
+        doc.getElementById('ex-exch-qty-SP1').value = '1';
+        w.recalculateExchange();
+        // Chênh lệch giá trị -50k nhưng khách mới trả 50k nên không được hoàn tiền mặt.
+        assert.match(doc.getElementById('ex-net-value').textContent, /-50\.000/);
+        assert.match(doc.getElementById('ex-settle-value').textContent, /50\.000/);
+        assert.match(doc.getElementById('ex-cash-label').textContent, /Thu\/chi ngay/);
+        assert.equal(doc.getElementById('ex-cash-value').textContent, 'Không thu/chi');
+        assert.match(doc.getElementById('ex-unpaid-value').textContent, /50\.000/);
+        assert.match(doc.getElementById('ex-submit-btn').textContent, /Không thu\/chi/);
+        doc.getElementById('ex-exch-qty-SP1').value = '2';
+        w.recalculateExchange();
+        assert.match(doc.getElementById('ex-cash-value').textContent, /Thu khách 50\.000/);
+        assert.match(doc.getElementById('ex-unpaid-value').textContent, /100\.000/);
+        assert.equal(doc.getElementById('ex-unpaid-row').classList.contains('hidden'), false);
+    } finally {
+        w.close();
+    }
+});
 
 test('exchange modal renders IMEI pills for replacement products and collects chosen serials', () => {
     const dom = browser(),
@@ -492,6 +529,92 @@ test('exchange modal renders IMEI pills for replacement products and collects ch
         assert.equal(items[0].code, 'SPIMEI');
         assert.equal(items[0].qty, 2);
         assert.deepEqual(JSON.parse(JSON.stringify(items[0].imeis)), ['S1', 'S2']);
+    } finally {
+        w.close();
+    }
+});
+
+test('exchange modal lets price be edited and sends salePrice for the replacement item', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.user = { id: 'ADMIN', role: 'admin', permissions: {} };
+            KVStore.data.invoices = [{
+                id: 'I1', code: 'I1', branch: 'Kalo HCM', status: 'completed',
+                time: '18/11/2026 10:00', customer: 'Khách', phone: '090', total: 100000, paid: 100000,
+                items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000, netTotal: 100000, total: 100000 }]
+            }];
+            KVStore.data.returns = [];
+            KVStore.data.products = [
+                { id: 'SP1', code: 'SP1', name: 'Máy A', branch: 'Kalo HCM', status: 'active', price: 100000, costPrice: 60000, hasImei: false, stock: 5 },
+                { id: 'SP2', code: 'SP2', name: 'Máy B', branch: 'Kalo HCM', status: 'active', price: 150000, costPrice: 90000, hasImei: false, stock: 5 }
+            ];
+            openExchangeModal('I1');
+        `);
+        doc.getElementById('ex-ret-chk-0').checked = true;
+        doc.getElementById('ex-exch-qty-SP2').value = '1';
+        w.recalculateExchange();
+
+        const priceEl = doc.getElementById('ex-exch-price-SP2');
+        assert.ok(priceEl, 'phải có ô sửa giá bán cho sản phẩm đổi');
+        assert.equal(priceEl.readOnly, false, 'admin phải sửa được giá bán');
+
+        // Giá mặc định = giá niêm yết, chưa gửi salePrice.
+        assert.equal(w.collectExchangeItems()[0].salePrice, undefined);
+
+        // Sửa giá 120.000: tổng đổi và chênh lệch cập nhật, payload gửi salePrice.
+        priceEl.value = '120.000';
+        priceEl.oninput();
+        assert.equal(doc.getElementById('ex-exch-price-SP2'), priceEl);
+        assert.match(doc.getElementById('ex-exchange-value').textContent, /120\.000/);
+        assert.match(doc.getElementById('ex-net-value').textContent, /\+20\.000/);
+        assert.equal(w.collectExchangeItems()[0].salePrice, 120000);
+        priceEl.value = '';
+        priceEl.oninput();
+        assert.equal(doc.getElementById('ex-submit-btn').disabled, true);
+        priceEl.value = '0';
+        priceEl.oninput();
+        assert.equal(w.collectExchangeItems()[0].salePrice, 0);
+        assert.equal(doc.getElementById('ex-submit-btn').disabled, false);
+        assert.ok(
+            doc.querySelector('[data-reset-exch-price="SP2"]'),
+            'phải có nút về giá niêm yết'
+        );
+
+        // Bấm về giá niêm yết thì bỏ giá tùy chỉnh.
+        doc.querySelector('[data-reset-exch-price="SP2"]').click();
+        assert.equal(w.collectExchangeItems()[0].salePrice, undefined);
+        assert.match(doc.getElementById('ex-exchange-value').textContent, /150\.000/);
+    } finally {
+        w.close();
+    }
+});
+
+test('exchange modal keeps the price readonly without the posPrice permission', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.user = { id: 'CASHIER', role: 'cashier', permissions: { invoices: true }, branch: 'Kalo HCM', branches: ['Kalo HCM'] };
+            KVStore.data.invoices = [{
+                id: 'I1', code: 'I1', branch: 'Kalo HCM', status: 'completed',
+                time: '18/11/2026 10:00', customer: 'Khách', phone: '090', total: 100000, paid: 100000,
+                items: [{ code: 'SP1', name: 'Máy A', qty: 1, price: 100000, netTotal: 100000, total: 100000 }]
+            }];
+            KVStore.data.returns = [];
+            KVStore.data.products = [
+                { id: 'SP2', code: 'SP2', name: 'Máy B', branch: 'Kalo HCM', status: 'active', price: 150000, costPrice: 90000, hasImei: false, stock: 5 }
+            ];
+            openExchangeModal('I1');
+        `);
+        const priceEl = doc.getElementById('ex-exch-price-SP2');
+        assert.equal(priceEl.readOnly, true, 'không có posPrice thì không sửa được giá');
+        w.setExchangeItemPrice('SP2', '1');
+        assert.equal(w.collectExchangeItems()[0]?.salePrice ?? undefined, undefined);
+        assert.match(doc.getElementById('ex-price-hint').textContent, /không có quyền sửa giá/);
     } finally {
         w.close();
     }
@@ -535,9 +658,14 @@ test('10% UI scaling, Xoá button title, and item notes work in POS', () => {
     w.updatePosItemNote('SP001', 'Quà tặng kèm dock sạc');
     assert.equal(w.eval('state.posTabs[0].cart[0].note'), 'Quà tặng kèm dock sạc');
 
-    // Check invoice table header is "Tên hàng hóa"
-    const tableHeader = w.document.querySelector('#invoice-detail-modal th:nth-child(3)');
-    assert.equal(tableHeader?.textContent?.trim(), 'Tên hàng hóa');
+    // Check inline invoice detail table header is "Tên hàng hóa"
+    const detailHtml = w.renderInvoiceDetailHtml({
+        code: 'HD-CHK',
+        items: [{ code: 'SP001', name: 'Test', qty: 1, price: 100000 }],
+        total: 100000,
+        paid: 100000
+    });
+    assert.ok(detailHtml.includes('Tên hàng hóa'));
 
     dom.window.close();
 });
@@ -765,7 +893,7 @@ test('Invoice printing supports A4 and A5 formats with in-words currency, respon
     assert.ok(!dialog.classList.contains('max-w-4xl'));
 
     const btnA5 = w.document.getElementById('receipt-btn-a5');
-    assert.ok(btnA5.className.includes('text-[#0066cc]'));
+    assert.ok(btnA5.className.includes('text-[#E04F16]'));
 
     // Check Vietnamese in-words amount
     const inWordsEl = w.document.getElementById('receipt-words-total');
@@ -792,7 +920,7 @@ test('Invoice printing supports A4 and A5 formats with in-words currency, respon
     assert.ok(!dialog.classList.contains('max-w-2xl'));
 
     const btnA4 = w.document.getElementById('receipt-btn-a4');
-    assert.ok(btnA4.className.includes('text-[#0066cc]'));
+    assert.ok(btnA4.className.includes('text-[#E04F16]'));
 
     // Check printReceipt for A4
     w.printReceipt();
@@ -1288,10 +1416,10 @@ test('Product table renders Chi tiết button and expands product detail inline 
         '#products-tbody tr.expand-detail-row[data-detail-key="SP001"]'
     );
     assert.ok(detailRow, 'Product SP001 detail row must expand inline');
-    const modal = w.document.getElementById('product-detail-modal');
-    assert.ok(
-        modal && modal.classList.contains('hidden'),
-        'Product detail popup modal must remain hidden'
+    assert.equal(
+        w.document.getElementById('product-detail-modal'),
+        null,
+        'Legacy product-detail-modal must be removed'
     );
     assert.equal(detailRow.querySelector('#prod-detail-code').textContent, 'SP001');
     assert.ok(detailRow.textContent.includes('In mã'));
@@ -1325,15 +1453,15 @@ test('Import cancellation updates UI, hides cancel button, shows status banner a
         const initialRows = w.document.querySelectorAll('#import-tbody tr');
         assert.ok(initialRows.length > 0);
 
-        // 2. Open import detail modal for first import
+        // 2. Open inline import detail accordion for first import
         const targetCode = w.eval('KVStore.data.imports[0].code');
-        w.viewImportDetail(targetCode);
-        const modal = w.document.getElementById('import-detail-modal');
-        assert.ok(!modal.classList.contains('hidden'));
-        const banner = w.document.getElementById('imp-detail-status-banner');
-        const cancelBtn = w.document.getElementById('imp-detail-cancel-btn');
-        assert.ok(banner.classList.contains('hidden'));
-        assert.ok(!cancelBtn.classList.contains('hidden'));
+        w.toggleImportRowDetail(targetCode);
+        let detailRow = w.document.querySelector(
+            `#import-tbody tr.expand-detail-row[data-detail-key="${targetCode}"]`
+        );
+        assert.ok(detailRow, 'Import detail row must expand inline');
+        assert.ok(!detailRow.textContent.includes('ĐÃ HỦY'));
+        assert.ok(detailRow.textContent.includes('Hủy phiếu'));
 
         // 3. User cancels import through accessible dialog
         const pending = w.cancelImport(targetCode);
@@ -1359,15 +1487,23 @@ test('Import cancellation updates UI, hides cancel button, shows status banner a
         assert.equal(commanded.payload.reason, 'Hàng lỗi kỹ thuật');
         assert.equal(commanded.payload.refundMethod, paid > 0 ? 'transfer' : undefined);
 
-        // 4. Modal is closed and import is marked cancelled
-        assert.ok(modal.classList.contains('hidden'));
+        // 4. Import is marked cancelled
         assert.equal(w.eval('KVStore.data.imports[0].status'), 'cancelled');
 
-        // 5. Open detail of cancelled import
-        w.viewImportDetail(targetCode);
-        assert.ok(!banner.classList.contains('hidden'));
-        assert.ok(banner.textContent.includes('Hàng lỗi kỹ thuật'));
-        assert.ok(cancelBtn.classList.contains('hidden'));
+        // 5. Open inline detail of cancelled import
+        w.renderImports();
+        detailRow = w.document.querySelector(
+            `#import-tbody tr.expand-detail-row[data-detail-key="${targetCode}"]`
+        );
+        if (!detailRow) {
+            w.toggleImportRowDetail(targetCode);
+            detailRow = w.document.querySelector(
+                `#import-tbody tr.expand-detail-row[data-detail-key="${targetCode}"]`
+            );
+        }
+        assert.ok(detailRow);
+        assert.ok(detailRow.textContent.includes('Hàng lỗi kỹ thuật'));
+        assert.ok(!detailRow.textContent.includes('Hủy phiếu'));
 
         // 6. Test status filter in imports view
         const statusFilter = w.document.getElementById('import-status-filter');
@@ -1697,26 +1833,19 @@ test('POS multi-method payment splits tender, computes debt/change and checks ou
         assert.ok(receiptBreakdown.textContent.includes('Tiền mặt'));
         assert.ok(receiptBreakdown.textContent.includes('Quẹt thẻ'));
 
-        // 8. Verify invoice detail modal displays payment breakdown and debt
-        w.openInvoiceDetailModal(invoice);
-        const invDetailModal = w.document.getElementById('invoice-detail-modal');
-        assert.ok(!invDetailModal.classList.contains('hidden'));
-        assert.equal(w.document.getElementById('inv-detail-debt').textContent, '4.000.000 đ');
-        assert.ok(!w.document.getElementById('inv-detail-debt-row').classList.contains('hidden'));
-        const detailBreakdown = w.document.getElementById('inv-detail-payments-breakdown');
-        assert.ok(!detailBreakdown.classList.contains('hidden'));
-        assert.ok(detailBreakdown.textContent.includes('Chuyển khoản'));
-        assert.ok(detailBreakdown.textContent.includes('Tiền mặt'));
-        assert.ok(detailBreakdown.textContent.includes('Quẹt thẻ'));
-        assert.equal(
-            w.document.getElementById('inv-detail-note').textContent,
-            '(Không có ghi chú)'
-        );
+        // 8. Verify inline invoice detail displays payment breakdown, debt, and note
+        const detailHtmlNoNote = w.renderInvoiceDetailHtml(invoice);
+        assert.ok(detailHtmlNoNote.includes('4.000.000 đ'));
+        assert.ok(detailHtmlNoNote.includes('Chuyển khoản'));
+        assert.ok(detailHtmlNoNote.includes('Tiền mặt'));
+        assert.ok(detailHtmlNoNote.includes('Quẹt thẻ'));
+        assert.ok(detailHtmlNoNote.includes('Không có'));
 
-        // Also verify invoice detail modal displays note when order has note
-        w.openInvoiceDetailModal({ ...invoice, note: 'Giao hàng sau 18h' });
-        assert.equal(w.document.getElementById('inv-detail-note').textContent, 'Giao hàng sau 18h');
-        assert.ok(w.document.getElementById('inv-detail-note').classList.contains('font-medium'));
+        const detailHtmlWithNote = w.renderInvoiceDetailHtml({
+            ...invoice,
+            note: 'Giao hàng sau 18h'
+        });
+        assert.ok(detailHtmlWithNote.includes('Giao hàng sau 18h'));
     } finally {
         dom.window.close();
     }
@@ -1837,7 +1966,7 @@ test('product details treat legacy IMEI and media as data, not executable markup
             p.images = ['x" onerror="window.pwned=1', '/uploads/safe.png'];
             p.videoUrl = 'javascript:alert(1)';
             p.imeiDetails = {};
-            viewProductDetail(p.code);
+            toggleProductRowDetail(p.code);
         `);
         const list = w.document.getElementById('prod-detail-imei-list');
         assert.equal(list.querySelector('img'), null);
@@ -1887,14 +2016,9 @@ test('IMEI editor and import inspection preserve markup as text and safe event a
     try {
         w.eval(`
             const serial = "serial');window.pwned=1;//<img src=x>";
-            currentEditingImportItem = {imeiDetails:{}, imeis:[serial]};
-            renderEditImeiCards([serial]);
             currentImportItems = [{code:'SP',name:'Product',qty:1,price:10,total:10,hasImei:true,imeis:[serial],imeiDetails:{}}];
             renderImportItemsTable();
         `);
-        const editor = w.document.getElementById('edit-imei-cards-container');
-        assert.equal(editor.querySelector('img'), null);
-        assert.ok(editor.textContent.includes('<img src=x>'));
         const inspection = w.document.getElementById('import-items-container');
         assert.ok(
             inspection.querySelector('.import-device'),
@@ -2038,8 +2162,8 @@ test('Shared warehouse view renders, connects navigation, modals, and login scre
             'edit-shared-product-modal exists'
         );
         assert.ok(
-            w.document.getElementById('prod-detail-share-btn'),
-            'prod-detail-share-btn exists in product detail modal'
+            typeof w.openShareFromProductDetail === 'function',
+            'openShareFromProductDetail helper exists for inline product detail'
         );
 
         // 2. Switch view to sharedWarehouse
@@ -2693,7 +2817,7 @@ test('Phase 3 UX/UI: Select All table checkboxes, selective CSV export, touch-fr
             rowCbs.every((cb) => cb.checked),
             true
         );
-        assert.equal(rowCbs[0].closest('tr').classList.contains('bg-blue-50/50'), true);
+        assert.equal(rowCbs[0].closest('tr').classList.contains('bg-[#FFF6EE]'), true);
 
         // Unchecking one row sets header checkbox to indeterminate
         rowCbs[0].checked = false;
@@ -2706,13 +2830,19 @@ test('Phase 3 UX/UI: Select All table checkboxes, selective CSV export, touch-fr
             'rep-main-chart-container',
             [{ label: '20/10', fullName: 'Ngày 20/10', val1: 500000, val2: 200000 }],
             'Doanh thu',
-            'bg-[#0066cc]',
+            'bg-[#FE9F43]',
             'Lợi nhuận',
             'bg-emerald-500'
         );
         const barCol = w.document.querySelector('#rep-main-chart-container [tabindex="0"]');
         assert.ok(barCol);
         assert.ok(barCol.textContent.includes('500.000 đ'));
+        barCol.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        assert.equal(barCol.getAttribute('aria-pressed'), 'true');
+        assert.match(
+            w.document.getElementById('rep-main-chart-container-detail').textContent,
+            /Ngày 20\/10.*500\.000 đ.*200\.000 đ/
+        );
 
         // 3. Shared warehouse unshare uses custom askAction dialog instead of native confirm
         w.document.getElementById('edit-shared-id').value = 'SP_SHARED_1';
@@ -2724,16 +2854,16 @@ test('Phase 3 UX/UI: Select All table checkboxes, selective CSV export, touch-fr
         w.document.getElementById('action-dialog-cancel').click();
         await unsharePromise;
 
-        // 4. Mobile "Khác" dropdown opens on click and closes when switching view
-        const moreBtn = w.document.getElementById('nav-more');
-        const moreMenu = w.document.getElementById('nav-more-menu');
-        assert.ok(moreBtn && moreMenu);
-        moreBtn.click();
-        assert.equal(moreMenu.classList.contains('hidden'), false);
-        assert.equal(moreBtn.getAttribute('aria-expanded'), 'true');
+        // 4. Header notification popover opens via toggle and closes when switching view
+        const notifBtn = w.document.getElementById('header-notification-btn');
+        const notifMenu = w.document.getElementById('header-notification-menu');
+        assert.ok(notifBtn && notifMenu);
+        w.toggleHeaderNotifications();
+        assert.equal(notifMenu.classList.contains('hidden'), false);
+        assert.equal(notifBtn.getAttribute('aria-expanded'), 'true');
         w.switchView('reports');
-        assert.equal(moreMenu.classList.contains('hidden'), true);
-        assert.equal(moreBtn.classList.contains('nav-item-active'), true);
+        assert.equal(notifMenu.classList.contains('hidden'), true);
+        assert.equal(notifBtn.getAttribute('aria-expanded'), 'false');
     } finally {
         w.close();
     }
@@ -2792,6 +2922,26 @@ test('Phase 4 UX/UI: Search clear buttons & Escape shortcut, starred document fi
         const invRows = w.document.querySelectorAll('#invoice-tbody tr');
         assert.equal(invRows.length, 1);
         assert.ok(invRows[0].textContent.includes('HD_STAR_1'));
+        const invoiceFilters = w.document.getElementById('invoice-active-filters');
+        assert.match(invoiceFilters.textContent, /Đã gắn sao/);
+        assert.deepEqual(
+            Array.from(w.getInvoiceExportRows(), (row) => row.code),
+            ['HD_STAR_1']
+        );
+        w.setupTableCheckboxes();
+        const invoiceCheckbox = invRows[0].querySelector('input.kv-checkbox');
+        invoiceCheckbox.checked = true;
+        invoiceCheckbox.dispatchEvent(new w.Event('change', { bubbles: true }));
+        assert.equal(
+            w.document.getElementById('invoice-export-btn').textContent,
+            'Xuất 1 đơn đã chọn'
+        );
+        w.eval(
+            'KVStore.request = async () => ({ page: 1, pages: 1, pageSize: 50, total: 0, rows: [], revision: 1 });'
+        );
+        await w.clearInvoiceFilters();
+        assert.equal(invoiceFilters.classList.contains('hidden'), true);
+        assert.equal(w.getInvoiceExportRows().length, 0);
     } finally {
         w.close();
     }
@@ -3040,11 +3190,13 @@ test('Import detail modal and import list display product image thumbnails and p
         assert.ok(importRow.textContent.includes('Ảnh'));
         assert.ok(importRow.querySelector('span[title="Phiếu nhập có ảnh sản phẩm"]'));
 
-        // 2. Import detail modal renders thumbnail images for items with photos
-        w.viewImportDetail('PN_PHOTO_01');
-        const detailModal = w.document.getElementById('import-detail-modal');
-        assert.ok(!detailModal.classList.contains('hidden'));
-        const thumbs = w.document.querySelectorAll('#imp-detail-tbody img');
+        // 2. Inline import detail renders thumbnail images for items with photos
+        w.toggleImportRowDetail('PN_PHOTO_01');
+        const detailRow = w.document.querySelector(
+            '#import-tbody tr.expand-detail-row[data-detail-key="PN_PHOTO_01"]'
+        );
+        assert.ok(detailRow);
+        const thumbs = detailRow.querySelectorAll('img');
         assert.equal(thumbs.length, 2);
         assert.equal(thumbs[0].getAttribute('src'), '/uploads/img_iphone15pm.jpg');
         assert.equal(thumbs[1].getAttribute('src'), '/uploads/img_anker_charger.jpg');
@@ -3461,13 +3613,13 @@ test('UX/UI comprehensive fixes: DOM elements, tablet navigation, stocktake focu
             'notification badge should be hidden by default'
         );
 
-        // 3. Tablet nav: More dropdown wrapper is lg:hidden so tablet (768-1023px) can access cashbook & reports
-        const moreWrapper = doc.getElementById('nav-more-dropdown-wrapper');
-        assert.ok(moreWrapper, 'nav-more-dropdown-wrapper must exist');
-        assert.ok(moreWrapper.classList.contains('lg:hidden'), 'more wrapper should be lg:hidden');
-        const moreMenu = doc.getElementById('nav-more-menu');
-        assert.ok(moreMenu.textContent.includes('Sổ quỹ'), 'more menu must contain Sổ quỹ');
-        assert.ok(moreMenu.textContent.includes('Báo cáo'), 'more menu must contain Báo cáo');
+        // 3. Mobile/Tablet nav: single hamburger drawer replaces redundant "Khác" dropdown
+        assert.equal(doc.getElementById('nav-more-dropdown-wrapper'), null);
+        const mobileBtn = doc.getElementById('mobile-sidebar-btn');
+        assert.ok(mobileBtn && mobileBtn.classList.contains('lg:hidden'));
+        const sidebar = doc.getElementById('app-sidebar');
+        assert.ok(sidebar.textContent.includes('Sổ quỹ'), 'sidebar must contain Sổ quỹ');
+        assert.ok(sidebar.textContent.includes('Báo cáo'), 'sidebar must contain Báo cáo');
 
         // 4. Dashboard chart dynamic Y-axis elements
         const yMax = doc.getElementById('dashboard-chart-y-max');
@@ -3528,10 +3680,10 @@ test('UX/UI comprehensive fixes: DOM elements, tablet navigation, stocktake focu
         assert.equal(select.selectedOptions.length, 1);
         assert.equal(select.selectedOptions[0].value, 'IMEI_B');
 
-        // 7. Login screen brand logo is dual-shape SVG
+        // 7. Login screen brand logo is dual-shape DreamsPOS SVG
         const loginScreen = doc.getElementById('login-screen');
-        assert.ok(loginScreen.querySelector('svg circle[fill="#0066CC"]'));
-        assert.ok(loginScreen.querySelector('svg path[fill="#00B33C"]'));
+        assert.ok(loginScreen.querySelector('svg circle[fill="#FE9F43"]'));
+        assert.ok(loginScreen.querySelector('svg path[fill="#092C4C"]'));
 
         // 8. Public catalog pagination buttons have glass styling
         const catPrev = doc.getElementById('catalog-page-prev');
@@ -3594,8 +3746,8 @@ test('Inline expandable rows (Accordion) for slips: Invoices, Imports, Stocktake
         assert.ok(detailRow.textContent.includes('Nguyễn Văn Nam'));
         assert.ok(detailRow.querySelector('button[onclick*="collapseExpandedRow"]'));
 
-        // Modal should NOT be opened
-        assert.ok(doc.getElementById('invoice-detail-modal').classList.contains('hidden'));
+        // Legacy popup modal removed
+        assert.equal(doc.getElementById('invoice-detail-modal'), null);
 
         // Click row HD000101 -> collapses HD000100 and expands HD000101
         const invRow2 = invTbody.querySelector('tr[data-export-key="HD000101"]');
@@ -3641,7 +3793,7 @@ test('Inline expandable rows (Accordion) for slips: Invoices, Imports, Stocktake
         assert.ok(impDetail.textContent.includes('Apple VN'));
         assert.ok(impDetail.textContent.includes('Còn nợ NCC:'));
         assert.ok(impDetail.textContent.includes('20.000.000 đ'));
-        assert.ok(doc.getElementById('import-detail-modal').classList.contains('hidden'));
+        assert.equal(doc.getElementById('import-detail-modal'), null);
 
         // 3. STOCKTAKE ROW EXPANSION
         w.eval(`
@@ -3667,7 +3819,7 @@ test('Inline expandable rows (Accordion) for slips: Invoices, Imports, Stocktake
         assert.ok(stDetail, 'Stocktake KK00001 should expand inline');
         assert.ok(stDetail.textContent.includes('Thất lạc'));
         assert.ok(stDetail.textContent.includes('Cân bằng kho'));
-        assert.ok(doc.getElementById('stocktake-detail-modal').classList.contains('hidden'));
+        assert.equal(doc.getElementById('stocktake-detail-modal'), null);
 
         // 4. TRANSFER ROW EXPANSION
         w.eval(`
@@ -3693,7 +3845,7 @@ test('Inline expandable rows (Accordion) for slips: Invoices, Imports, Stocktake
         const tfDetail = tfTbody.querySelector('tr.expand-detail-row[data-detail-key="TF_001"]');
         assert.ok(tfDetail, 'Transfer CK00001 should expand inline');
         assert.ok(tfDetail.textContent.includes('Đang vận chuyển'));
-        assert.ok(doc.getElementById('transfer-detail-modal').classList.contains('hidden'));
+        assert.equal(doc.getElementById('transfer-detail-modal'), null);
 
         // 5. PRODUCT ROW EXPANSION (Accordions without popup)
         w.eval(`
@@ -3724,7 +3876,7 @@ test('Inline expandable rows (Accordion) for slips: Invoices, Imports, Stocktake
         assert.ok(prodDetail.textContent.includes('IMEI_998811'));
         assert.ok(prodDetail.textContent.includes('In mã'));
         assert.ok(prodDetail.textContent.includes('Chỉnh sửa'));
-        assert.ok(doc.getElementById('product-detail-modal').classList.contains('hidden'));
+        assert.equal(doc.getElementById('product-detail-modal'), null);
     } finally {
         w.close();
     }
@@ -3740,35 +3892,35 @@ test('Phase 1 UX/UI: U1 POS viewport zoom, U2 Nav More on 320px & keyboard, U3 F
         assert.ok(rawHtml.includes('@media (max-width: 1023px)'));
         assert.ok(rawHtml.includes('zoom: 1 !important'));
 
-        // U2: Verify #nav-more and keyboard interaction
+        // U2: Verify mobile sidebar drawer & sidebar accordion keyboard interaction
         w.eval(`
             setupNavigation();
             setupKeyboardShortcuts();
             showLoginScreen(false);
             switchView('dashboard');
         `);
-        const navMoreBtn = doc.getElementById('nav-more');
-        const navMoreMenu = doc.getElementById('nav-more-menu');
-        assert.ok(navMoreBtn);
-        assert.ok(navMoreMenu);
-        assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'false');
-        assert.ok(navMoreMenu.classList.contains('hidden'));
+        assert.equal(doc.getElementById('nav-more'), null);
+        const navProdBtn = doc.getElementById('nav-products');
+        const navProdMenu = doc.getElementById('hanghoa-mega-menu');
+        assert.ok(navProdBtn && navProdMenu);
+        assert.ok(doc.querySelector('#muahang-mega-menu button[onclick*="imports"]'));
+        assert.ok(doc.querySelector('#muahang-mega-menu button[onclick*="suppliers"]'));
 
-        // Check imports and suppliers are inside nav-more-menu for mobile
-        assert.ok(navMoreMenu.querySelector('button[onclick*="imports"]'));
-        assert.ok(navMoreMenu.querySelector('button[onclick*="suppliers"]'));
+        w.toggleMobileSidebar(true);
+        assert.equal(doc.body.classList.contains('mobile-sidebar-open'), true);
+        w.toggleMobileSidebar(false);
+        assert.equal(doc.body.classList.contains('mobile-sidebar-open'), false);
 
-        // Keyboard ArrowDown on nav-more button opens menu
-        navMoreBtn.dispatchEvent(
+        // Keyboard Escape on sidebar submenu collapses it cleanly
+        navProdMenu.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        assert.equal(navProdBtn.getAttribute('aria-expanded'), 'false');
+        assert.ok(navProdMenu.classList.contains('hidden'));
+        // Keyboard ArrowDown re-opens submenu
+        navProdBtn.dispatchEvent(
             new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
         );
-        assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'true');
-        assert.ok(!navMoreMenu.classList.contains('hidden'));
-
-        // Keyboard Escape on menu closes menu and returns aria-expanded=false
-        navMoreMenu.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        assert.equal(navMoreBtn.getAttribute('aria-expanded'), 'false');
-        assert.ok(navMoreMenu.classList.contains('hidden'));
+        assert.equal(navProdBtn.getAttribute('aria-expanded'), 'true');
+        assert.ok(!navProdMenu.classList.contains('hidden'));
 
         // U3: Form dirty protection (hộp thoại xác nhận nội bộ, không dùng confirm())
         const actionDialog = doc.getElementById('action-dialog');
@@ -3867,7 +4019,7 @@ test('Phase 2 UX/UI: U4 Chart negative/zero representation and U5 payment classi
             'test-chart-container',
             testDualItems,
             'Doanh thu',
-            'bg-[#0066cc]',
+            'bg-[#FE9F43]',
             'Lợi nhuận',
             'bg-emerald-500'
         );
@@ -3892,7 +4044,7 @@ test('Phase 2 UX/UI: U4 Chart negative/zero representation and U5 payment classi
             { label: 'Cat A', value: 5000000 },
             { label: 'Cat B', value: 0 }
         ];
-        w.renderSingleBarChart('test-chart-container', testSingleItems, 'bg-[#0066cc]');
+        w.renderSingleBarChart('test-chart-container', testSingleItems, 'bg-[#FE9F43]');
         const singleHtml = testContainer.innerHTML;
         assert.ok(
             singleHtml.includes('style="height: 0%;"'),
@@ -3973,204 +4125,6 @@ test('Phase 2 UX/UI: U4 Chart negative/zero representation and U5 payment classi
         const totalExpected = 1000000 + 2000000 + 3000000 + 500000;
         const totalActual = w.eval('KVStore.data.cashbook.reduce((s, c) => s + c.amount, 0)');
         assert.strictEqual(totalActual, totalExpected, 'Total of all inputs matches expected');
-    } finally {
-        w.close();
-    }
-});
-
-test('Phase 3 UX/UI: U6 Keyboard accessible table & accordion, U7 labels & form validation, U10 admin dialog focus trap', async () => {
-    const dom = browser();
-    const w = dom.window;
-    try {
-        const doc = w.document;
-        // 1. Sortable headers have <button type="button"> and update aria-sort
-        const btnSortCode = doc.getElementById('btn-sort-prod-code');
-        assert.ok(btnSortCode, 'Product code sort button must exist inside th');
-        const thProdCode = btnSortCode.closest('th');
-        assert.ok(thProdCode, 'Parent th must exist');
-        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'none');
-
-        // Click sort
-        w.eval(`
-            setupNavigation();
-            showLoginScreen(false);
-            switchView('products');
-            sortProductsBy('code');
-        `);
-        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'ascending');
-        w.eval(`sortProductsBy('code');`);
-        assert.strictEqual(thProdCode.getAttribute('aria-sort'), 'descending');
-
-        // 2. Table rows keyboard accordion & ARIA (U6)
-        w.eval(`
-            KVStore.data.stocktakes = [{ id: 'st1', code: 'PKK001', branch: 'Kalo HCM', cashier: 'Admin', totalActual: 5, totalVariance: 0, status: 'balanced', items: [] }];
-            renderStocktakes();
-        `);
-        const stRow = doc.querySelector('#stocktakes-tbody tr[data-export-key="PKK001"]');
-        assert.ok(stRow, 'Stocktake row must exist');
-        assert.strictEqual(stRow.getAttribute('tabindex'), '0');
-        assert.strictEqual(stRow.getAttribute('role'), 'row');
-        assert.strictEqual(stRow.getAttribute('aria-expanded'), 'false');
-        const stTrigger = doc.getElementById('st-trigger-st1');
-        assert.ok(stTrigger, 'Stocktake trigger button must exist');
-        assert.strictEqual(stTrigger.getAttribute('aria-controls'), 'st-detail-st1');
-
-        // Keydown Enter expands detail
-        w.eval(`toggleStocktakeRowDetail('st1')`);
-        const expandedStRow = doc.querySelector('#stocktakes-tbody tr[data-export-key="PKK001"]');
-        assert.ok(expandedStRow, 'Expanded stocktake row must exist');
-        assert.strictEqual(expandedStRow.getAttribute('aria-expanded'), 'true');
-        const stDetail = doc.getElementById('st-detail-st1');
-        assert.ok(stDetail, 'Expanded stocktake detail row must have id st-detail-st1');
-        assert.strictEqual(stDetail.getAttribute('aria-labelledby'), 'st-trigger-st1');
-
-        // 3. Form input labels & search controls (U7)
-        const prodSearch = doc.getElementById('product-search-input');
-        assert.ok(
-            prodSearch.getAttribute('aria-label'),
-            'Product search input must have aria-label'
-        );
-        const posNote = doc.getElementById('pos-order-note');
-        assert.ok(posNote.getAttribute('aria-label'), 'POS note input must have aria-label');
-
-        // 4. Form validation errors (U7)
-        const nameInput = doc.getElementById('prod-name');
-        w.setFieldValidationError(nameInput, 'Vui lòng nhập tên hàng hóa');
-        assert.strictEqual(nameInput.getAttribute('aria-invalid'), 'true');
-        assert.strictEqual(nameInput.getAttribute('aria-describedby'), 'prod-name-error');
-        const errEl = doc.getElementById('prod-name-error');
-        assert.ok(
-            errEl && errEl.textContent.includes('Vui lòng nhập tên'),
-            'Visible error message element must exist'
-        );
-
-        // Clear error
-        w.clearFieldValidationError(nameInput);
-        assert.strictEqual(nameInput.hasAttribute('aria-invalid'), false);
-        assert.strictEqual(doc.getElementById('prod-name-error'), null);
-
-        // 5. Admin modal accessibility (U10)
-        const adminHtml = fs.readFileSync('admin.html', 'utf8');
-        assert.ok(
-            adminHtml.includes('id="modal-reset-pwd"'),
-            'Admin reset password modal must exist'
-        );
-        assert.ok(
-            adminHtml.includes('role="dialog"'),
-            'Admin reset password modal must have role="dialog"'
-        );
-        assert.ok(
-            adminHtml.includes('aria-modal="true"'),
-            'Admin reset password modal must have aria-modal="true"'
-        );
-    } finally {
-        w.close();
-    }
-});
-
-test('Phase 4 UX/UI: U8 permission-aware forms & status, U9 typography and touch targets', async () => {
-    const dom = browser();
-    const w = dom.window;
-    try {
-        const doc = w.document;
-        w.eval(`
-            setupNavigation();
-            showLoginScreen(false);
-        `);
-
-        // 1. Non-admin customer debt locked with explanation (U8)
-        w.eval(`
-            KVStore.user = { id: 'u2', username: 'cashier1', role: 'cashier', permissions: { customers: true } };
-            openAddCustomerModal();
-        `);
-        const custDebt = doc.getElementById('cust-debt');
-        assert.strictEqual(custDebt.readOnly, true, 'Non-admin customer debt must be readonly');
-        assert.ok(
-            custDebt.classList.contains('cursor-not-allowed'),
-            'Non-admin debt must have disabled style'
-        );
-        const custDebtNote = doc.getElementById('cust-debt-note');
-        assert.ok(
-            custDebtNote && custDebtNote.textContent.includes('Quản trị viên'),
-            'Inline debt note must explain admin requirement'
-        );
-
-        // 2. Admin customer debt editable without note (U8)
-        w.eval(`
-            KVStore.user = { id: 'u1', username: 'admin', role: 'admin', permissions: {} };
-            openAddCustomerModal();
-        `);
-        assert.strictEqual(custDebt.readOnly, false, 'Admin customer debt must be editable');
-        assert.strictEqual(
-            doc.getElementById('cust-debt-note'),
-            null,
-            'Admin should not see debt restriction note'
-        );
-
-        // 3. Product edit mode reflects state: "Tồn kho hiện tại", locked stock, cost note, IMEI lock (U8)
-        w.eval(`
-            KVStore.user = { id: 'u2', username: 'cashier1', role: 'cashier', permissions: { products: true, posPrice: false } };
-            KVStore.data.products = [{ id: 'sp1', code: 'SP001', name: 'iPhone 15', branch: 'Kalo HCM', stock: 10, costPrice: 15000000, price: 20000000, hasImei: true, imeis: [] }];
-            openAddProductModal('SP001');
-        `);
-        const stockLabel = doc.getElementById('prod-stock-label');
-        assert.strictEqual(
-            stockLabel.textContent,
-            'Tồn kho hiện tại',
-            'Edit product must display "Tồn kho hiện tại"'
-        );
-        const prodStock = doc.getElementById('prod-stock');
-        assert.strictEqual(prodStock.readOnly, true, 'Existing product stock must be locked');
-        assert.ok(
-            doc.getElementById('prod-stock-note'),
-            'Stock adjustment note must direct to import/stocktake'
-        );
-        assert.ok(
-            doc.getElementById('prod-cost-note'),
-            'Cost note must explain automatic weighted cost'
-        );
-        const imeiCheck = doc.getElementById('prod-has-imei');
-        assert.strictEqual(
-            imeiCheck.disabled,
-            true,
-            'IMEI mode checkbox must be locked for existing product'
-        );
-        assert.ok(doc.getElementById('prod-imei-note'), 'IMEI lock note must be displayed');
-        const prodPrice = doc.getElementById('prod-price');
-        assert.strictEqual(
-            prodPrice.readOnly,
-            true,
-            'Price must be locked when user lacks posPrice permission'
-        );
-        assert.ok(
-            doc.getElementById('prod-price-note'),
-            'Price note must explain lack of posPrice permission'
-        );
-
-        // 4. Product add mode reflects clean initial state (U8)
-        w.eval(`openAddProductModal();`);
-        assert.strictEqual(
-            stockLabel.textContent,
-            'Tồn kho ban đầu',
-            'Add product must display "Tồn kho ban đầu"'
-        );
-        assert.strictEqual(prodStock.readOnly, false, 'New product stock must be editable');
-        assert.strictEqual(doc.getElementById('prod-stock-note'), null);
-        assert.strictEqual(doc.getElementById('prod-cost-note'), null);
-        assert.strictEqual(doc.getElementById('prod-price-note'), null);
-        assert.strictEqual(doc.getElementById('prod-imei-note'), null);
-        assert.strictEqual(imeiCheck.disabled, false, 'New product IMEI checkbox must be enabled');
-
-        // 5. U9 Mobile Typography and responsive form layout
-        const indexHtml = fs.readFileSync('index.html', 'utf8');
-        assert.ok(
-            indexHtml.includes('font-size: 16px !important;'),
-            'CSS must enforce 16px input font size on mobile to prevent iOS auto-zoom'
-        );
-        assert.ok(
-            indexHtml.includes('grid-cols-1 sm:grid-cols-2'),
-            'Forms must use grid-cols-1 on mobile and sm:grid-cols-2 on tablet/desktop'
-        );
     } finally {
         w.close();
     }
@@ -4999,6 +4953,865 @@ test('advanced search panel stays in sync with the shared clear button and Escap
         doc.body.dispatchEvent(new w.Event('mousedown', { bubbles: true }));
         assert.equal(panel.classList.contains('hidden'), true, 'bấm ngoài phải đóng panel');
         assert.equal(w.eval('advancedSearchCount("invoice-search-input")'), 1);
+    } finally {
+        w.close();
+    }
+});
+
+test('UX/UI v1.20 regression: Exchange modals (E1–E8) and P&L report polish (P1)', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval('setupModalAccessibility();');
+
+        // E1 + E3 + E4 + E6 + E8: multi-qty proportional return, search persistence, IMEI return pills, branch scoping
+        w.eval(`
+            KVStore.data.settings.branch = ALL_BRANCHES;
+            KVStore.data.invoices = [{
+                id: 'HD_EX1', code: 'HD_EX1', branch: 'Kalo HCM', status: 'completed',
+                time: '26/11/2026 10:00', customer: 'Khách lẻ', phone: '', total: 200000, paid: 200000,
+                items: [
+                    { code: 'SP_A', name: 'Áo thun', qty: 2, price: 100000, netTotal: 200000, total: 200000 },
+                    { code: 'SP_IMEI_OLD', name: 'Máy cũ', qty: 2, price: 500000, netTotal: 1000000, hasImei: true, imeis: ['OLD-1', 'OLD-2'] }
+                ]
+            }];
+            KVStore.data.returns = [];
+            KVStore.data.exchanges = [{
+                id: 'DH000001', code: 'DH000001', type: 'sale', sourceCode: 'HD_EX1',
+                returnCode: 'TH000001', exchangeCode: 'HD_NEW1', net: 50000, time: '26/11/2026 11:00', reason: 'Đổi size'
+            }];
+            KVStore.data.products = [
+                { id: 'p1', code: 'SP_B', name: 'Quần dài', branch: 'Kalo HCM', status: 'active', price: 150000, costPrice: 80000, stock: 5, hasImei: false },
+                { id: 'p1_hn', code: 'SP_B', name: 'Quần dài', branch: 'Kalo HN', status: 'active', price: 150000, costPrice: 80000, stock: 8, hasImei: false },
+                { id: 'p2', code: 'SP_C', name: 'Giày chạy', branch: 'Kalo HCM', status: 'active', price: 300000, costPrice: 150000, stock: 3, hasImei: false },
+                { id: 'p3', code: 'SP_OUT', name: 'Hết hàng', branch: 'Kalo HCM', status: 'active', price: 100000, costPrice: 50000, stock: 0, hasImei: false },
+                { id: 'p4', code: 'SP_HN_ONLY', name: 'Chỉ ở HN', branch: 'Kalo HN', status: 'active', price: 100000, costPrice: 50000, stock: 4, hasImei: false }
+            ];
+            openExchangeModal('HD_EX1');
+        `);
+
+        // E6: No duplicate DOM IDs and no wrong-branch products even under ALL_BRANCHES
+        assert.equal(doc.querySelectorAll('[id="ex-exch-qty-SP_B"]').length, 1);
+        assert.equal(doc.getElementById('ex-exch-qty-SP_HN_ONLY'), null);
+        // E8: Out-of-stock excluded & empty phone has no trailing "()"
+        assert.equal(doc.getElementById('ex-exch-qty-SP_OUT'), null);
+        assert.equal(doc.getElementById('ex-src-customer').textContent, 'Khách lẻ');
+
+        // E1: qty=2 with netTotal=200000 must show 200.000 đ (not 400.000 đ)
+        doc.getElementById('ex-ret-chk-0').checked = true;
+        w.recalculateExchange();
+        assert.match(doc.getElementById('ex-return-value').textContent, /^200\.000 đ$/);
+
+        // E4: Return IMEI pills allow picking specific serial #2
+        const retPills = doc.querySelectorAll('#ex-ret-imeis-wrap-1 button[data-ret-serial]');
+        assert.equal(retPills.length, 2);
+        retPills[0].click(); // deselect OLD-1, keeping only OLD-2
+        const retItems = w.collectExchangeReturnItems();
+        const imeiRet = retItems.find((r) => r.code === 'SP_IMEI_OLD');
+        assert.deepEqual(JSON.parse(JSON.stringify(imeiRet.imeis)), ['OLD-2']);
+
+        // E3: Selecting SP_B survives searching for SP_C
+        doc.getElementById('ex-exch-qty-SP_B').value = '1';
+        w.recalculateExchange();
+        doc.getElementById('ex-product-search').value = 'Giày';
+        w.filterExchangeProducts();
+        doc.getElementById('ex-exch-qty-SP_C').value = '1';
+        const picked = w.collectExchangeItems();
+        assert.equal(picked.length, 2);
+        assert.ok(picked.some((r) => r.code === 'SP_B' && r.qty === 1));
+        assert.ok(picked.some((r) => r.code === 'SP_C' && r.qty === 1));
+
+        // E5: submitExchange catches backend rejection cleanly without unhandled rejection
+        w.eval("KVStore.command = async () => { throw new Error('Hết hàng trong kho'); };");
+        await w.submitExchange();
+        assert.equal(doc.getElementById('ex-submit-btn').disabled, false);
+
+        // E2: Import exchange allows typing NEW supplier IMEI even when stock is 0
+        w.eval(`
+            KVStore.data.products.push({
+                id: 'p_imei0', code: 'SP_IMEI_0', name: 'Đồng hồ GPS', branch: 'Kalo HCM',
+                status: 'active', price: 5000000, costPrice: 4000000, stock: 0, hasImei: true, imeis: []
+            });
+            KVStore.data.imports = [{
+                id: 'PN_EX1', code: 'PN_EX1', branch: 'Kalo HCM', status: 'completed', supplier: 'NCC A',
+                needPay: 4000000, paid: 4000000,
+                items: [{ code: 'SP_IMEI_0', name: 'Đồng hồ GPS', qty: 1, price: 4000000, hasImei: true, imeis: ['FAULTY-1'] }]
+            }];
+            KVStore.data.import_returns = [];
+            openImportExchangeModal('PN_EX1');
+        `);
+        const newImeiInput = doc.getElementById('imex-exch-imei-input-SP_IMEI_0');
+        assert.ok(newImeiInput, 'Import exchange must render textarea for new supplier IMEIs');
+        newImeiInput.value = 'NEW-SUP-IMEI-01';
+        newImeiInput.oninput();
+        assert.equal(doc.getElementById('imex-exch-qty-SP_IMEI_0').value, '1');
+        const imexPicked = w.collectImportExchangeItems();
+        assert.equal(imexPicked.length, 1);
+        assert.deepEqual(JSON.parse(JSON.stringify(imexPicked[0].imeis)), ['NEW-SUP-IMEI-01']);
+
+        // E7: Exchange history renders in Invoice detail accordion
+        const invHtml = w.renderInvoiceDetailHtml(w.eval('KVStore.data.invoices[0]'));
+        assert.match(invHtml, /DH000001/);
+        assert.match(invHtml, /HD_NEW1/);
+
+        // P1: P&L loss row uses rose background (not green) and consistent chart legend
+        w.eval(`
+            KVStore.data.settings.branch = 'Kalo HCM';
+            KVStore.data.invoices = [{
+                id: 'HD_LOSS', code: 'HD_LOSS', branch: 'Kalo HCM', status: 'completed',
+                time: '26/11/2026 09:00', total: 100000, paid: 100000,
+                items: [{ code: 'SP_B', name: 'Quần', qty: 1, price: 100000, costPrice: 80000, netTotal: 100000 }]
+            }];
+            KVStore.data.cashbook = [{
+                id: 'PC1', code: 'PC1', type: 'chi', category: 'Chi phí mặt bằng',
+                amount: 500000, branch: 'Kalo HCM', time: '26/11/2026 09:30'
+            }];
+            switchReportTab('pnl');
+        `);
+        const totalRow = doc.querySelector('#rep-table-tbody tr:last-child');
+        assert.match(totalRow.className, /bg-rose-50/);
+        assert.doesNotMatch(totalRow.className, /bg-emerald-50/);
+        assert.match(doc.getElementById('rep-main-chart-legend').textContent, /LN trước thuế/);
+    } finally {
+        w.close();
+    }
+});
+
+test('UX/UI v1.20 regression: R1 action-dialog, R2 POS deposit, R3 import return, R4 RBAC menu, R5 dirty-check, R8/R9 a11y', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.fetch = async (url) => {
+            if (String(url).includes('/api/vtp/config')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        config: {
+                            configured: true,
+                            baseUrl: 'https://partner.viettelpost.vn',
+                            username: '0901234567'
+                        }
+                    })
+                };
+            }
+            return { ok: true, status: 200, json: async () => ({}) };
+        };
+        w.eval('setupModalAccessibility(); setupKeyboardShortcuts(); setupAdvancedSearchInputs();');
+
+        // R1: Clicking #action-dialog backdrop with edited input resolves null without recursive dirty dialog
+        let dialogRes = 'pending';
+        const p = w
+            .askAction({
+                title: 'Hủy HD001',
+                message: 'Xác nhận',
+                confirmText: 'Hủy',
+                inputLabel: 'Lý do',
+                value: 'Đổi ý'
+            })
+            .then((r) => {
+                dialogRes = r;
+            });
+        doc.getElementById('action-dialog-input').value = 'Khách hủy gấp';
+        doc.getElementById('action-dialog').dispatchEvent(
+            new w.MouseEvent('click', { bubbles: true })
+        );
+        await p;
+        assert.equal(dialogRes, null);
+        assert.equal(doc.getElementById('action-dialog').classList.contains('hidden'), true);
+
+        // R2: POS Delivery "Đặt cọc" keeps prepaid detail visible even when clearing input to empty string
+        w.openDeliveryPos();
+        w.eval(
+            "state.posTabs[state.activePosTab].cart = [{ code: 'SP1', name: 'SP1', qty: 1, price: 1000000 }]; renderPosScreen();"
+        );
+        w.setPosDeliveryQuickPrepaid('partial');
+        assert.equal(
+            doc.getElementById('pos-dlv-prepaid-detail').classList.contains('hidden'),
+            false
+        );
+        w.handlePosDeliveryMoneyInput('prepaid', '');
+        assert.equal(
+            doc.getElementById('pos-dlv-prepaid-detail').classList.contains('hidden'),
+            false,
+            'Prepaid input must remain visible while user clears/edits deposit amount'
+        );
+
+        // R3: Import return modal lets user pick specific IMEI pills & catches backend errors safely
+        w.eval(`
+            KVStore.data.imports = [{
+                id: 'PN_R3', code: 'PN_R3', branch: 'Kalo HCM', status: 'imported',
+                nccCode: 'NCC1', nccName: 'NCC R3', needPay: 200000, paid: 200000,
+                items: [{ code: 'SP_R3', name: 'Tai nghe R3', qty: 2, price: 100000, hasImei: true, imeis: ['R3-A', 'R3-B'] }]
+            }];
+            KVStore.data.import_returns = [];
+            openImportReturnModal('PN_R3');
+        `);
+        const impRetPills = doc.querySelectorAll(
+            '#imp-ret-imeis-wrap-0 button[data-imp-ret-serial]'
+        );
+        assert.equal(impRetPills.length, 2);
+        impRetPills[0].click(); // deselect R3-A -> keep only R3-B
+        const impRetPicked = w.collectImportReturnItems();
+        assert.deepEqual(JSON.parse(JSON.stringify(impRetPicked)), [
+            { code: 'SP_R3', qty: 1, imeis: ['R3-B'] }
+        ]);
+        w.eval("KVStore.command = async () => { throw new Error('Lỗi NCC test'); };");
+        await w.submitImportReturn();
+        assert.equal(doc.getElementById('imp-ret-submit-btn').disabled, false);
+        await w.closeModalWithCheck('import-return-modal', true);
+
+        // R4: Limited staff user hides unauthorized items inside #quick-create-menu & sidebar submenus
+        w.eval(
+            "KVStore.user = { id: 'u_lim', name: 'Staff', role: 'custom', permissions: { pos: true, products: true } }; applyUserPermissionsToUI();"
+        );
+        const visiblePurchaseItems = Array.from(
+            doc.querySelectorAll('#muahang-mega-menu button[data-perm]')
+        ).filter((b) => b.style.display !== 'none');
+        assert.equal(visiblePurchaseItems.length, 0);
+        const visibleQcItems = Array.from(
+            doc.querySelectorAll('#quick-create-menu button[data-perm]')
+        ).filter((b) => b.style.display !== 'none');
+        assert.equal(visibleQcItems.length, 1);
+        assert.ok(visibleQcItems[0].textContent.includes('Hàng hóa'));
+
+        // Restore admin user for remaining checks
+        w.eval('KVStore.user = fixtureData.users[0]; applyUserPermissionsToUI();');
+
+        // R5a: VTP config modal is NOT dirty right after async load
+        await w.openVtpConfigModal();
+        assert.equal(w.isModalDirty('vtp-config-modal'), false);
+        await w.closeModalWithCheck('vtp-config-modal', true);
+
+        // R5b: Product modal IS dirty after adding/removing product photo
+        w.openAddProductModal(w.eval('KVStore.data.products[0].code'));
+        assert.equal(w.isModalDirty('product-modal'), false);
+        w.eval("currentProductImages.push('/uploads/test.jpg'); renderProductImagePreviews();");
+        assert.equal(w.isModalDirty('product-modal'), true);
+        await w.closeModalWithCheck('product-modal', true);
+
+        // R8: Advanced search panel anchors left-0 and includes visible labels & clear button
+        const advPanel = doc.getElementById('invoice-search-input-advanced-panel');
+        assert.match(advPanel.className, /\bleft-0\b/);
+        assert.ok(
+            advPanel.querySelector('label'),
+            'Advanced search fields must have visible labels'
+        );
+        assert.ok(
+            advPanel.querySelector('[data-advanced-clear="invoice-search-input"]'),
+            'Advanced search must include a clear-filter button'
+        );
+
+        // R9: #import-search-clear-btn keeps its real aria-label ("Xóa tìm kiếm"), NOT "Đóng"
+        assert.equal(
+            doc.getElementById('import-search-clear-btn').getAttribute('aria-label'),
+            'Xóa tìm kiếm'
+        );
+
+        // R9: Delivery accordion restores keyboard focus after Enter toggle
+        w.eval(`
+            KVStore.data.delivery_orders = [{
+                id: 'DLV_FOCUS', code: 'GH999', invoiceCode: 'HD999', branch: KVStore.data.settings.branch,
+                carrierType: 'viettelpost', receiverName: 'Test', receiverPhone: '090', receiverAddress: 'HCM',
+                productTotal: 100000, prepaid: 0, codRequested: 100000, status: 'handed_over', createdAt: new Date().toISOString()
+            }];
+            switchView('delivery');
+        `);
+        const dlvRow = doc.querySelector('#delivery-tbody tr[data-export-key="DLV_FOCUS"]');
+        dlvRow.focus();
+        dlvRow.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        assert.equal(doc.activeElement?.dataset?.exportKey, 'DLV_FOCUS');
+    } finally {
+        w.close();
+    }
+});
+
+test('Exchange UX/UI overhaul: filters, distinct badges, history cards, 2-pane workbench, trays, quick filters and IMEI scanner', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        w.eval(`
+            KVStore.data.settings.branch = 'Kalo HCM';
+            KVStore.data.products = [
+                { id: 'p1', code: 'SP1', name: 'Tai nghe Pro', branch: 'Kalo HCM', status: 'active', price: 500000, costPrice: 300000, stock: 5, hasImei: false },
+                { id: 'p2', code: 'SP2', name: 'Sạc nhanh', branch: 'Kalo HCM', status: 'active', price: 200000, costPrice: 100000, stock: 10, hasImei: false },
+                { id: 'p3', code: 'SP_IM', name: 'Đồng hồ GPS', branch: 'Kalo HCM', status: 'active', price: 3000000, costPrice: 2000000, stock: 1, hasImei: true, imeis: ['IN-STOCK-1'] }
+            ];
+            KVStore.data.invoices = [
+                {
+                    id: 'HD_SRC', code: 'HD_SRC', branch: 'Kalo HCM', status: 'completed',
+                    time: '26/11/2026 09:00', customer: 'Anh Minh', phone: '0909000111', total: 500000, paid: 500000,
+                    items: [{ code: 'SP1', name: 'Tai nghe Pro', qty: 2, price: 250000, netTotal: 500000 }]
+                },
+                {
+                    id: 'HD_NEW', code: 'HD_NEW', branch: 'Kalo HCM', status: 'completed',
+                    time: '26/11/2026 10:00', customer: 'Anh Minh', phone: '0909000111', total: 200000, paid: 200000,
+                    items: [{ code: 'SP2', name: 'Sạc nhanh', qty: 1, price: 200000, netTotal: 200000 }]
+                },
+                {
+                    id: 'HD_DONE', code: 'HD_DONE', branch: 'Kalo HCM', status: 'completed',
+                    time: '26/11/2026 08:00', customer: 'Khách lẻ', phone: '', total: 200000, paid: 200000,
+                    items: [{ code: 'SP2', name: 'Sạc nhanh', qty: 1, price: 200000, netTotal: 200000 }]
+                }
+            ];
+            KVStore.data.returns = [
+                { id: 'TH_DONE', code: 'TH_DONE', invoiceCode: 'HD_DONE', items: [{ code: 'SP2', qty: 1 }] }
+            ];
+            KVStore.data.exchanges = [
+                {
+                    id: 'DH000010', code: 'DH000010', type: 'sale', sourceCode: 'HD_SRC', exchangeCode: 'HD_NEW',
+                    returnCode: 'TH000010', returnValue: 250000, exchangeValue: 200000, credit: 200000, net: -50000,
+                    method: 'Tiền mặt', cashier: 'Admin', reason: 'Đổi mẫu', time: '26/11/2026 10:00',
+                    items: [{ code: 'SP1', name: 'Tai nghe Pro', qty: 1 }],
+                    exchangeItems: [{ code: 'SP2', name: 'Sạc nhanh', qty: 1 }]
+                },
+                {
+                    id: 'DH000011', code: 'DH000011', type: 'import', sourceCode: 'PN_SRC', exchangeCode: 'PN_NEW',
+                    returnCode: 'PTN00001', returnValue: 2000000, exchangeValue: 2000000, credit: 2000000, net: 0,
+                    method: 'Chuyển khoản', cashier: 'Admin', reason: 'Máy lỗi NSX', time: '26/11/2026 11:00',
+                    items: [{ code: 'SP_IM', name: 'Đồng hồ GPS', qty: 1, imeis: ['OLD-FAULTY'] }],
+                    exchangeItems: [{ code: 'SP_IM', name: 'Đồng hồ GPS', qty: 1, imeis: ['NEW-OK'] }]
+                }
+            ];
+            KVStore.data.imports = [
+                {
+                    id: 'PN_SRC', code: 'PN_SRC', branch: 'Kalo HCM', status: 'imported',
+                    time: '26/11/2026 09:00', nccCode: 'NCC1', nccName: 'NCC A', needPay: 2000000, paid: 1500000,
+                    items: [{ code: 'SP_IM', name: 'Đồng hồ GPS', qty: 1, price: 2000000, hasImei: true, imeis: ['IN-STOCK-1'] }]
+                },
+                {
+                    id: 'PN_NEW', code: 'PN_NEW', branch: 'Kalo HCM', status: 'imported',
+                    time: '26/11/2026 11:00', nccCode: 'NCC1', nccName: 'NCC A', needPay: 2000000, paid: 2000000,
+                    items: [{ code: 'SP_IM', name: 'Đồng hồ GPS', qty: 1, price: 2000000, hasImei: true, imeis: ['NEW-OK'] }]
+                }
+            ];
+            KVStore.data.import_returns = [];
+        `);
+
+        // 1. Distinct badges & "Đã đổi hàng" status filter on both Invoices and Imports
+        await w.setInvoiceStatusFilter('exchanged');
+        const invRows = Array.from(doc.querySelectorAll('#invoice-tbody tr[data-export-key]'));
+        assert.equal(
+            invRows.length,
+            2,
+            'Exchanged invoice filter must show source + replacement invoices'
+        );
+        assert.match(invRows[0].textContent, /Đã đổi → HD_NEW/);
+        assert.match(invRows[1].textContent, /Đổi từ HD_SRC/);
+
+        doc.getElementById('import-status-filter').value = 'exchanged';
+        w.renderImports();
+        const impRows = Array.from(doc.querySelectorAll('#import-tbody tr[data-export-key]'));
+        assert.equal(
+            impRows.length,
+            2,
+            'Exchanged import filter must show source + replacement imports'
+        );
+        assert.match(impRows[0].textContent, /Đã đổi → PN_NEW/);
+        assert.match(impRows[1].textContent, /Đổi từ PN_SRC/);
+
+        // 2. Invoice detail clearly distinguishes "Đổi hàng" vs "Trả hàng", disables when fully returned, and renders rich history card
+        const srcHtml = w.renderInvoiceDetailHtml(w.eval('KVStore.data.invoices[0]'));
+        assert.match(srcHtml, /Trả hàng/);
+        assert.doesNotMatch(srcHtml, /Đổi trả hàng/);
+        assert.match(srcHtml, /jumpToExchangeDocument\('sale', 'HD_NEW'\)/);
+        assert.match(srcHtml, /Tai nghe Pro/);
+        assert.match(srcHtml, /Sạc nhanh/);
+
+        const doneHtml = w.renderInvoiceDetailHtml(w.eval('KVStore.data.invoices[2]'));
+        assert.match(doneHtml, /Đã đổi\/trả hết/);
+        w.openExchangeModal('HD_DONE');
+        assert.equal(doc.getElementById('exchange-modal').classList.contains('hidden'), true);
+
+        // 3. Customer Exchange 2-Pane Workbench: toggle all, selected tray, quick filter "same", segmented payment, quick reason, live steps
+        w.openExchangeModal('HD_SRC');
+        assert.equal(doc.getElementById('exchange-modal').classList.contains('hidden'), false);
+        w.toggleAllExchangeReturnItems();
+        assert.equal(doc.getElementById('ex-ret-chk-0').checked, true);
+        assert.match(doc.getElementById('ex-ret-line-0').textContent, /500\.000 đ/);
+        assert.match(doc.getElementById('ex-ret-toggle-all-btn').textContent, /Bỏ chọn tất cả/);
+
+        w.setExchangeProductFilter('same');
+        assert.ok(doc.getElementById('ex-exch-qty-SP1'));
+        assert.equal(
+            doc.getElementById('ex-exch-qty-SP2'),
+            null,
+            'Filter "same" must only show SP1'
+        );
+
+        w.setExchangeProductFilter('all');
+        doc.getElementById('ex-exch-qty-SP2').value = '2';
+        w.recalculateExchange();
+        assert.equal(doc.getElementById('ex-selected-tray').classList.contains('hidden'), false);
+        assert.match(doc.getElementById('ex-selected-tray').textContent, /Sạc nhanh/);
+        assert.match(doc.getElementById('ex-footer-hint').textContent, /Trả 2 SP → Đổi 2 SP/);
+
+        w.setExchangeMethod('sale', 'transfer');
+        assert.equal(doc.getElementById('ex-method').value, 'transfer');
+        w.pickExchangeReason('ex-reason', 'Đổi mẫu / màu');
+        assert.equal(doc.getElementById('ex-reason').value, 'Đổi mẫu / màu');
+
+        w.removeExchangeSelectedItem('SP2');
+        assert.equal(doc.getElementById('ex-selected-tray').classList.contains('hidden'), true);
+        assert.equal(w.collectExchangeItems().length, 0);
+
+        // 4. Import Exchange 2-Pane Workbench: debt badge, quick IMEI scan + duplicate warning banner
+        w.openImportExchangeModal('PN_SRC');
+        assert.equal(
+            doc.getElementById('import-exchange-modal').classList.contains('hidden'),
+            false
+        );
+        assert.equal(doc.getElementById('imex-src-debt-badge').classList.contains('hidden'), false);
+        assert.match(doc.getElementById('imex-src-debt-badge').textContent, /500\.000 đ/);
+
+        const imeiTextarea = doc.getElementById('imex-exch-imei-input-SP_IM');
+        imeiTextarea.value = 'IN-STOCK-1';
+        imeiTextarea.oninput();
+        assert.equal(doc.getElementById('imex-warning-box').classList.contains('hidden'), false);
+        assert.match(doc.getElementById('imex-warning-box').textContent, /IN-STOCK-1/);
+
+        imeiTextarea.value = 'BRAND-NEW-SERIAL-99';
+        imeiTextarea.oninput();
+        assert.equal(doc.getElementById('imex-warning-box').classList.contains('hidden'), true);
+        assert.equal(doc.getElementById('imex-selected-tray').classList.contains('hidden'), false);
+        assert.match(doc.getElementById('imex-selected-tray').textContent, /BRAND-NEW-SERIAL-99/);
+
+        // 5. Checkbox CSS inside .kv-modal must NOT be overridden by :read-only, and clicking 1-IMEI pill checks row checkbox
+        const styleText = Array.from(doc.querySelectorAll('style'))
+            .map((s) => s.textContent)
+            .join('\n');
+        assert.doesNotMatch(
+            styleText,
+            /\.kv-modal\s+input:read-only\b/,
+            '.kv-modal input:read-only would wipe out checked background of .kv-checkbox!'
+        );
+        const imexPill = doc.querySelector('#imex-ret-imeis-wrap-0 button[data-imex-ret-serial]');
+        assert.equal(doc.getElementById('imex-ret-chk-0').checked, false);
+        imexPill.click();
+        assert.equal(
+            doc.getElementById('imex-ret-chk-0').checked,
+            true,
+            'Clicking the single IMEI pill on an unchecked row must check the row checkbox'
+        );
+    } finally {
+        w.close();
+    }
+});
+
+test('UI consistency audit fixes: tokens, unified toolbars/tables, return modals, single collapse button, form close guards and admin SVGs', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        const nodePath = require('path');
+        const htmlSrc = fs.readFileSync(nodePath.join(__dirname, '..', 'index.html'), 'utf8');
+        const adminHtml = fs.readFileSync(nodePath.join(__dirname, '..', 'admin.html'), 'utf8');
+
+        // 1. No legacy #c4242a red color and proper border-radius scale (.rounded-md = 6px)
+        assert.doesNotMatch(htmlSrc, /#c4242a/i);
+        assert.match(htmlSrc, /\.rounded-md\s*\{\s*border-radius:\s*6px\s*!important;/);
+
+        // 2. Unified Delivery toolbar buttons & glass-panel table, clean Invoices sticky-th
+        assert.ok(
+            doc.getElementById('delivery-open-pos-btn').classList.contains('glass-btn-primary')
+        );
+        assert.ok(doc.getElementById('delivery-refresh').classList.contains('glass-btn-secondary'));
+        assert.ok(
+            doc.getElementById('delivery-batch-label-btn').classList.contains('glass-btn-secondary')
+        );
+        assert.ok(doc.querySelector('#view-delivery .glass-panel'));
+        const invTheadTr = doc.querySelector('#view-invoices thead tr');
+        assert.equal(invTheadTr.className.trim(), 'sticky-th');
+
+        // 3. Return modals share toggle-all, quick reason chips, and closeModalWithCheck
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'I_RET', code: 'I_RET', branch: 'Kalo HCM', status: 'completed',
+                time: '26/11/2026 10:00', customer: 'Khách A', phone: '090', total: 200000, paid: 200000,
+                items: [{ code: 'SP1', name: 'SP 1', qty: 2, price: 100000, netTotal: 200000 }]
+            }];
+            KVStore.data.returns = [];
+            openReturnModal('I_RET');
+        `);
+        assert.equal(doc.getElementById('ret-chk-0').checked, true);
+        w.toggleAllReturnItems();
+        assert.equal(doc.getElementById('ret-chk-0').checked, false);
+        w.toggleAllReturnItems();
+        assert.equal(doc.getElementById('ret-chk-0').checked, true);
+
+        // 4. Product, Stocktake, Transfer detail accordions each have exactly 1 "Thu gọn" button
+        const prodHtml = w.renderProductDetailHtml({
+            id: 'p1',
+            code: 'SP1',
+            name: 'Tai nghe',
+            category: 'Chung',
+            unit: 'Chiếc',
+            price: 100000,
+            costPrice: 60000,
+            stock: 5,
+            branchStocks: []
+        });
+        assert.equal((prodHtml.match(/collapseExpandedRow/g) || []).length, 1);
+        const stHtml = w.renderStocktakeDetailHtml({
+            id: 'KK1',
+            code: 'KK1',
+            status: 'balanced',
+            items: []
+        });
+        assert.equal((stHtml.match(/collapseExpandedRow/g) || []).length, 1);
+        const tfHtml = w.renderTransferDetailHtml({
+            id: 'CK1',
+            code: 'CK1',
+            status: 'completed',
+            fromBranch: 'A',
+            toBranch: 'B',
+            items: []
+        });
+        assert.equal((tfHtml.match(/collapseExpandedRow/g) || []).length, 1);
+
+        // 5. Form modals route close/cancel buttons via closeModalWithCheck
+        for (const id of [
+            'product-modal',
+            'customer-modal',
+            'supplier-modal',
+            'settings-modal',
+            'return-modal',
+            'import-return-modal',
+            'vtp-config-modal'
+        ]) {
+            assert.match(htmlSrc, new RegExp(`closeModalWithCheck\\('${id}'\\)`));
+        }
+
+        // 6. Admin portal uses SVG icons instead of raw eye/clipboard emojis
+        assert.doesNotMatch(adminHtml, /👁|📋/);
+    } finally {
+        w.close();
+    }
+});
+
+test('DreamsPOS UI redesign: theme tokens, collapsible sidebar, quick-create RBAC, global Cmd+K search, 4-color KPI dashboard, and POS in-cart green cards', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        const nodePath = require('path');
+        const htmlSrc = fs.readFileSync(nodePath.join(__dirname, '..', 'index.html'), 'utf8');
+        const adminCss = fs.readFileSync(nodePath.join(__dirname, '..', 'admin.css'), 'utf8');
+
+        // 1. Authentic DreamsPOS tokens in index.html & admin.css
+        assert.match(htmlSrc, /--dp-primary:\s*#fe9f43/i);
+        assert.match(htmlSrc, /--dp-navy:\s*#092c4c/i);
+        assert.match(adminCss, /--brand-primary:\s*#fe9f43/i);
+
+        // 2. Collapsible Left Sidebar & mobile drawer toggle
+        assert.ok(doc.getElementById('app-sidebar'));
+        assert.ok(doc.getElementById('sidebar-toggle-btn'));
+        assert.equal(doc.body.classList.contains('mini-sidebar'), false);
+        w.toggleSidebarCollapse();
+        assert.equal(doc.body.classList.contains('mini-sidebar'), true);
+        w.toggleSidebarCollapse(false);
+        assert.equal(doc.body.classList.contains('mini-sidebar'), false);
+        w.toggleMobileSidebar(true);
+        assert.equal(doc.body.classList.contains('mobile-sidebar-open'), true);
+        w.toggleMobileSidebar(false);
+        assert.equal(doc.body.classList.contains('mobile-sidebar-open'), false);
+
+        // 3. Quick-create popover & RBAC filtering
+        const qcBtn = doc.getElementById('quick-create-btn');
+        const qcMenu = doc.getElementById('quick-create-menu');
+        assert.ok(qcBtn && qcMenu);
+        assert.equal(qcMenu.classList.contains('hidden'), true);
+        w.toggleQuickCreateMenu();
+        assert.equal(qcMenu.classList.contains('hidden'), false);
+        assert.equal(qcBtn.getAttribute('aria-expanded'), 'true');
+        w.toggleQuickCreateMenu(false);
+        assert.equal(qcMenu.classList.contains('hidden'), true);
+
+        // 4. Global Cmd+K search finds views and switches cleanly
+        w.handleGlobalCmdSearch('Báo cáo');
+        const cmdDrop = doc.getElementById('global-cmd-dropdown');
+        assert.equal(cmdDrop.classList.contains('hidden'), false);
+        assert.ok(cmdDrop.textContent.includes('Báo cáo'));
+        w.executeGlobalCmdItem(0);
+        assert.equal(cmdDrop.classList.contains('hidden'), true);
+        assert.equal(doc.getElementById('nav-reports').classList.contains('nav-item-active'), true);
+
+        // 5. Dashboard 4-color KPI row, quick period pills, and DreamsPOS stacked Sales & Purchase chart
+        w.switchView('dashboard');
+        const todayNow = new Date();
+        const dd = String(todayNow.getDate()).padStart(2, '0');
+        const mm = String(todayNow.getMonth() + 1).padStart(2, '0');
+        const yyyy = todayNow.getFullYear();
+        w.eval(`
+            KVStore.data.invoices = [{
+                id: 'INV_CH1', code: 'HDCH1', branch: getCurrentBranch(), status: 'completed',
+                time: '${dd}/${mm}/${yyyy} 10:15', customer: 'Khách A', total: 12000000, paid: 12000000, items: []
+            }];
+            KVStore.data.imports = [{
+                id: 'IMP_CH1', code: 'PNCH1', branch: getCurrentBranch(), status: 'imported',
+                time: '${dd}/${mm}/${yyyy} 11:20', supplier: 'NCC A', needPay: 8000000, paid: 8000000, items: []
+            }];
+            KVStore.data.returns = [];
+        `);
+        w.setDashboardPeriod('7days');
+        assert.equal(doc.getElementById('dash-period-select').value, '7days');
+        const activePill = doc.querySelector('#dash-period-pills [data-dash-period="7days"]');
+        assert.ok(activePill.classList.contains('bg-[#FE9F43]'));
+        assert.equal(doc.getElementById('dash-period-sales-total').textContent, '12.000.000 đ');
+        assert.equal(doc.getElementById('dash-period-purchase-total').textContent, '8.000.000 đ');
+        assert.ok(doc.getElementById('dashboard-chart-y-75'));
+        assert.ok(doc.getElementById('dashboard-chart-y-25'));
+        const barsHtml = doc.getElementById('dashboard-bars-container').innerHTML;
+        assert.ok(
+            barsHtml.includes('bg-[#FDE2C4]'),
+            'Stacked bar renders DreamsPOS apricot purchase segment'
+        );
+        assert.ok(
+            barsHtml.includes('bg-[#FE9F43]'),
+            'Stacked bar renders DreamsPOS orange sales segment'
+        );
+        // 1D mode renders 12 two-hour slots matching DreamsPOS and active pill never mixes pale hover
+        w.setDashboardPeriod('today');
+        assert.equal(doc.querySelectorAll('#dashboard-bars-container > div').length, 12);
+        const todayPill = doc.querySelector('#dash-period-pills [data-dash-period="today"]');
+        assert.equal(todayPill.classList.contains('bg-[#FE9F43]'), true);
+        assert.equal(todayPill.classList.contains('hover:bg-[#F9FAFB]'), false);
+
+        // 6. POS live clock & green in-cart product card selection highlight
+        w.eval(`
+            KVStore.data.products = [{
+                id: 'P_DP1', code: 'DP01', name: 'Tai nghe DreamsPOS', category: 'Phụ kiện',
+                branch: getCurrentBranch(), price: 350000, costPrice: 200000, stock: 10, status: 'active'
+            }];
+            state.posShowCatalog = true;
+            state.posTabs[0].cart = [];
+            switchView('pos');
+        `);
+        const clockText = doc.getElementById('pos-live-clock-text')?.textContent || '';
+        assert.match(clockText, /^\d{2}:\d{2}:\d{2}$/);
+        let card = doc.querySelector('#pos-product-grid [data-product-code="DP01"]');
+        assert.ok(card);
+        assert.equal(card.dataset.inCart, 'false');
+
+        w.handlePosCardClick('DP01');
+        card = doc.querySelector('#pos-product-grid [data-product-code="DP01"]');
+        assert.equal(card.dataset.inCart, 'true');
+        assert.ok(card.className.includes('border-[#3EB780]'));
+        assert.ok(card.textContent.includes('✓ 1'));
+    } finally {
+        w.close();
+    }
+});
+
+test('Executive DreamsPOS Dashboard (Package 1): Tier-2 financial/debt KPIs, Overall Info + SVG Donut, Low Stock, Recent Sales, Smart Alert Banner, drill-down and RBAC', async () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+        const todayNow = new Date();
+        const dd = String(todayNow.getDate()).padStart(2, '0');
+        const mm = String(todayNow.getMonth() + 1).padStart(2, '0');
+        const yyyy = todayNow.getFullYear();
+
+        w.eval(`
+            const br = getCurrentBranch();
+            KVStore.data.products = [
+                { id: 'P1', code: 'SP-LOW', name: 'Pin dự phòng', branch: br, status: 'active', stock: 2, minStock: 5, price: 500000, costPrice: 300000 },
+                { id: 'P2', code: 'SP-OUT', name: 'Dây đeo đồng hồ', branch: br, status: 'active', stock: 0, minStock: 3, price: 200000, costPrice: 100000 },
+                { id: 'P3', code: 'SP-OK', name: 'Garmin Watch', branch: br, status: 'active', stock: 20, minStock: 2, price: 10000000, costPrice: 7000000 }
+            ];
+            KVStore.data.customers = [
+                { id: 'C1', code: 'KH1', name: 'Anh Minh', phone: '0901111111', debt: 2500000 },
+                { id: 'C2', code: 'KH2', name: 'Chị Lan', phone: '0902222222', debt: 0 }
+            ];
+            KVStore.data.suppliers = [
+                { id: 'S1', code: 'NCC1', name: 'Garmin VN', debt: 15000000 }
+            ];
+            KVStore.data.cashbook = [
+                { id: 'CB1', code: 'PT1', branch: br, type: 'thu', amount: 18000000, method: 'Tiền mặt', time: '${dd}/${mm}/${yyyy} 09:00' },
+                { id: 'CB2', code: 'PC1', branch: br, type: 'chi', amount: 3000000, method: 'Chuyển khoản', time: '${dd}/${mm}/${yyyy} 09:30' }
+            ];
+            KVStore.data.invoices = [
+                {
+                    id: 'INV1', code: 'HD-EX1', branch: br, status: 'completed', channel: 'counter',
+                    paymentMethod: 'transfer', time: '${dd}/${mm}/${yyyy} 10:00', customer: 'Anh Minh', phone: '0901111111',
+                    total: 10000000, paid: 10000000,
+                    items: [{ code: 'SP-OK', name: 'Garmin Watch', qty: 1, price: 10000000, costPrice: 7000000 }]
+                },
+                {
+                    id: 'INV2', code: 'HD-EX2', branch: br, status: 'completed', channel: 'delivery',
+                    paymentMethod: 'cash', time: '${dd}/${mm}/${yyyy} 11:00', customer: 'Chị Lan', phone: '0902222222',
+                    total: 500000, paid: 500000,
+                    items: [{ code: 'SP-LOW', name: 'Pin dự phòng', qty: 1, price: 500000, costPrice: 300000 }]
+                }
+            ];
+            KVStore.data.returns = [];
+            KVStore.data.imports = [];
+            KVStore.data.delivery_orders = [
+                { id: 'DO1', code: 'GH1', branch: br, status: 'handed_over', codRequested: 500000 }
+            ];
+            switchView('dashboard');
+            setDashboardPeriod('this_month');
+        `);
+
+        // 1. Tier-2 Financial & Debt KPIs
+        assert.equal(doc.getElementById('dash-fin-profit').textContent, '3.200.000 đ');
+        assert.equal(doc.getElementById('dash-fin-cust-debt').textContent, '2.500.000 đ');
+        assert.ok(doc.getElementById('dash-fin-cust-debtors').textContent.includes('1 khách'));
+        assert.equal(doc.getElementById('dash-fin-sup-debt').textContent, '15.000.000 đ');
+        assert.equal(doc.getElementById('dash-fin-cash-fund').textContent, '15.000.000 đ');
+
+        // 2. Overall Info 3 tiles + SVG Donut mode switching
+        assert.equal(doc.getElementById('dash-info-suppliers').textContent, '1');
+        assert.equal(doc.getElementById('dash-info-customers').textContent, '2');
+        assert.equal(doc.getElementById('dash-info-deliveries').textContent, '1');
+        assert.ok(doc.querySelector('#dash-donut-svg svg circle'));
+        assert.ok(doc.getElementById('dash-donut-legend').textContent.includes('Chuyển khoản'));
+        w.setDashboardDonutMode('channel');
+        assert.ok(doc.getElementById('dash-donut-legend').textContent.includes('Bán tại quầy'));
+        assert.ok(doc.getElementById('dash-donut-legend').textContent.includes('Bán giao hàng'));
+
+        // 3. Low Stock widget, Smart Alert Banner, and Recent Sales
+        assert.equal(doc.getElementById('dash-alert-banner').classList.contains('hidden'), false);
+        assert.ok(doc.getElementById('dash-alert-text').textContent.includes('1 SP hết hàng'));
+        assert.ok(
+            doc.getElementById('dash-alert-text').textContent.includes('1 vận đơn chờ đối soát COD')
+        );
+        assert.ok(
+            doc.getElementById('dash-low-stock-list').textContent.includes('Dây đeo đồng hồ')
+        );
+        assert.ok(doc.getElementById('dash-low-stock-list').textContent.includes('Pin dự phòng'));
+        assert.ok(doc.getElementById('dash-recent-sales-list').textContent.includes('HD-EX1'));
+        assert.ok(doc.getElementById('dash-recent-sales-list').textContent.includes('HD-EX2'));
+
+        // 4. Drill-down click navigates cleanly to invoices filtered by today & dashOpenInvoice opens specific invoice
+        w.dashDrillTo('invoices_today');
+        assert.equal(
+            doc.getElementById('nav-invoices').classList.contains('nav-item-active'),
+            true
+        );
+        assert.equal(doc.getElementById('invoice-date-filter').value, 'today');
+
+        w.switchView('dashboard');
+        await w.dashOpenInvoice('HD-EX1');
+        assert.equal(
+            doc.getElementById('nav-invoices').classList.contains('nav-item-active'),
+            true
+        );
+        assert.equal(doc.getElementById('invoice-search-input').value, 'HD-EX1');
+        assert.equal(doc.getElementById('invoice-date-filter').value, 'all');
+        assert.equal(doc.getElementById('dash-donut-total-footer').textContent, '10.500.000 đ');
+
+        // 5. RBAC hides restricted Tier-2 financial cards for limited staff
+        w.eval(`
+            KVStore.user = { id: 'u_lim', username: 'staff1', role: 'staff', permissions: { dashboard: true, invoices: true } };
+            switchView('dashboard');
+        `);
+        assert.equal(doc.getElementById('dash-fin-card-profit').style.display, 'none');
+        assert.equal(doc.getElementById('dash-fin-card-fund').style.display, 'none');
+        assert.equal(doc.getElementById('dash-purchase-subcard').style.display, 'none');
+    } finally {
+        w.close();
+    }
+});
+
+test('Deep cleanup regression: removed dead modals & nav-more, 3x3 quick-create, live alert bell, direct printMarkup slips, and zero #0066cc tokens', () => {
+    const dom = browser(),
+        w = dom.window;
+    try {
+        const doc = w.document;
+
+        // 1. All 6 legacy dead modals and redundant #nav-more are removed from DOM
+        for (const removedId of [
+            'product-detail-modal',
+            'invoice-detail-modal',
+            'import-detail-modal',
+            'import-item-imei-modal',
+            'stocktake-detail-modal',
+            'transfer-detail-modal',
+            'nav-more-dropdown-wrapper'
+        ]) {
+            assert.equal(doc.getElementById(removedId), null, `#${removedId} should be removed`);
+        }
+
+        // 2. Quick-create popover contains exact 3x3 (9) pure creation items
+        const qcButtons = doc.querySelectorAll('#quick-create-menu button[data-perm]');
+        assert.equal(qcButtons.length, 9);
+        assert.ok(!doc.getElementById('quick-create-menu').textContent.includes('Kho chung'));
+
+        // 3. Live Header Alert Bell updates badge & popover from real low-stock & unsettled COD
+        const br = w.eval('getCurrentBranch()');
+        w.eval(`
+            KVStore.data.products = [
+                { id: 'P_BELL_1', code: 'SP-B1', name: 'Tai nghe', branch: '${br}', status: 'active', stock: 0, minStock: 3, price: 100000 }
+            ];
+            KVStore.data.delivery_orders = [
+                { id: 'D_BELL_1', code: 'GH-B1', branch: '${br}', status: 'handed_over', codRequested: 350000 }
+            ];
+            renderHeaderNotifications();
+        `);
+        const bellBadge = doc.getElementById('header-notification-badge');
+        assert.equal(bellBadge.classList.contains('hidden'), false);
+        assert.equal(bellBadge.textContent, '2');
+        w.toggleHeaderNotifications(true);
+        const bellMenu = doc.getElementById('header-notification-menu');
+        assert.equal(bellMenu.classList.contains('hidden'), false);
+        assert.ok(bellMenu.textContent.includes('1 sản phẩm đã hết hàng'));
+        assert.ok(bellMenu.textContent.includes('1 vận đơn chờ đối soát COD'));
+
+        // 4. Direct printMarkup slip printers render #print-root cleanly without hidden modals
+        w.eval(`
+            KVStore.data.imports = [{
+                id: 'IMP_PR1', code: 'PN-PRINT-1', branch: '${br}', nccName: 'Apple VN',
+                time: '27/11/2026 09:00', needPay: 5000000, paid: 2000000, status: 'imported',
+                items: [{ code: 'SP-B1', name: 'Tai nghe <script>x</script>', qty: 2, price: 2500000, total: 5000000 }]
+            }];
+            KVStore.data.stocktakes = [{
+                id: 'ST_PR1', code: 'KK-PRINT-1', branch: '${br}', cashier: 'Admin', status: 'draft',
+                items: [{ code: 'SP-B1', name: 'Tai nghe', systemStock: 5, actualStock: 4, variance: -1, reason: 'Thiếu' }]
+            }];
+            KVStore.data.transfers = [{
+                id: 'TF_PR1', code: 'CK-PRINT-1', fromBranch: '${br}', toBranch: 'CN2', cashier: 'Admin', status: 'shipping',
+                items: [{ code: 'SP-B1', name: 'Tai nghe', qty: 1, price: 100000, total: 100000 }]
+            }];
+        `);
+        w.printImportReceipt('PN-PRINT-1');
+        let printRoot = doc.getElementById('print-root');
+        assert.ok(printRoot && printRoot.textContent.includes('PN-PRINT-1'));
+        assert.equal(printRoot.querySelector('script'), null);
+
+        w.printStocktakeReceipt('ST_PR1');
+        printRoot = doc.getElementById('print-root');
+        assert.ok(printRoot && printRoot.textContent.includes('KK-PRINT-1'));
+
+        w.printTransferReceipt('TF_PR1');
+        printRoot = doc.getElementById('print-root');
+        assert.ok(printRoot && printRoot.textContent.includes('CK-PRINT-1'));
+
+        // 5. Zero legacy #0066cc blue tokens remain in index.html, app.js, or app-reports.js
+        for (const f of ['index.html', 'app.js', 'app-reports.js']) {
+            const src = fs.readFileSync(f, 'utf8');
+            assert.equal(/#0066cc/i.test(src), false, `${f} must not contain legacy #0066cc`);
+            assert.equal(/bg-blue-50\/50/.test(src), false, `${f} must not contain bg-blue-50/50`);
+        }
+
+        // 6. index.html structural integrity: 0 duplicate IDs & balanced <div> tags
+        const htmlSrc = fs.readFileSync('index.html', 'utf8');
+        const idCounts = new Map();
+        for (const m of htmlSrc.matchAll(/\bid="([^"]+)"/g)) {
+            idCounts.set(m[1], (idCounts.get(m[1]) || 0) + 1);
+        }
+        const dupIds = [...idCounts.entries()].filter(([, c]) => c > 1);
+        assert.deepEqual(dupIds, [], 'index.html must not contain duplicate IDs');
+        const bodySlice = htmlSrc.slice(htmlSrc.indexOf('<body'));
+        assert.equal(
+            (bodySlice.match(/<div\b/g) || []).length,
+            (bodySlice.match(/<\/div>/g) || []).length,
+            'index.html body <div> tags must be strictly balanced'
+        );
     } finally {
         w.close();
     }

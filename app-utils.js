@@ -325,6 +325,7 @@ function matchesDocumentFilter(
         status = 'all',
         kind,
         returned = false,
+        exchanged = false,
         starred = false,
         adv = null
     } = {}
@@ -335,6 +336,7 @@ function matchesDocumentFilter(
     if (status === 'imported' && row.status === 'cancelled') return false;
     if (status === 'completed' && (row.status !== 'completed' || returned)) return false;
     if (status === 'returned' && !returned) return false;
+    if (status === 'exchanged' && !exchanged) return false;
     if (!matchesAdvancedSearch(kind, row, adv)) return false;
     const values =
         kind === 'imports'

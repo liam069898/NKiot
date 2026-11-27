@@ -159,7 +159,7 @@ function listInvoices(user, params) {
         const rows = d
             .prepare(
                 `SELECT i.id,i.code,i.time,i.customer,i.phone,i.total,i.paid,COALESCE(i.discount,0) AS discount,i.status,
-            i.branch,i.redPaid,
+            i.branch,i.redPaid,i.cashier,
             (SELECT r.code FROM returns r WHERE r.invoiceCode=i.code LIMIT 1) AS returnCode,
             (SELECT d.code FROM delivery_orders d WHERE d.invoiceId=i.id LIMIT 1) AS deliveryCode,
             (SELECT c.code FROM customers c WHERE (c.phone IS NOT NULL AND c.phone != '' AND c.phone=i.phone) OR c.name=i.customer LIMIT 1) AS customerCode,

@@ -322,41 +322,18 @@ function exportTableToCSV(type) {
             'Thu ngân',
             'Chi nhánh'
         ];
-        const invChannel = document.getElementById('invoice-channel-filter')?.value || 'all';
-        const invAdv = advancedSearchValues('invoice-search-input');
-        const deliveryIds = new Set((KVStore.data.delivery_orders || []).map((d) => d.invoiceId));
-        rows = (KVStore.data.invoices || [])
-            .filter((i) => isAll || (i.branch || FALLBACK_BRANCH) === currentBranch)
-            .filter((i) => {
-                if (invChannel === 'all') return true;
-                const isDlv = Boolean(i.cod || i.channel === 'delivery' || deliveryIds.has(i.id));
-                return invChannel === 'delivery' ? isDlv : !isDlv;
-            })
-            .filter((i) =>
-                matchesDocumentFilter(i, {
-                    kind: 'invoices',
-                    q: document.getElementById('invoice-search-input')?.value || '',
-                    date: document.getElementById('invoice-date-filter')?.value || 'all',
-                    status: invoiceStatusFilter,
-                    returned:
-                        !!i.hasReturned ||
-                        (KVStore.data.returns || []).some((r) => r.invoiceCode === i.code),
-                    starred: isRecordStarred(`inv:${i.code}`),
-                    adv: invAdv
-                })
-            )
-            .map((i) => [
-                i.code,
-                `"${i.time || ''}"`,
-                `"${(i.customer || '').replace(/"/g, '""')}"`,
-                `"${i.phone || ''}"`,
-                i.total || 0,
-                i.paid || 0,
-                i.discount || 0,
-                i.status === 'cancelled' ? 'Đã hủy' : i.hasReturned ? 'Có trả hàng' : 'Hoàn thành',
-                `"${i.cashier || ''}"`,
-                `"${i.branch || ''}"`
-            ]);
+        rows = getInvoiceExportRows().map((i) => [
+            i.code,
+            `"${i.time || ''}"`,
+            `"${(i.customer || '').replace(/"/g, '""')}"`,
+            `"${i.phone || ''}"`,
+            i.total || 0,
+            i.paid || 0,
+            i.discount || 0,
+            i.status === 'cancelled' ? 'Đã hủy' : i.hasReturned ? 'Có trả hàng' : 'Hoàn thành',
+            `"${i.cashier || ''}"`,
+            `"${i.branch || ''}"`
+        ]);
     } else if (type === 'imports') {
         filename = `Danh_sach_nhap_hang_${branchTag}_${new Date().toISOString().slice(0, 10)}.csv`;
         headers = [
@@ -589,6 +566,10 @@ function exportTableToCSV(type) {
         rows = rows.filter((r) => selectedCodes.has(String(r[0])));
     }
 
+    if (type === 'invoices' && !rows.length) {
+        showToast('Không có hóa đơn trên trang hiện tại để xuất.', 'warning');
+        return;
+    }
     const csvRows = [headers.map(formatCsvCell).join(',')];
     rows.forEach((r) => csvRows.push(r.map(formatCsvCell).join(',')));
     const csvContent = '\uFEFF' + csvRows.join('\r\n');

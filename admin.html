@@ -4,6 +4,11 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>NKiot - Quản trị nhà bán hàng &amp; Kho chung</title>
+        <link
+            rel="icon"
+            type="image/svg+xml"
+            href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 24'%3E%3Ccircle cx='8' cy='12' r='6.5' fill='%23FE9F43'/%3E%3Cpath d='M19.5 3.5C14.8 3.5 11 7.3 11 12C11 16.7 14.8 20.5 19.5 20.5V3.5Z' fill='%23092C4C'/%3E%3C/svg%3E"
+        />
         <link rel="stylesheet" href="/assets/inter.css" />
         <link rel="stylesheet" href="/admin.css" />
     </head>
@@ -13,10 +18,10 @@
             <div class="nav-brand-section">
                 <a class="nav-logo-link" href="#" aria-label="NKiot Control Plane">
                     <svg width="26" height="22" viewBox="0 0 28 24" fill="none" aria-hidden="true">
-                        <circle cx="8" cy="12" r="6.5" fill="#0066CC" />
+                        <circle cx="8" cy="12" r="6.5" fill="#FE9F43" />
                         <path
                             d="M19.5 3.5C14.8 3.5 11 7.3 11 12C11 16.7 14.8 20.5 19.5 20.5V3.5Z"
-                            fill="#059669"
+                            fill="#092C4C"
                         />
                     </svg>
                     <span class="brand-text-title">NKiot</span>
@@ -138,10 +143,10 @@
                 <div class="login-card">
                     <div class="login-logo-wrap" aria-hidden="true">
                         <svg width="32" height="26" viewBox="0 0 28 24" fill="none">
-                            <circle cx="8" cy="12" r="6.5" fill="#0066CC" />
+                            <circle cx="8" cy="12" r="6.5" fill="#FE9F43" />
                             <path
                                 d="M19.5 3.5C14.8 3.5 11 7.3 11 12C11 16.7 14.8 20.5 19.5 20.5V3.5Z"
-                                fill="#059669"
+                                fill="#092C4C"
                             />
                         </svg>
                         <span class="brand-text-title login-brand-text">NKiot</span>
@@ -170,9 +175,24 @@
                                     type="button"
                                     class="btn-toggle-pwd"
                                     id="btn-toggle-login-pwd"
+                                    aria-label="Hiện/ẩn mật khẩu đăng nhập"
+                                    aria-pressed="false"
                                     title="Hiện/ẩn mật khẩu"
                                 >
-                                    👁
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        aria-hidden="true"
+                                    >
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                        <circle cx="12" cy="12" r="3" />
+                                    </svg>
                                 </button>
                             </div>
                         </div>
@@ -181,8 +201,9 @@
                         </button>
                     </form>
                     <div class="login-hint-box">
-                        <strong>Mật khẩu mặc định:</strong> <code>admin1234</code> (đã thiết lập cho
-                        phiên chạy hiện tại).
+                        <strong>Gợi ý:</strong> Dùng mật khẩu quản trị bạn đã cấu hình (mặc định lần
+                        đầu là <code>admin1234</code> nếu chưa đặt biến môi trường
+                        <code>NKIOT_SUPER_ADMIN_PASSWORD</code>).
                     </div>
                     <div class="login-footer">
                         <span
@@ -305,7 +326,22 @@
                     <div class="launch-actions">
                         <a id="created-link" class="btn-launch" target="_blank" rel="noopener"></a>
                         <button type="button" id="btn-copy-created" class="btn-copy">
-                            📋 Sao chép URL POS
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                                style="vertical-align: -2px; margin-right: 4px"
+                            >
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            </svg>
+                            <span>Sao chép URL POS</span>
                         </button>
                     </div>
                 </div>
@@ -358,6 +394,7 @@
                                 <input
                                     id="tenant-search"
                                     type="search"
+                                    aria-label="Tìm nhà bán hàng theo mã, tên, cổng"
                                     placeholder="Tìm mã, tên, cổng..."
                                 />
                                 <button
@@ -551,9 +588,24 @@
                                     type="button"
                                     class="btn-toggle-pwd"
                                     id="btn-toggle-tenant-pwd"
+                                    aria-label="Hiện/ẩn mật khẩu POS"
+                                    aria-pressed="false"
                                     title="Hiện/ẩn mật khẩu"
                                 >
-                                    👁
+                                    <svg
+                                        width="16"
+                                        height="16"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        aria-hidden="true"
+                                    >
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                        <circle cx="12" cy="12" r="3" />
+                                    </svg>
                                 </button>
                             </div>
                             <span class="field-sub"

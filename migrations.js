@@ -404,6 +404,18 @@ const MIGRATIONS = [
             // Mọi bảng entity phải có cột `extra` (xem assertReadableRecords trong db.js).
             addColumn(db, 'exchanges', "extra TEXT NOT NULL DEFAULT '{}'");
         }
+    },
+    {
+        version: 17,
+        name: 'exchange_partner_links',
+        up(db) {
+            // Đổi hàng phải truy được khách/NCC để lên báo cáo công nợ khi không có chứng từ đối ứng.
+            addColumn(db, 'exchanges', 'customerId TEXT');
+            addColumn(db, 'exchanges', "customer TEXT DEFAULT ''");
+            addColumn(db, 'exchanges', 'supplierId TEXT');
+            addColumn(db, 'exchanges', "nccCode TEXT DEFAULT ''");
+            addColumn(db, 'exchanges', "supplierName TEXT DEFAULT ''");
+        }
     }
 ];
 

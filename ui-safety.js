@@ -69,8 +69,7 @@ function renderMediaImages(container, images, onSelect = null) {
         }
     }
 }
-function printRegion(id, thermal = false, paperSize = 'k80') {
-    const source = document.getElementById(id);
+function printElement(source, thermal = false, paperSize = 'k80') {
     if (!source) return;
     document.getElementById('print-root')?.remove();
     const root = document.createElement('section');
@@ -128,5 +127,15 @@ function printRegion(id, thermal = false, paperSize = 'k80') {
     } else {
         window.print();
     }
+}
+function printRegion(id, thermal = false, paperSize = 'k80') {
+    const source = document.getElementById(id);
+    if (!source) return;
+    printElement(source, thermal, paperSize);
+}
+function printMarkup(htmlMarkup, thermal = false, paperSize = 'a4') {
+    const host = document.createElement('div');
+    host.innerHTML = String(htmlMarkup || '');
+    printElement(host, thermal, paperSize);
 }
 window.addEventListener('afterprint', () => document.getElementById('print-root')?.remove());

@@ -8,58 +8,58 @@
 }
 
 :root {
-    /* Brand & Accent Colors */
-    --brand-primary: #0066cc;
-    --brand-primary-hover: #0052a3;
-    --brand-primary-light: #eff6ff;
-    --brand-primary-border: #bfdbfe;
+    /* DreamsPOS Brand & Accent Colors */
+    --brand-primary: #fe9f43;
+    --brand-primary-hover: #e04f16;
+    --brand-primary-light: #fff6ee;
+    --brand-primary-border: #fed7aa;
 
-    --color-emerald: #059669;
-    --color-emerald-light: #ecfdf5;
-    --color-emerald-border: #a7f3d0;
+    --color-emerald: #0e9384;
+    --color-emerald-light: #eefaf1;
+    --color-emerald-border: #bbf7d0;
 
     --color-amber: #d97706;
-    --color-amber-light: #fffbeb;
+    --color-amber-light: #fffaee;
     --color-amber-border: #fde68a;
 
-    --color-purple: #7c3aed;
-    --color-purple-light: #f5f3ff;
+    --color-purple: #6938ef;
+    --color-purple-light: #ededfb;
     --color-purple-border: #ddd6fe;
 
     --color-rose: #dc2626;
-    --color-rose-light: #fef2f2;
+    --color-rose-light: #ffede9;
     --color-rose-border: #fecaca;
 
     /* Neutrals & Surfaces */
-    --surface-bg: #f8fafc;
-    --surface-card: rgba(255, 255, 255, 0.94);
+    --surface-bg: #f7f7f7;
+    --surface-card: #ffffff;
     --surface-elevated: #ffffff;
 
-    --text-primary: #0f172a;
-    --text-secondary: #334155;
-    --text-muted: #64748b;
-    --text-hint: #94a3b8;
+    --text-primary: #212b36;
+    --text-secondary: #4b5563;
+    --text-muted: #646b72;
+    --text-hint: #a6aaaf;
 
-    --border: #e2e8f0;
-    --border-light: #f1f5f9;
-    --border-dark: #cbd5e1;
-    --border-focus: #3b82f6;
+    --border: #e6eaed;
+    --border-light: #f0f2f5;
+    --border-dark: #cfd6dc;
+    --border-focus: #fe9f43;
 
-    /* Apple Squircle Curvature Tokens */
-    --r-xs: 6px;
-    --r-sm: 8px;
-    --r-md: 10px;
-    --r-lg: 14px;
-    --r-xl: 18px;
+    /* DreamsPOS Crisp Corner Scale */
+    --r-xs: 4px;
+    --r-sm: 6px;
+    --r-md: 6px;
+    --r-lg: 8px;
+    --r-xl: 10px;
     --r-pill: 9999px;
 
-    /* Elevated Apple Shadows */
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
-    --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.04), 0 1px 3px 0 rgba(0, 0, 0, 0.02);
-    --shadow-hover: 0 12px 30px -4px rgba(0, 0, 0, 0.08), 0 4px 8px 0 rgba(0, 0, 0, 0.03);
-    --shadow-modal: 0 24px 60px -12px rgba(0, 0, 0, 0.22), 0 8px 24px -4px rgba(0, 0, 0, 0.08);
-    --shadow-primary: 0 2px 10px -1px rgba(0, 102, 204, 0.35);
+    /* Flat Hairline Elevation */
+    --shadow-xs: 0 1px 2px rgba(9, 44, 76, 0.04);
+    --shadow-sm: 0 1px 3px rgba(9, 44, 76, 0.05);
+    --shadow-card: 0 1px 3px rgba(9, 44, 76, 0.04);
+    --shadow-hover: 0 8px 20px -4px rgba(9, 44, 76, 0.08);
+    --shadow-modal: 0 20px 44px -8px rgba(9, 44, 76, 0.2), 0 4px 12px -2px rgba(9, 44, 76, 0.08);
+    --shadow-primary: 0 2px 10px -1px rgba(254, 159, 67, 0.35);
 
     /* Transitions */
     --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
@@ -86,12 +86,7 @@ body {
         'Segoe UI',
         Roboto,
         sans-serif;
-    background:
-        radial-gradient(circle at 8% 8%, rgba(219, 234, 254, 0.5) 0%, transparent 45%),
-        radial-gradient(circle at 92% 12%, rgba(220, 252, 231, 0.45) 0%, transparent 45%),
-        radial-gradient(circle at 50% 95%, rgba(238, 242, 255, 0.5) 0%, transparent 55%),
-        var(--surface-bg);
-    background-attachment: fixed;
+    background: var(--surface-bg);
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     font-size: 13.5px;
@@ -156,7 +151,7 @@ textarea {
     font-size: 19px;
     font-weight: 800;
     letter-spacing: -0.03em;
-    color: #003a70;
+    color: #092c4c;
 }
 
 .brand-sub-badge {
@@ -276,8 +271,8 @@ textarea {
 .user-tag-avatar {
     width: 24px;
     height: 24px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #0066cc, #004d99);
+    border-radius: 6px;
+    background: linear-gradient(135deg, #fe9f43, #e04f16);
     color: #ffffff;
     display: flex;
     align-items: center;
@@ -351,7 +346,7 @@ textarea {
     font-size: 24px;
     font-weight: 800;
     letter-spacing: -0.03em;
-    color: #003a70;
+    color: #092c4c;
 }
 
 .login-header h2 {
@@ -419,12 +414,12 @@ textarea {
 }
 
 .login-hint-box code {
-    background: #e2e8f0;
+    background: #fff6ee;
     padding: 2px 5px;
     border-radius: 4px;
     font-family: monospace;
     font-weight: 700;
-    color: #004d99;
+    color: #e04f16;
 }
 
 .login-footer {
@@ -831,7 +826,7 @@ textarea {
 .search-box input:focus {
     outline: none;
     border-color: var(--border-focus);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 0 3px rgba(254, 159, 67, 0.2);
     width: 280px;
 }
 
@@ -1252,7 +1247,7 @@ select:focus,
 textarea:focus {
     outline: none;
     border-color: var(--border-focus);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    box-shadow: 0 0 0 3px rgba(254, 159, 67, 0.2);
 }
 
 .field-sub {
@@ -1261,21 +1256,21 @@ textarea:focus {
 }
 
 .field-hint {
-    color: var(--brand-primary);
+    color: var(--brand-primary-hover);
     font-family: monospace;
 }
 
-/* Primary Glass Buttons */
+/* Primary DreamsPOS Buttons */
 .glass-btn-primary {
     padding: 8.5px 16px;
-    background: linear-gradient(180deg, #0072e5 0%, #005bb5 100%);
-    border: 1px solid rgba(0, 82, 163, 0.8);
+    background: #fe9f43;
+    border: 1px solid #fe9f43;
     border-radius: var(--r-md);
     color: #ffffff;
     font-weight: 700;
     font-size: 12.5px;
     cursor: pointer;
-    box-shadow: var(--shadow-primary);
+    box-shadow: none;
     transition: all 0.15s ease;
     display: inline-flex;
     align-items: center;
@@ -1285,9 +1280,10 @@ textarea:focus {
 }
 
 .glass-btn-primary:hover {
-    background: linear-gradient(180deg, #007be5 0%, #0066cc 100%);
+    background: #e04f16;
+    border-color: #e04f16;
     transform: translateY(-1px);
-    box-shadow: 0 4px 14px -1px rgba(0, 102, 204, 0.45);
+    box-shadow: 0 4px 12px -1px rgba(224, 79, 22, 0.32);
 }
 
 .glass-btn-primary:active {
@@ -1576,16 +1572,6 @@ textarea:focus {
 /* ==========================================================================
    Responsive Adaptations
    ========================================================================== */
-
-@media (max-width: 1360px) {
-    .btn-row-action {
-        padding: 4px 8px;
-        font-size: 11px;
-    }
-    .action-buttons-wrap {
-        gap: 4px;
-    }
-}
 
 @media (max-width: 1200px) {
     .main-grid {

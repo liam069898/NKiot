@@ -552,11 +552,20 @@ function getAllData() {
     const returns = d
         .prepare('SELECT * FROM returns ORDER BY rowid')
         .all()
-        .map((r) => ({
-            ...r,
-            items: parseItems(r.items),
-            totalRefund: Number(r.totalRefund) || 0
-        }));
+        .map((r) => {
+            const { extra, ...known } = r;
+            let fields = {};
+            try {
+                fields = JSON.parse(extra || '{}');
+            } catch {}
+            return {
+                ...fields,
+                ...known,
+                items: parseItems(r.items),
+                totalRefund: Number(r.totalRefund) || 0,
+                cashRefund: Number(known.cashRefund ?? fields.cashRefund) || 0
+            };
+        });
 
     // 10b. Import returns (trả hàng nhập)
     const import_returns = d
@@ -574,7 +583,8 @@ function getAllData() {
                 items: parseItems(r.items),
                 totalRefund: Number(r.totalRefund) || 0,
                 debtReduced: Number(known.debtReduced ?? fields.debtReduced) || 0,
-                cashBack: Number(known.cashBack ?? fields.cashBack) || 0
+                cashBack: Number(known.cashBack ?? fields.cashBack) || 0,
+                settledValue: Number(known.settledValue ?? fields.settledValue) || 0
             };
         });
 
@@ -1189,7 +1199,7 @@ const ROW_WRITERS = {
     ],
     exchanges: [
         cols(
-            'id code type sourceCode returnCode exchangeCode items exchangeItems returnValue exchangeValue debtReduction credit net method reason cashier branch'
+            'id code type sourceCode returnCode exchangeCode items exchangeItems returnValue exchangeValue debtReduction credit net method reason cashier branch customerId customer supplierId nccCode supplierName'
         ),
         (e) => [
             e.id || '',
@@ -1208,7 +1218,12 @@ const ROW_WRITERS = {
             e.method || '',
             e.reason || '',
             e.cashier || '',
-            e.branch || FALLBACK_BRANCH
+            e.branch || FALLBACK_BRANCH,
+            e.customerId || null,
+            e.customer || '',
+            e.supplierId || null,
+            e.nccCode || '',
+            e.supplierName || ''
         ]
     ],
     stocktakes: [

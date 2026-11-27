@@ -256,19 +256,26 @@
             link.textContent = t.url ? t.url.replace(/^https?:\/\//, '') : `:${t.port}`;
             link.title = `Mở ${t.url} trong tab mới`;
 
+            const COPY_ICON_SVG =
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+            const CHECK_ICON_SVG =
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
             const copyBtn = document.createElement('button');
             copyBtn.type = 'button';
             copyBtn.className = 'btn-copy';
             copyBtn.style.padding = '4px 8px';
             copyBtn.style.fontSize = '11px';
+            copyBtn.style.display = 'inline-flex';
+            copyBtn.style.alignItems = 'center';
             copyBtn.title = 'Sao chép URL';
-            copyBtn.textContent = '📋';
+            copyBtn.setAttribute('aria-label', 'Sao chép URL POS');
+            copyBtn.innerHTML = COPY_ICON_SVG;
             copyBtn.addEventListener('click', async () => {
                 try {
                     await navigator.clipboard.writeText(t.url);
-                    copyBtn.textContent = '✓';
+                    copyBtn.innerHTML = CHECK_ICON_SVG;
                     setTimeout(() => {
-                        copyBtn.textContent = '📋';
+                        copyBtn.innerHTML = COPY_ICON_SVG;
                     }, 1500);
                 } catch {}
             });
@@ -641,6 +648,10 @@
     }
 
     // Toggle password visibility helper
+    const EYE_SVG =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const EYE_OFF_SVG =
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
     function setupPasswordToggle(buttonId, inputId) {
         const btn = $(buttonId);
         const input = $(inputId);
@@ -648,7 +659,8 @@
         btn.addEventListener('click', () => {
             const isPassword = input.type === 'password';
             input.type = isPassword ? 'text' : 'password';
-            btn.textContent = isPassword ? '🔒' : '👁';
+            btn.innerHTML = isPassword ? EYE_OFF_SVG : EYE_SVG;
+            btn.setAttribute('aria-pressed', String(isPassword));
         });
     }
 

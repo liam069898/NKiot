@@ -8,10 +8,10 @@ function switchReportTab(tab) {
         if (!btn) return;
         if (t === tab) {
             btn.className =
-                'rep-tab-btn px-3 py-1 rounded-xl transition-all shadow-xs bg-white text-[#0066cc] font-bold';
+                'rep-tab-btn px-3 py-1 rounded-[6px] transition-all bg-[#FFF6EE] text-[#E04F16] font-bold whitespace-nowrap';
         } else {
             btn.className =
-                'rep-tab-btn px-3 py-1 rounded-xl transition-all text-gray-700 hover:text-gray-900 font-semibold';
+                'rep-tab-btn px-3 py-1 rounded-[6px] transition-all text-[#646B72] hover:text-[#092C4C] font-semibold whitespace-nowrap';
         }
     });
 
@@ -48,16 +48,72 @@ function updateKpiCard(index, icon, label, val, subHtml, iconClasses) {
     }
 }
 
+function bindReportChartDetails(container) {
+    const detail = document.getElementById(`${container.id}-detail`);
+    if (!detail) return;
+    const points = [...container.querySelectorAll('[data-report-point]')];
+    detail.textContent = points.length ? 'Chọn một cột để xem số liệu chi tiết.' : '';
+    points.forEach((point) => {
+        point.setAttribute('role', 'button');
+        point.setAttribute('aria-label', point.dataset.pointDetail);
+        point.setAttribute('aria-pressed', 'false');
+        point.classList.add('focus-visible:ring-2', 'focus-visible:ring-[#FE9F43]');
+        point.onclick = () => {
+            points.forEach((p) => p.setAttribute('aria-pressed', String(p === point)));
+            detail.textContent = point.dataset.pointDetail;
+        };
+        point.onkeydown = (event) => {
+            if (!['Enter', ' '].includes(event.key)) return;
+            event.preventDefault();
+            point.click();
+        };
+    });
+}
+
+function niceReportChartScale(rawMax) {
+    if (!rawMax || rawMax <= 0) return 4000000;
+    const stepRaw = rawMax / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(stepRaw)));
+    const norm = stepRaw / mag;
+    const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
+    return niceNorm * mag * 4;
+}
+
+function formatReportAxisVal(val) {
+    const abs = Math.abs(val || 0);
+    const sign = val < 0 ? '-' : '';
+    if (abs === 0) return '0';
+    if (abs >= 1000000000) return `${sign}${(abs / 1000000000).toFixed(1).replace(/\.0$/, '')} tỷ`;
+    if (abs >= 1000000) return `${sign}${(abs / 1000000).toFixed(1).replace(/\.0$/, '')} tr`;
+    if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(0)}k`;
+    return `${sign}${Math.round(abs)}`;
+}
+
+function renderReportGridlinesHtml(ticks, hasNegative) {
+    return ticks
+        .map((tick, idx) => {
+            const isZero = tick === 0;
+            const isLast = idx === ticks.length - 1;
+            const lineCls =
+                isZero || (isLast && !hasNegative)
+                    ? 'border-b border-[#E6EAED]'
+                    : 'border-b border-dashed border-[#E6EAED]';
+            return `<div class="relative flex items-center w-full ${lineCls} h-0"><span class="absolute -left-14 -top-2 w-12 text-right text-[10.5px] font-medium text-[#646B72] tabular-nums leading-tight whitespace-nowrap">${formatReportAxisVal(tick)}</span></div>`;
+        })
+        .join('');
+}
+
 function renderDualBarChart(containerId, items, label1, color1, label2, color2) {
     const container = document.getElementById(containerId);
     if (!container) return;
     if (!items || items.length === 0) {
         container.innerHTML = renderHTML`
-            <div class="h-full w-full flex flex-col items-center justify-center text-gray-400 py-6">
-                <svg class="w-8 h-8 mb-1.5 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16v-4m4 4V8m4 8v-6m4 6v-9"/></svg>
+            <div class="h-full w-full flex flex-col items-center justify-center text-[#646B72] py-6">
+                <svg class="w-8 h-8 mb-1.5 text-[#CBD5E1]" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16v-4m4 4V8m4 8v-6m4 6v-9"/></svg>
                 <span class="text-[12px] font-medium">Chưa có dữ liệu giao dịch trong khoảng thời gian này</span>
             </div>
         `;
+        bindReportChartDetails(container);
         return;
     }
 
@@ -72,18 +128,31 @@ function renderDualBarChart(containerId, items, label1, color1, label2, color2) 
     const hasNegative = maxNegative > 0;
     const hasPositive = maxPositive > 0;
 
-    let scalePos = maxPositive || 1000000;
-    let scaleNeg = maxNegative || 1000000;
+    const scalePos = niceReportChartScale(maxPositive);
+    const scaleNeg = niceReportChartScale(maxNegative);
     let posZonePct = 50;
     let negZonePct = 50;
 
     if (hasPositive && hasNegative) {
-        const totalSpan = maxPositive + maxNegative;
-        posZonePct = Math.max(25, Math.min(75, Math.round((maxPositive / totalSpan) * 100)));
+        const totalSpan = scalePos + scaleNeg;
+        posZonePct = Math.max(25, Math.min(75, Math.round((scalePos / totalSpan) * 100)));
         negZonePct = 100 - posZonePct;
     }
 
-    container.innerHTML = items
+    const gridTicks =
+        hasPositive && hasNegative
+            ? [scalePos, scalePos / 2, 0, -scaleNeg / 2, -scaleNeg]
+            : hasNegative && !hasPositive
+              ? [0, -scaleNeg * 0.25, -scaleNeg * 0.5, -scaleNeg * 0.75, -scaleNeg]
+              : [scalePos, scalePos * 0.75, scalePos * 0.5, scalePos * 0.25, 0];
+
+    const c1 = color1 || 'bg-[#FE9F43]';
+    const c2 = color2 || 'bg-[#0E9384]';
+
+    const dualColWidthCls =
+        items.length <= 6 ? 'min-w-[64px] max-w-[136px]' : 'min-w-[44px] max-w-[76px]';
+
+    const columnsHtml = items
         .map((it) => {
             const v1 = it.val1 != null && !isNaN(it.val1) ? Number(it.val1) : null;
             const v2 = it.val2 != null && !isNaN(it.val2) ? Number(it.val2) : null;
@@ -98,76 +167,99 @@ function renderDualBarChart(containerId, items, label1, color1, label2, color2) 
             let barsHtml = '';
             if (hasPositive && hasNegative) {
                 const h1Pos =
-                    v1 != null && v1 > 0 ? Math.min(100, Math.round((v1 / maxPositive) * 100)) : 0;
+                    v1 != null && v1 > 0
+                        ? Math.min(100, Math.max(5, Math.round((v1 / scalePos) * 100)))
+                        : 0;
                 const h2Pos =
-                    v2 != null && v2 > 0 ? Math.min(100, Math.round((v2 / maxPositive) * 100)) : 0;
+                    v2 != null && v2 > 0
+                        ? Math.min(100, Math.max(5, Math.round((v2 / scalePos) * 100)))
+                        : 0;
 
                 const h1Neg =
                     v1 != null && v1 < 0
-                        ? Math.min(100, Math.round((Math.abs(v1) / maxNegative) * 100))
+                        ? Math.min(100, Math.max(5, Math.round((Math.abs(v1) / scaleNeg) * 100)))
                         : 0;
                 const h2Neg =
                     v2 != null && v2 < 0
-                        ? Math.min(100, Math.round((Math.abs(v2) / maxNegative) * 100))
+                        ? Math.min(100, Math.max(5, Math.round((Math.abs(v2) / scaleNeg) * 100)))
                         : 0;
 
                 barsHtml = renderHTML`
-                    <div class="w-full flex flex-col h-[132px] pb-1">
-                        <div class="w-full flex items-end justify-center space-x-1.5" style="height: ${posZonePct}%;">
-                            <div style="height: ${h1Pos}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color1} ${h1Pos === 0 ? 'opacity-0' : ''}"></div>
-                            <div style="height: ${h2Pos}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color2} ${h2Pos === 0 ? 'opacity-0' : ''}"></div>
+                    <div class="w-full flex flex-col h-[176px]">
+                        <div class="w-full flex items-end justify-center gap-1" style="height: ${posZonePct}%;">
+                            <div style="height: ${h1Pos}%;" class="w-3.5 sm:w-4 rounded-t-[6px] transition-all duration-300 group-hover:brightness-95 ${c1} ${h1Pos === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${h2Pos}%;" class="w-3.5 sm:w-4 rounded-t-[6px] transition-all duration-300 group-hover:brightness-95 ${c2} ${h2Pos === 0 ? 'opacity-0' : ''}"></div>
                         </div>
-                        <div class="w-full border-t border-gray-300 relative flex items-center justify-center my-0" title="Mốc 0"></div>
-                        <div class="w-full flex items-start justify-center space-x-1.5" style="height: ${negZonePct}%;">
-                            <div style="height: ${h1Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h1Neg === 0 ? 'opacity-0' : ''}"></div>
-                            <div style="height: ${h2Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h2Neg === 0 ? 'opacity-0' : ''}"></div>
+                        <div class="w-full border-t border-[#CBD5E1] relative" title="Mốc 0"></div>
+                        <div class="w-full flex items-start justify-center gap-1" style="height: ${negZonePct}%;">
+                            <div style="height: ${h1Neg}%;" class="w-3.5 sm:w-4 rounded-b-[6px] transition-all duration-300 group-hover:brightness-95 bg-rose-500 ${h1Neg === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${h2Neg}%;" class="w-3.5 sm:w-4 rounded-b-[6px] transition-all duration-300 group-hover:brightness-95 bg-rose-500 ${h2Neg === 0 ? 'opacity-0' : ''}"></div>
                         </div>
                     </div>
                 `;
             } else if (hasNegative && !hasPositive) {
                 const h1Neg =
                     v1 != null && v1 < 0
-                        ? Math.min(100, Math.round((Math.abs(v1) / scaleNeg) * 100))
+                        ? Math.min(100, Math.max(5, Math.round((Math.abs(v1) / scaleNeg) * 100)))
                         : 0;
                 const h2Neg =
                     v2 != null && v2 < 0
-                        ? Math.min(100, Math.round((Math.abs(v2) / scaleNeg) * 100))
+                        ? Math.min(100, Math.max(5, Math.round((Math.abs(v2) / scaleNeg) * 100)))
                         : 0;
                 barsHtml = renderHTML`
-                    <div class="w-full flex flex-col h-[132px] pb-1">
-                        <div class="w-full border-t border-gray-300 relative" title="Mốc 0"></div>
-                        <div class="w-full flex items-start justify-center space-x-1.5 h-full pt-0.5">
-                            <div style="height: ${h1Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h1Neg === 0 ? 'opacity-0' : ''}"></div>
-                            <div style="height: ${h2Neg}%;" class="w-3.5 sm:w-4 rounded-b-md transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${h2Neg === 0 ? 'opacity-0' : ''}"></div>
+                    <div class="w-full flex flex-col h-[176px]">
+                        <div class="w-full border-t border-[#CBD5E1] relative" title="Mốc 0"></div>
+                        <div class="w-full flex items-start justify-center gap-1 h-full pt-0.5">
+                            <div style="height: ${h1Neg}%;" class="w-3.5 sm:w-4 rounded-b-[6px] transition-all duration-300 group-hover:brightness-95 bg-rose-500 ${h1Neg === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${h2Neg}%;" class="w-3.5 sm:w-4 rounded-b-[6px] transition-all duration-300 group-hover:brightness-95 bg-rose-500 ${h2Neg === 0 ? 'opacity-0' : ''}"></div>
                         </div>
                     </div>
                 `;
             } else {
                 const h1 =
-                    v1 != null && v1 > 0 ? Math.min(100, Math.round((v1 / scalePos) * 100)) : 0;
+                    v1 != null && v1 > 0
+                        ? Math.min(100, Math.max(5, Math.round((v1 / scalePos) * 100)))
+                        : 0;
                 const h2 =
-                    v2 != null && v2 > 0 ? Math.min(100, Math.round((v2 / scalePos) * 100)) : 0;
+                    v2 != null && v2 > 0
+                        ? Math.min(100, Math.max(5, Math.round((v2 / scalePos) * 100)))
+                        : 0;
                 barsHtml = renderHTML`
-                    <div class="w-full flex items-end justify-center space-x-1.5 h-[132px] pb-1 border-b border-gray-200">
-                        <div style="height: ${h1}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color1} ${h1 === 0 ? 'opacity-0' : ''}"></div>
-                        <div style="height: ${h2}%;" class="w-3.5 sm:w-4 rounded-t-md transition-all duration-300 group-hover:brightness-110 shadow-xs ${color2} ${h2 === 0 ? 'opacity-0' : ''}"></div>
+                    <div class="w-full flex items-end justify-center gap-1 h-[176px]">
+                        <div style="height: ${h1}%;" class="w-3.5 sm:w-4.5 rounded-t-[6px] transition-all duration-300 group-hover:brightness-95 ${c1} ${h1 === 0 ? 'opacity-0' : ''}"></div>
+                        <div style="height: ${h2}%;" class="w-3.5 sm:w-4.5 rounded-t-[6px] transition-all duration-300 group-hover:brightness-95 ${c2} ${h2 === 0 ? 'opacity-0' : ''}"></div>
                     </div>
                 `;
             }
 
             return renderHTML`
-            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[42px] max-w-[70px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${label1}: ${v1Tip}\n${label2}: ${v2Tip}">
-                <div class="hidden group-hover:block group-focus:block absolute -top-12 left-1/2 -translate-x-1/2 bg-gray-900/95 text-white text-[10.5px] leading-snug px-2 py-1 rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
-                    <div class="font-bold">${it.fullName || it.label}</div>
-                    <div>${label1}: ${v1Tip}</div>
-                    <div>${label2}: ${v2Tip}</div>
+            <div tabindex="0" data-report-point data-point-detail="${it.fullName || it.label} · ${label1}: ${v1Tip} · ${label2}: ${v2Tip}" class="flex-1 flex flex-col items-center justify-end h-full group ${dualColWidthCls} relative cursor-pointer focus:outline-none rounded-[6px]" title="${it.fullName || it.label}\n${label1}: ${v1Tip}\n${label2}: ${v2Tip}">
+                <div class="hidden group-hover:block group-focus:block absolute top-1 left-1/2 -translate-x-1/2 bg-[#092C4C] text-white text-[10.5px] leading-snug px-2.5 py-1.5 rounded-[7px] shadow-lg whitespace-nowrap z-30 pointer-events-none">
+                    <div class="font-bold mb-0.5">${it.fullName || it.label}</div>
+                    <div>${label1}: <strong>${v1Tip}</strong></div>
+                    <div>${label2}: <strong>${v2Tip}</strong></div>
                 </div>
                 ${trustedHTML(barsHtml)}
-                <div class="text-[10.5px] font-semibold text-gray-500 group-hover:text-[#0066cc] truncate max-w-full text-center tracking-tighter pt-1 border-t border-gray-100 w-full" title="${it.fullName || it.label}">${it.label}</div>
+                <div class="absolute top-full left-0 right-0 text-[10.5px] font-medium text-[#646B72] group-hover:text-[#E04F16] truncate text-center pt-1.5 tabular-nums" title="${it.fullName || it.label}">${it.label}</div>
             </div>
         `;
         })
         .join('');
+
+    container.innerHTML = renderHTML`
+        <div class="relative w-full h-full pl-14 pr-2 pt-2 flex flex-col justify-end min-w-[360px]">
+            <div class="relative h-[176px] w-full">
+                <div class="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                    ${trustedHTML(renderReportGridlinesHtml(gridTicks, hasNegative))}
+                </div>
+                <div class="relative z-10 w-full h-full flex items-end justify-around gap-1.5 px-1">
+                    ${trustedHTML(columnsHtml)}
+                </div>
+            </div>
+            <div class="h-6 flex-shrink-0"></div>
+        </div>
+    `;
+    bindReportChartDetails(container);
 }
 
 function renderSingleBarChart(containerId, items, barColor) {
@@ -175,11 +267,12 @@ function renderSingleBarChart(containerId, items, barColor) {
     if (!container) return;
     if (!items || items.length === 0) {
         container.innerHTML = renderHTML`
-            <div class="h-full w-full flex flex-col items-center justify-center text-gray-400 py-6">
-                <svg class="w-8 h-8 mb-1.5 text-gray-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16v-4m4 4V8m4 8v-6m4 6v-9"/></svg>
+            <div class="h-full w-full flex flex-col items-center justify-center text-[#646B72] py-6">
+                <svg class="w-8 h-8 mb-1.5 text-[#CBD5E1]" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16v-4m4 4V8m4 8v-6m4 6v-9"/></svg>
                 <span class="text-[12px] font-medium">Chưa có phát sinh số liệu</span>
             </div>
         `;
+        bindReportChartDetails(container);
         return;
     }
 
@@ -191,69 +284,101 @@ function renderSingleBarChart(containerId, items, barColor) {
     const hasNegative = maxNegative > 0;
     const hasPositive = maxPositive > 0;
 
-    let scalePos = maxPositive || 1000000;
-    let scaleNeg = maxNegative || 1000000;
+    const scalePos = niceReportChartScale(maxPositive);
+    const scaleNeg = niceReportChartScale(maxNegative);
     let posZonePct = 50;
     let negZonePct = 50;
     if (hasPositive && hasNegative) {
-        const totalSpan = maxPositive + maxNegative;
-        posZonePct = Math.max(25, Math.min(75, Math.round((maxPositive / totalSpan) * 100)));
+        const totalSpan = scalePos + scaleNeg;
+        posZonePct = Math.max(25, Math.min(75, Math.round((scalePos / totalSpan) * 100)));
         negZonePct = 100 - posZonePct;
     }
 
-    container.innerHTML = items
+    const gridTicks =
+        hasPositive && hasNegative
+            ? [scalePos, scalePos / 2, 0, -scaleNeg / 2, -scaleNeg]
+            : hasNegative && !hasPositive
+              ? [0, -scaleNeg * 0.25, -scaleNeg * 0.5, -scaleNeg * 0.75, -scaleNeg]
+              : [scalePos, scalePos * 0.75, scalePos * 0.5, scalePos * 0.25, 0];
+
+    const colBar = barColor || 'bg-[#FE9F43]';
+    const singleColWidthCls =
+        items.length <= 6 ? 'min-w-[68px] max-w-[144px]' : 'min-w-[48px] max-w-[84px]';
+
+    const columnsHtml = items
         .map((it) => {
             const val = it.value != null && !isNaN(it.value) ? Number(it.value) : 0;
             const valTip = `${formatVND(val)} đ${val < 0 ? ' (Âm)' : ''}`;
 
             let barHtml = '';
             if (hasPositive && hasNegative) {
-                const hPos = val > 0 ? Math.min(100, Math.round((val / maxPositive) * 100)) : 0;
+                const hPos =
+                    val > 0 ? Math.min(100, Math.max(5, Math.round((val / scalePos) * 100))) : 0;
                 const hNeg =
-                    val < 0 ? Math.min(100, Math.round((Math.abs(val) / maxNegative) * 100)) : 0;
+                    val < 0
+                        ? Math.min(100, Math.max(5, Math.round((Math.abs(val) / scaleNeg) * 100)))
+                        : 0;
                 barHtml = renderHTML`
-                    <div class="w-full flex flex-col h-[132px] pb-1">
+                    <div class="w-full flex flex-col h-[176px]">
                         <div class="w-full flex items-end justify-center" style="height: ${posZonePct}%;">
-                            <div style="height: ${hPos}%;" class="w-6 sm:w-8 rounded-t-lg transition-all duration-300 group-hover:brightness-110 shadow-xs ${barColor || 'bg-[#0066cc]'} ${hPos === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${hPos}%;" class="w-6 sm:w-8 rounded-t-[7px] transition-all duration-300 group-hover:brightness-95 ${colBar} ${hPos === 0 ? 'opacity-0' : ''}"></div>
                         </div>
-                        <div class="w-full border-t border-gray-300 relative" title="Mốc 0"></div>
+                        <div class="w-full border-t border-[#CBD5E1] relative" title="Mốc 0"></div>
                         <div class="w-full flex items-start justify-center" style="height: ${negZonePct}%;">
-                            <div style="height: ${hNeg}%;" class="w-6 sm:w-8 rounded-b-lg transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${hNeg === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${hNeg}%;" class="w-6 sm:w-8 rounded-b-[7px] transition-all duration-300 group-hover:brightness-95 bg-rose-500 ${hNeg === 0 ? 'opacity-0' : ''}"></div>
                         </div>
                     </div>
                 `;
             } else if (hasNegative && !hasPositive) {
                 const hNeg =
-                    val < 0 ? Math.min(100, Math.round((Math.abs(val) / scaleNeg) * 100)) : 0;
+                    val < 0
+                        ? Math.min(100, Math.max(5, Math.round((Math.abs(val) / scaleNeg) * 100)))
+                        : 0;
                 barHtml = renderHTML`
-                    <div class="w-full flex flex-col h-[132px] pb-1">
-                        <div class="w-full border-t border-gray-300 relative" title="Mốc 0"></div>
+                    <div class="w-full flex flex-col h-[176px]">
+                        <div class="w-full border-t border-[#CBD5E1] relative" title="Mốc 0"></div>
                         <div class="w-full flex items-start justify-center h-full pt-0.5">
-                            <div style="height: ${hNeg}%;" class="w-6 sm:w-8 rounded-b-lg transition-all duration-300 group-hover:brightness-110 shadow-xs bg-rose-500 border border-rose-600 ${hNeg === 0 ? 'opacity-0' : ''}"></div>
+                            <div style="height: ${hNeg}%;" class="w-6 sm:w-8 rounded-b-[7px] transition-all duration-300 group-hover:brightness-95 bg-rose-500 ${hNeg === 0 ? 'opacity-0' : ''}"></div>
                         </div>
                     </div>
                 `;
             } else {
-                const h = val > 0 ? Math.min(100, Math.round((val / scalePos) * 100)) : 0;
+                const h =
+                    val > 0 ? Math.min(100, Math.max(5, Math.round((val / scalePos) * 100))) : 0;
                 barHtml = renderHTML`
-                    <div class="w-full flex items-end justify-center h-[132px] pb-1 border-b border-gray-200">
-                        <div style="height: ${h}%;" class="w-6 sm:w-8 rounded-t-lg transition-all duration-300 group-hover:brightness-110 shadow-xs ${barColor || 'bg-[#0066cc]'} ${h === 0 ? 'opacity-0' : ''}"></div>
+                    <div class="w-full flex items-end justify-center h-[176px]">
+                        <div style="height: ${h}%;" class="w-6 sm:w-8 rounded-t-[7px] transition-all duration-300 group-hover:brightness-95 ${colBar} ${h === 0 ? 'opacity-0' : ''}"></div>
                     </div>
                 `;
             }
 
             return renderHTML`
-            <div tabindex="0" class="flex-1 flex flex-col items-center h-full justify-end group min-w-[50px] max-w-[85px] relative cursor-pointer focus:outline-none" title="${it.fullName || it.label}\n${it.subLabel || ''}\n${valTip}">
-                <div class="hidden group-hover:block group-focus:block absolute -top-11 left-1/2 -translate-x-1/2 bg-gray-900/95 text-white text-[10.5px] leading-snug px-2 py-1 rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
-                    <div class="font-bold">${it.fullName || it.label}</div>
-                    <div>${valTip}</div>
+            <div tabindex="0" data-report-point data-point-detail="${it.fullName || it.label} · ${it.subLabel ? `${it.subLabel} · ` : ''}${valTip}" class="flex-1 flex flex-col items-center justify-end h-full group ${singleColWidthCls} relative cursor-pointer focus:outline-none rounded-[6px]" title="${it.fullName || it.label}\n${it.subLabel || ''}\n${valTip}">
+                <div class="hidden group-hover:block group-focus:block absolute top-1 left-1/2 -translate-x-1/2 bg-[#092C4C] text-white text-[10.5px] leading-snug px-2.5 py-1.5 rounded-[7px] shadow-lg whitespace-nowrap z-30 pointer-events-none">
+                    <div class="font-bold mb-0.5">${it.fullName || it.label}</div>
+                    <div><strong>${valTip}</strong></div>
                 </div>
                 ${trustedHTML(barHtml)}
-                <div class="text-[10.5px] font-semibold text-gray-600 group-hover:text-[#0066cc] truncate max-w-full text-center tracking-tight pt-1 border-t border-gray-100 w-full" title="${it.fullName || it.label}">${it.label}</div>
+                <div class="absolute top-full left-0 right-0 text-[10.5px] font-medium text-[#646B72] group-hover:text-[#E04F16] truncate text-center pt-1.5 tabular-nums" title="${it.fullName || it.label}">${it.label}</div>
             </div>
         `;
         })
         .join('');
+
+    container.innerHTML = renderHTML`
+        <div class="relative w-full h-full pl-14 pr-2 pt-2 flex flex-col justify-end min-w-[360px]">
+            <div class="relative h-[176px] w-full">
+                <div class="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                    ${trustedHTML(renderReportGridlinesHtml(gridTicks, hasNegative))}
+                </div>
+                <div class="relative z-10 w-full h-full flex items-end justify-around gap-1.5 px-1">
+                    ${trustedHTML(columnsHtml)}
+                </div>
+            </div>
+            <div class="h-6 flex-shrink-0"></div>
+        </div>
+    `;
+    bindReportChartDetails(container);
 }
 
 function renderBreakdownBars(containerId, items) {
@@ -274,6 +399,7 @@ function renderBreakdownBars(containerId, items) {
     container.innerHTML = items
         .map((it) => {
             const pct = Math.min(100, Math.round(((it.value || 0) / total) * 100));
+            const unitSuffix = it.unit !== undefined ? it.unit : 'đ';
             return renderHTML`
             <div class="space-y-1">
                 <div class="flex items-center justify-between text-[11.5px]">
@@ -281,10 +407,10 @@ function renderBreakdownBars(containerId, items) {
                         <span class="w-2 h-2 rounded-full ${it.dotClass || 'bg-blue-500'}"></span>
                         <span class="truncate">${it.label}</span>
                     </span>
-                    <span class="font-bold text-gray-900 tabular-nums flex-shrink-0">${formatVND(it.value)} đ <span class="text-gray-400 font-normal">(${pct}%)</span></span>
+                    <span class="font-bold text-gray-900 tabular-nums flex-shrink-0">${formatVND(it.value)}${unitSuffix ? ` ${unitSuffix}` : ''} <span class="text-gray-400 font-normal">(${pct}%)</span></span>
                 </div>
                 <div class="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
-                    <div style="width: ${pct}%;" class="h-full rounded-full transition-all duration-500 ${it.barClass || 'bg-[#0066cc]'}"></div>
+                    <div style="width: ${pct}%;" class="h-full rounded-full transition-all duration-500 ${it.barClass || 'bg-[#FE9F43]'}"></div>
                 </div>
             </div>
         `;
@@ -677,14 +803,14 @@ function renderSalesReportTab(
         'Doanh thu thuần',
         `${formatVND(netRevenue)} đ`,
         renderHTML`<span class="text-emerald-600 font-semibold">Đã trừ trả hàng (${formatVND(totalReturns)} đ)</span>`,
-        'bg-blue-500/15 text-[#0066cc]'
+        'bg-blue-500/15 text-[#E04F16]'
     );
     updateKpiCard(
         2,
         '',
         'Lợi nhuận gộp',
         unknownCost ? 'Thiếu giá vốn lịch sử' : `${formatVND(grossProfit)} đ`,
-        renderHTML`Tỷ suất: <span id="rep-margin" class="font-bold text-[#0066cc]">${unknownCost ? '—' : margin + '%'}</span>`,
+        renderHTML`Tỷ suất: <span id="rep-margin" class="font-bold text-[#E04F16]">${unknownCost ? '—' : margin + '%'}</span>`,
         'bg-emerald-500/15 text-emerald-600'
     );
     updateKpiCard(
@@ -693,7 +819,7 @@ function renderSalesReportTab(
         'Số lượng hóa đơn',
         `${invoicesCount} đơn`,
         renderHTML`TB đơn (AOV): <span id="rep-kpi-aov-sub" class="font-bold text-gray-700">${formatVND(aov)} đ</span>`,
-        'bg-[#0066cc]/15 text-[#0066cc]'
+        'bg-[#FFF6EE] text-[#E04F16]'
     );
     updateKpiCard(
         4,
@@ -710,7 +836,7 @@ function renderSalesReportTab(
     const mainLegendEl = document.getElementById('rep-main-chart-legend');
     if (mainLegendEl) {
         mainLegendEl.innerHTML = renderHTML`
-            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#0066cc]"></span><span>Doanh thu</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#FE9F43]"></span><span>Doanh thu</span></span>
             <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span><span>Lợi nhuận</span></span>
         `;
     }
@@ -784,7 +910,7 @@ function renderSalesReportTab(
         'rep-main-chart-container',
         chartItems,
         'Doanh thu thuần',
-        'bg-[#0066cc]',
+        'bg-[#FE9F43]',
         'Lợi nhuận',
         'bg-emerald-500'
     );
@@ -807,8 +933,8 @@ function renderSalesReportTab(
         {
             label: 'Chuyển khoản (VietQR)',
             value: methods.transfer,
-            dotClass: 'bg-[#0066cc]',
-            barClass: 'bg-[#0066cc]'
+            dotClass: 'bg-[#FE9F43]',
+            barClass: 'bg-[#FE9F43]'
         },
         {
             label: 'Tiền mặt',
@@ -873,7 +999,7 @@ function renderSalesReportTab(
                     <td class="py-2.5 px-3 text-center font-bold text-gray-700">${d.count}</td>
                     <td class="py-2.5 px-3 text-right font-medium text-gray-800 tabular-nums">${formatVND(d.gross)} đ</td>
                     <td class="py-2.5 px-3 text-right font-medium text-rose-600 tabular-nums">${d.returns > 0 ? '-' + formatVND(d.returns) + ' đ' : '0 đ'}</td>
-                    <td class="py-2.5 px-3 text-right font-bold text-[#0066cc] tabular-nums">${formatVND(net)} đ</td>
+                    <td class="py-2.5 px-3 text-right font-bold text-[#E04F16] tabular-nums">${formatVND(net)} đ</td>
                     <td class="py-2.5 px-3 text-right font-medium text-gray-600 tabular-nums">${d.unknownCost ? 'Thiếu giá vốn' : formatVND(d.cost) + ' đ'}</td>
                     <td class="py-2.5 px-3 text-right font-bold text-emerald-600 tabular-nums">${d.unknownCost ? 'Chưa xác định' : formatVND(profit) + ' đ'}</td>
                     <td class="py-2.5 px-3 text-right font-bold tabular-nums ${parseFloat(rate) >= 20 ? 'text-emerald-600' : 'text-amber-600'}">${d.unknownCost ? '—' : rate + '%'}</td>
@@ -894,7 +1020,7 @@ function renderSalesReportTab(
                 <span>Doanh thu bán: <strong class="text-gray-900">${formatVND(grossRevenue)} đ</strong></span>
             </div>
             <div class="flex items-center space-x-4">
-                <span>DT thuần: <strong class="text-[#0066cc]">${formatVND(netRevenue)} đ</strong></span>
+                <span>DT thuần: <strong class="text-[#E04F16]">${formatVND(netRevenue)} đ</strong></span>
                 <span>Lợi nhuận gộp: <strong class="text-emerald-600">${unknownCost ? 'Thiếu giá vốn lịch sử' : formatVND(grossProfit) + ' đ'}</strong></span>
                 <span>Tỷ suất TB: <strong class="text-gray-900">${unknownCost ? '—' : margin + '%'}</strong></span>
             </div>
@@ -1006,7 +1132,7 @@ function renderProductsReportTab(
         'Tổng sản phẩm đã bán',
         `${totalQtySold} SP`,
         renderHTML`Từ <span class="font-semibold text-gray-800">${validInvoices.length}</span> hóa đơn bán`,
-        'bg-blue-500/15 text-[#0066cc]'
+        'bg-blue-500/15 text-[#E04F16]'
     );
     updateKpiCard(
         2,
@@ -1023,8 +1149,8 @@ function renderProductsReportTab(
         prodList.some((p) => p.unknownCost)
             ? 'Thiếu giá vốn lịch sử'
             : `${formatVND(totalProdProfit)} đ`,
-        renderHTML`Tỷ suất TB: <span id="rep-margin" class="font-bold text-[#0066cc]">${prodList.some((p) => p.unknownCost) ? '—' : avgMargin + '%'}</span>`,
-        'bg-[#0066cc]/15 text-[#0066cc]'
+        renderHTML`Tỷ suất TB: <span id="rep-margin" class="font-bold text-[#E04F16]">${prodList.some((p) => p.unknownCost) ? '—' : avgMargin + '%'}</span>`,
+        'bg-[#FFF6EE] text-[#E04F16]'
     );
     updateKpiCard(
         4,
@@ -1036,7 +1162,7 @@ function renderProductsReportTab(
                 : topProd.name
             : 'Chưa có',
         topProd
-            ? renderHTML`<span class="font-semibold text-[#0066cc]">${topProd.qty} SP</span> (${formatVND(topProd.revenue)} đ)`
+            ? renderHTML`<span class="font-semibold text-[#E04F16]">${topProd.qty} SP</span> (${formatVND(topProd.revenue)} đ)`
             : 'Chưa phát sinh',
         'bg-amber-500/15 text-amber-600'
     );
@@ -1047,7 +1173,7 @@ function renderProductsReportTab(
     const mainLegendEl = document.getElementById('rep-main-chart-legend');
     if (mainLegendEl) {
         mainLegendEl.innerHTML = renderHTML`
-            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#0066cc]"></span><span>Doanh thu</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#FE9F43]"></span><span>Doanh thu</span></span>
             <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span><span>Lợi nhuận</span></span>
         `;
     }
@@ -1068,7 +1194,7 @@ function renderProductsReportTab(
         'rep-main-chart-container',
         top5,
         'Doanh thu',
-        'bg-[#0066cc]',
+        'bg-[#FE9F43]',
         'Lợi nhuận',
         'bg-emerald-500'
     );
@@ -1082,7 +1208,7 @@ function renderProductsReportTab(
         const colors = [
             { dot: 'bg-blue-500', bar: 'bg-blue-500' },
             { dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
-            { dot: 'bg-[#0066cc]', bar: 'bg-[#0066cc]' },
+            { dot: 'bg-[#FE9F43]', bar: 'bg-[#FE9F43]' },
             { dot: 'bg-amber-500', bar: 'bg-amber-500' },
             { dot: 'bg-slate-700', bar: 'bg-slate-700' }
         ];
@@ -1125,11 +1251,11 @@ function renderProductsReportTab(
 
                 return renderHTML`
                 <tr class="hover:bg-blue-50/40 transition-colors">
-                    <td class="py-2.5 px-3 font-semibold text-[#0066cc] font-mono text-[12px]">${p.code}</td>
+                    <td class="py-2.5 px-3 font-semibold text-[#E04F16] font-mono text-[12px]">${p.code}</td>
                     <td class="py-2.5 px-3 font-semibold text-gray-900 max-w-[260px] truncate" title="${p.name}">${p.name}</td>
                     <td class="py-2.5 px-3 text-gray-600 text-[12px]">${p.category}</td>
                     <td class="py-2.5 px-3 text-center font-bold text-gray-800">${p.qty}</td>
-                    <td class="py-2.5 px-3 text-right font-bold text-[#0066cc] tabular-nums">${formatVND(p.revenue)} đ</td>
+                    <td class="py-2.5 px-3 text-right font-bold text-[#E04F16] tabular-nums">${formatVND(p.revenue)} đ</td>
                     <td class="py-2.5 px-3 text-right font-medium text-gray-600 tabular-nums">${p.unknownCost ? 'Thiếu giá vốn' : formatVND(p.totalCost) + ' đ'}</td>
                     <td class="py-2.5 px-3 text-right font-bold text-emerald-600 tabular-nums">${p.unknownCost ? 'Chưa xác định' : formatVND(p.profit) + ' đ'}</td>
                     <td class="py-2.5 px-3 text-right font-bold tabular-nums ${parseFloat(p.margin) >= 20 ? 'text-emerald-600' : 'text-amber-600'}">${p.unknownCost ? '—' : p.margin + '%'}</td>
@@ -1151,7 +1277,7 @@ function renderProductsReportTab(
                 <span>Tổng số lượng bán: <strong class="text-gray-900">${totalQtySold} SP</strong></span>
             </div>
             <div class="flex items-center space-x-4">
-                <span>Doanh thu: <strong class="text-[#0066cc]">${formatVND(totalProdRev)} đ</strong></span>
+                <span>Doanh thu: <strong class="text-[#E04F16]">${formatVND(totalProdRev)} đ</strong></span>
                 <span>Lợi nhuận gộp: <strong class="text-emerald-600">${prodList.some((p) => p.unknownCost) ? 'Thiếu giá vốn lịch sử' : formatVND(totalProdProfit) + ' đ'}</strong></span>
                 <span>Tỷ suất TB: <strong class="text-gray-900">${prodList.some((p) => p.unknownCost) ? '—' : avgMargin + '%'}</strong></span>
             </div>
@@ -1198,7 +1324,7 @@ function renderCashflowReportTab(
         'Tổng thu trong kỳ',
         `${formatVND(totalThu)} đ`,
         renderHTML`<span class="text-blue-600 font-semibold">${thuList.length} phiếu thu</span>`,
-        'bg-blue-500/15 text-[#0066cc]'
+        'bg-blue-500/15 text-[#E04F16]'
     );
     updateKpiCard(
         2,
@@ -1231,7 +1357,7 @@ function renderCashflowReportTab(
     const mainLegendEl = document.getElementById('rep-main-chart-legend');
     if (mainLegendEl) {
         mainLegendEl.innerHTML = renderHTML`
-            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#0066cc]"></span><span>Tiền thu</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#FE9F43]"></span><span>Tiền thu</span></span>
             <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500"></span><span>Tiền chi</span></span>
         `;
     }
@@ -1270,7 +1396,7 @@ function renderCashflowReportTab(
         'rep-main-chart-container',
         chartItems,
         'Tiền thu',
-        'bg-[#0066cc]',
+        'bg-[#FE9F43]',
         'Tiền chi',
         'bg-rose-500'
     );
@@ -1293,8 +1419,8 @@ function renderCashflowReportTab(
         {
             label: 'Chuyển khoản ngân hàng',
             value: transferAmount,
-            dotClass: 'bg-[#0066cc]',
-            barClass: 'bg-[#0066cc]'
+            dotClass: 'bg-[#FE9F43]',
+            barClass: 'bg-[#FE9F43]'
         },
         {
             label: 'Tiền mặt tại quầy',
@@ -1359,7 +1485,7 @@ function renderCashflowReportTab(
 
                 return renderHTML`
                 <tr class="hover:bg-blue-50/40 transition-colors">
-                    <td class="py-2.5 px-3 font-semibold text-[#0066cc] font-mono text-[12px]">${c.code}</td>
+                    <td class="py-2.5 px-3 font-semibold text-[#E04F16] font-mono text-[12px]">${c.code}</td>
                     <td class="py-2.5 px-3 text-gray-600 font-mono text-[12px]">${c.time}</td>
                     <td class="py-2.5 px-3 text-center">${typeBadge}</td>
                     <td class="py-2.5 px-3 font-medium text-gray-900">${c.category || 'Khác'}</td>
@@ -1415,14 +1541,14 @@ function renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, cus
         'Doanh thu thuần',
         `${formatVND(figures.netRevenue)} đ`,
         renderHTML`<span class="text-emerald-600 font-semibold">Đã trừ trả hàng (${formatVND(figures.totalReturns)} đ)</span>`,
-        'bg-blue-500/15 text-[#0066cc]'
+        'bg-blue-500/15 text-[#E04F16]'
     );
     updateKpiCard(
         2,
         '',
         'Lợi nhuận gộp',
         figures.unknownCost ? 'Thiếu giá vốn lịch sử' : `${formatVND(figures.grossProfit)} đ`,
-        renderHTML`Tỷ suất: <span class="font-bold text-[#0066cc]">${figures.unknownCost ? '—' : figures.margin + '%'}</span>`,
+        renderHTML`Tỷ suất: <span class="font-bold text-[#E04F16]">${figures.unknownCost ? '—' : figures.margin + '%'}</span>`,
         'bg-emerald-500/15 text-emerald-600'
     );
     updateKpiCard(
@@ -1440,18 +1566,23 @@ function renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, cus
         figures.unknownCost
             ? 'Thiếu giá vốn lịch sử'
             : `${netProfit >= 0 ? '' : '-'}${formatVND(Math.abs(netProfit))} đ`,
-        renderHTML`Biên ròng: <span class="font-bold ${netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${figures.unknownCost ? '—' : netMargin + '%'}</span>`,
-        netProfit >= 0 ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-600'
+        renderHTML`Biên LN: <span class="font-bold ${figures.unknownCost ? 'text-amber-600' : netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${figures.unknownCost ? '—' : netMargin + '%'}</span>`,
+        figures.unknownCost
+            ? 'bg-amber-500/15 text-amber-600'
+            : netProfit >= 0
+              ? 'bg-emerald-500/15 text-emerald-600'
+              : 'bg-rose-500/15 text-rose-600'
     );
 
     // 2. Chart Titles & Legends
     const mainTitleEl = document.getElementById('rep-main-chart-title');
-    if (mainTitleEl) mainTitleEl.textContent = 'Xu hướng Doanh thu & Lợi nhuận ròng';
+    if (mainTitleEl)
+        mainTitleEl.textContent = 'Xu hướng Doanh thu & Lợi nhuận trước thuế (tạm tính)';
     const mainLegendEl = document.getElementById('rep-main-chart-legend');
     if (mainLegendEl) {
         mainLegendEl.innerHTML = renderHTML`
-            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#0066cc]"></span><span>Doanh thu</span></span>
-            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span><span>Lợi nhuận ròng</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#FE9F43]"></span><span>Doanh thu thuần</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span><span>LN trước thuế (tạm tính)</span></span>
         `;
     }
     const sideTitleEl = document.getElementById('rep-side-chart-title');
@@ -1517,8 +1648,8 @@ function renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, cus
         'rep-main-chart-container',
         chartItems,
         'Doanh thu thuần',
-        'bg-[#0066cc]',
-        'Lợi nhuận ròng',
+        'bg-[#FE9F43]',
+        'LN trước thuế (tạm tính)',
         'bg-emerald-500'
     );
 
@@ -1526,7 +1657,7 @@ function renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, cus
     const expenseBreakdown = OPERATING_EXPENSE_CATEGORIES.map((cat) => {
         const colors = {
             'Chi phí mặt bằng': 'bg-amber-500',
-            'Chi phí lương nhân viên': 'bg-[#0066cc]',
+            'Chi phí lương nhân viên': 'bg-[#FE9F43]',
             'Chi phí vận chuyển': 'bg-indigo-600',
             'Chi phí điện nước & mạng': 'bg-emerald-500',
             'Chi khác': 'bg-gray-400'
@@ -1642,7 +1773,15 @@ function renderPnlReportTab(data, currentBranch, branchProducts, dateFilter, cus
                 const bold = row.kind === 'subtotal' || row.kind === 'total';
                 const indent = row.kind === 'line' ? 'pl-6' : '';
                 const base =
-                    row.kind === 'total' ? 'bg-emerald-50/50' : bold ? 'bg-gray-50/50' : '';
+                    row.kind === 'total'
+                        ? row.unknown
+                            ? 'bg-amber-50/60'
+                            : (Number(row.value) || 0) < 0
+                              ? 'bg-rose-50/60'
+                              : 'bg-emerald-50/50'
+                        : bold
+                          ? 'bg-gray-50/50'
+                          : '';
                 return renderHTML`
                     <tr class="hover:bg-blue-50/40 transition-colors ${base}">
                         <td class="py-2.5 px-3 ${indent} ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}">${row.label}</td>
@@ -1696,7 +1835,7 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
         'Giá trị tồn theo vốn',
         `${formatVND(totalCostVal)} đ`,
         renderHTML`<span class="font-semibold text-gray-700">${products.length} mặt hàng</span> (${totalStockQty} SP)`,
-        'bg-blue-500/15 text-[#0066cc]'
+        'bg-blue-500/15 text-[#E04F16]'
     );
     updateKpiCard(
         2,
@@ -1711,8 +1850,8 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
         '',
         'Lợi nhuận gộp kho ước tính',
         `${formatVND(potentialProfit)} đ`,
-        renderHTML`Biên LN kho: <span id="rep-margin" class="font-bold text-[#0066cc]">${invMargin}%</span>`,
-        'bg-[#0066cc]/15 text-[#0066cc]'
+        renderHTML`Biên LN kho: <span id="rep-margin" class="font-bold text-[#E04F16]">${invMargin}%</span>`,
+        'bg-[#FFF6EE] text-[#E04F16]'
     );
     updateKpiCard(
         4,
@@ -1729,7 +1868,7 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     const mainLegendEl = document.getElementById('rep-main-chart-legend');
     if (mainLegendEl) {
         mainLegendEl.innerHTML = renderHTML`
-            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#0066cc]"></span><span>Giá trị vốn tồn kho</span></span>
+            <span class="inline-flex items-center space-x-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-[#FE9F43]"></span><span>Giá trị vốn tồn kho</span></span>
         `;
     }
 
@@ -1746,30 +1885,33 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
     });
 
     const catChartItems = Object.entries(catMap).map(([name, val]) => ({
-        label: name.length > 10 ? name.slice(0, 8) + '..' : name,
+        label: name,
         fullName: name,
         subLabel: 'Giá trị vốn tồn',
         value: val
     }));
-    renderSingleBarChart('rep-main-chart-container', catChartItems, 'bg-[#0066cc]');
+    renderSingleBarChart('rep-main-chart-container', catChartItems, 'bg-[#FE9F43]');
 
     // 4. Side Chart: Stock Status Breakdown
     renderBreakdownBars('rep-breakdown-container', [
         {
             label: 'Đủ hàng an toàn (> Min)',
             value: goodStock.length,
+            unit: 'SP',
             dotClass: 'bg-emerald-500',
             barClass: 'bg-emerald-500'
         },
         {
             label: 'Sắp hết hàng (≤ Min)',
             value: lowStock.length,
+            unit: 'SP',
             dotClass: 'bg-amber-500',
             barClass: 'bg-amber-500'
         },
         {
             label: 'Hết hàng (Hết sạch)',
             value: outOfStock.length,
+            unit: 'SP',
             dotClass: 'bg-rose-500',
             barClass: 'bg-rose-500'
         }
@@ -1825,14 +1967,14 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
 
                 return renderHTML`
                 <tr class="hover:bg-blue-50/40 transition-colors">
-                    <td class="py-2.5 px-3 font-semibold text-[#0066cc] font-mono text-[12px]">${p.code}</td>
+                    <td class="py-2.5 px-3 font-semibold text-[#E04F16] font-mono text-[12px]">${p.code}</td>
                     <td class="py-2.5 px-3 font-semibold text-gray-900 max-w-[260px] truncate" title="${p.name}">${p.name}</td>
                     <td class="py-2.5 px-3 text-gray-600 text-[12px]">${p.category}</td>
                     <td class="py-2.5 px-3 text-center font-bold ${p.stock <= 0 ? 'text-rose-600' : p.stock <= p.minStock ? 'text-amber-600' : 'text-gray-800'}" title="${p.branchBreakdown || ''}">${p.stock || 0}</td>
                     <td class="py-2.5 px-3 text-center text-gray-500 font-medium">${p.minStock || 0}</td>
                     <td class="py-2.5 px-3 text-right font-medium text-gray-600 tabular-nums">${formatVND(p.costPrice)} đ</td>
                     <td class="py-2.5 px-3 text-right font-medium text-gray-800 tabular-nums">${formatVND(p.price)} đ</td>
-                    <td class="py-2.5 px-3 text-right font-bold text-[#0066cc] tabular-nums">${formatVND(valCost)} đ</td>
+                    <td class="py-2.5 px-3 text-right font-bold text-[#E04F16] tabular-nums">${formatVND(valCost)} đ</td>
                     <td class="py-2.5 px-3 text-center">${badgeHtml}</td>
                 </tr>
             `;
@@ -1851,7 +1993,7 @@ function renderInventoryReportTab(data, currentBranch, branchProducts, dateFilte
                 <span>Mặt hàng cảnh báo: <strong class="${warningCount > 0 ? 'text-rose-600' : 'text-gray-900'}">${warningCount}</strong></span>
             </div>
             <div class="flex items-center space-x-4">
-                <span>Tổng vốn tồn: <strong class="text-[#0066cc]">${formatVND(totalCostVal)} đ</strong></span>
+                <span>Tổng vốn tồn: <strong class="text-[#E04F16]">${formatVND(totalCostVal)} đ</strong></span>
                 <span>Tổng giá trị bán: <strong class="text-emerald-600">${formatVND(totalRetailVal)} đ</strong></span>
             </div>
         `;
