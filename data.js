@@ -14,7 +14,8 @@ const defaultData = {
         cashier: 'Trần Văn Nhất',
         logoUrl: '',
         logoText: 'NKiot',
-        billConfig: ''
+        billConfig: '',
+        catalogBaseUrl: ''
     },
     products: [
         {

@@ -18471,6 +18471,9 @@ function openSettingsModal() {
     document.getElementById('set-bank-account').value = s.bankAccount || '';
     document.getElementById('set-bank-owner').value = s.bankOwner || '';
 
+    const catalogBaseEl = document.getElementById('set-catalog-base-url');
+    if (catalogBaseEl) catalogBaseEl.value = s.catalogBaseUrl || '';
+
     const logoUrlEl = document.getElementById('set-logo-url');
     if (logoUrlEl) logoUrlEl.value = s.logoUrl || '';
     const logoTextEl = document.getElementById('set-logo-text');
@@ -18493,6 +18496,9 @@ async function saveSettingsFromModal(e) {
     s.bankName = document.getElementById('set-bank-name').value.trim();
     s.bankAccount = document.getElementById('set-bank-account').value.trim();
     s.bankOwner = document.getElementById('set-bank-owner').value.trim();
+
+    const catalogBaseEl = document.getElementById('set-catalog-base-url');
+    if (catalogBaseEl) s.catalogBaseUrl = catalogBaseEl.value.trim().replace(/\/+$/, '');
 
     const logoUrlEl = document.getElementById('set-logo-url');
     const rawLogoUrl = logoUrlEl ? logoUrlEl.value.trim() : '';
@@ -20594,14 +20600,26 @@ function closeCatalogDraftPreview() {
     document.getElementById('catalog-draft-preview-modal')?.classList.add('hidden');
 }
 
+// Domain riêng dùng cho link catalog gửi khách (cấu hình theo từng cửa hàng).
+// Để trống thì dùng domain đang mở app như trước.
+function getCatalogBaseUrlOverride() {
+    const raw = typeof KVStore !== 'undefined' ? KVStore?.data?.settings?.catalogBaseUrl : '';
+    if (typeof raw !== 'string') return '';
+    const trimmed = raw.trim().replace(/\/+$/, '');
+    return /^https?:\/\/[^\s/?#]+$/i.test(trimmed) ? trimmed : '';
+}
+
 function buildPublicCatalogAbsoluteUrl(relUrl) {
     const pathStr = String(relUrl || '');
+    const suffix = `${pathStr.startsWith('/') ? '' : '/'}${pathStr}`;
+    const override = getCatalogBaseUrlOverride();
+    if (override) return `${override}${suffix}`;
     if (
         typeof window !== 'undefined' &&
         window.location?.origin &&
         window.location.origin !== 'null'
     ) {
-        return `${window.location.origin}${pathStr.startsWith('/') ? '' : '/'}${pathStr}`;
+        return `${window.location.origin}${suffix}`;
     }
     return pathStr;
 }

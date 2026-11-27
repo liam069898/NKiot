@@ -119,6 +119,13 @@ Nút xuất JSON trong giao diện chỉ xuất dữ liệu tài khoản đượ
 - Doanh thu, giá vốn và lợi nhuận gộp được tính chung một hàm với tab Bán hàng (`computeSalesFigures`) nên hai báo cáo không lệch nhau. Thiếu giá vốn lịch sử thì hiển thị "Chưa xác định" thay vì bịa số lãi.
 - Có biểu đồ doanh thu/lợi nhuận ròng theo ngày, cơ cấu chi phí theo nhóm, bảng kết quả kinh doanh chi tiết và xuất CSV/in như các báo cáo khác.
 
+## Link catalog gửi khách
+
+- Link catalog gửi khách dùng domain đang mở app (`window.location.origin`). Cửa hàng chạy nhiều domain có thể đặt domain riêng tại **Cài đặt → Domain link catalog gửi khách** (`settings.catalogBaseUrl`), ví dụ `https://kalo.nshop.site`.
+- Cấu hình chỉ áp dụng cho link catalog; API, hóa đơn và các link khác không đổi. Để trống thì giữ nguyên hành vi cũ.
+- Giá trị phải là origin hợp lệ dạng `https://ten-mien` (không kèm path, query hay dấu `/` cuối); giá trị không hợp lệ bị bỏ qua để link không bao giờ trỏ sai.
+- Domain đã đặt phải trỏ về đúng máy chủ đang chạy tenant đó, nếu không khách mở link sẽ lỗi dù link hiển thị đúng.
+
 ## Sửa lỗi toàn vẹn dữ liệu sau review
 
 - Trả hàng có IMEI phải gửi/chọn đúng serial nhận lại; backend từ chối serial đã trả, ngoài hóa đơn hoặc không khớp số lượng. Hủy hóa đơn chỉ hoàn các serial chưa trả.

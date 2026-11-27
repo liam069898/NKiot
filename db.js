@@ -377,6 +377,10 @@ function initDb() {
                 'billConfig',
                 '""'
             );
+            d.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(
+                'catalogBaseUrl',
+                '""'
+            );
         } catch {}
         if (isNew) {
             const initial = JSON.parse(JSON.stringify(defaultData));

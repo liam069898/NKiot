@@ -11,7 +11,8 @@ const defaultData = {
         bankAccount: '',
         bankOwner: '',
         logoUrl: '',
-        logoText: 'NKiot'
+        logoText: 'NKiot',
+        catalogBaseUrl: ''
     },
     branches: [],
     categories: [],
